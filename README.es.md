@@ -121,10 +121,13 @@ Compila primero los binarios/ejemplos de fixtures. La [puerta completa de AGENTS
 incluye ejecución offline, variables de helpers, formato, clippy y scripts de
 conformidad. Los tests usan servicios privados y lectores sintéticos, no el deck físico.
 
+La arquitectura objetivo, sus decisiones y el plan por fases están en
+[docs/architecture.md](docs/architecture.md).
+
 ## Estado
 
 Probado con un Stream Deck XL en Omarchy/Hyprland. Otros modelos de dispositivo y
-distribuciones Linux no están validados. El repositorio sigue privado.
+distribuciones Linux no están validados.
 
 ## Licencia
 

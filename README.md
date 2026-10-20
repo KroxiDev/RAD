@@ -118,10 +118,13 @@ Build the fixture binaries/examples first. See [AGENTS.md](AGENTS.md#validación
 for the complete offline gate, helper variables, formatting, clippy and conformance
 scripts. Tests use private services and synthetic readers, not the physical deck.
 
+The target architecture, its decisions and the phased plan are documented in
+[docs/architecture.md](docs/architecture.md) (in Spanish).
+
 ## Status
 
 Tested with one Stream Deck XL on Omarchy/Hyprland. Other device models and Linux
-distributions are not validated. The repository remains private.
+distributions are not validated.
 
 ## License
 

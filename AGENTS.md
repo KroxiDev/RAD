@@ -12,15 +12,23 @@ Entrypoints: `crates/rad-runtime/src/bin/rad-runtime.rs`,
 El código y los tests son la fuente de verdad. La historia inicial está en
 [KroxiDev/RAD-Fase-Inicial](https://github.com/KroxiDev/RAD-Fase-Inicial).
 
-El alcance inicial está cerrado. Siguen autorizadas las mejoras del editor y los
-cambios funcionales pedidos para ello: simple, oscuro y profesional, cercano a
-Elgato sin clonar su identidad; cada control visible solo cuando se pueda usar.
-Ampliar alcance requiere pedido del usuario. Prioridades: estabilidad, respuesta
-percibida, UX y después ahorro marginal de recursos.
+La arquitectura objetivo está aprobada en [docs/architecture.md](docs/architecture.md),
+con sus decisiones en `docs/adr/` y el trabajo pendiente en
+[docs/roadmap.md](docs/roadmap.md). Están autorizadas sus fases, cada una por
+encargo del usuario, y las mejoras del editor: simple, oscuro y profesional,
+cercano a Elgato sin clonar su identidad; cada control visible solo cuando se pueda
+usar. Lo que exceda esa arquitectura requiere pedido del usuario. Prioridades:
+estabilidad, respuesta percibida, UX y después ahorro marginal de recursos. Simple
+de cara al usuario; por dentro, robusto, con dueños y contratos claros.
 
 ## Procedimientos
 
 - Antes de planificar o editar: leer `.agentic/golden-rules.md`.
+- Antes de diseñar o cambiar la base estable (dominio, autoridad, runtime,
+  persistencia, contratos o alojamiento de plugins): leer `docs/architecture.md` y
+  los ADR afectados. Un cambio que los contradiga lleva un ADR nuevo.
+- Antes de trabajar en una fase o un ítem del plan: `docs/roadmap.md`.
+- Para pantallas o textos del editor: `docs/ux.md`.
 - Para comportamiento ejecutable: aplicar `.agentic/skills/tdd.md`.
 - Para revisar estándares y requisitos: `.agentic/skills/code-review.md`.
 - Para recuperar o guardar contexto: `.agentic/skills/usar-engram.md`.
@@ -88,7 +96,7 @@ Controlar reloj, identidades e I/O en el dominio puro.
 
 ## Git y GitHub
 
-- Rama por defecto `main`; `origin` es `KroxiDev/RAD`, privado. Antes de editar,
+- Rama por defecto `main`; `origin` es `KroxiDev/RAD`, público. Antes de editar,
   comprobar rama, status y diff; preservar cambios ajenos.
 - Commit y push progresivos de entregas verificadas están autorizados. Mensajes
   breves en inglés con Conventional Commits (`fix:`, `feat:`, `docs:`, etc.).
@@ -102,13 +110,15 @@ Controlar reloj, identidades e I/O en el dominio puro.
 ## Seguridad
 
 - Preservar secretos: no leer ni mostrar tokens, claves o archivos `.env`.
-- Operar el XL solo con autorización y control exclusivo. Nunca RAD y
-  StreamController escribiendo simultáneamente; preservar todos los datos de
-  StreamController, sin migrarlos ni modificarlos.
+- Al operar el XL en pruebas, hacerlo solo con autorización y control exclusivo:
+  nunca RAD y StreamController escribiendo a la vez; preservar todos los datos de
+  StreamController, sin migrarlos ni modificarlos. Esta regla es para agentes: el
+  producto no tiene en cuenta otros programas (ADR 0006).
 - Probar fallos con escenarios sintéticos controlados, sin sondeos generales de
   sensores ni reproducción de bloqueos del driver.
 - Instalar herramientas, publicar o acceder a remotos requiere autorización.
-  La licencia MIT no autoriza hacer público este repositorio privado.
+  El repositorio es público: versionar solo contenido publicable, sin datos
+  personales, rutas locales ni secretos.
 - Aislamiento estricto: no tocar, reiniciar, reconstruir, migrar, detener ni leer
   secretos de otros proyectos sin aprobación explícita y específica.
 - Al retirar archivos sin respaldo comprobado en un repo, usar la papelera,
