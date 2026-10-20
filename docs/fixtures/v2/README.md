@@ -4,7 +4,8 @@
 añadiendo ajustes opacos `00ff2a` de `fixture.plugin` y el hint de dependencia
 versión 1.2.3, origen `fixture/plugin`. No son un plugin real ni credenciales.
 `generate.rs.txt` conserva el generador usado; no forma parte de la suite.
-La prueba `rad-codec/tests/v2.rs` valida su semántica y los bytes canónicos exactos.
+La prueba `rad-codec/tests/v2.rs` valida su semántica y la conversión canónica
+a la versión actual. Los bytes originales se conservan sin regenerarlos.
 
 `profile.sqlite3` y `profile.radpkg` se generaron con los escritores v2, desde ese
 JSON y el registro completo del perfil v1 pequeño importado. Conservan instalación

@@ -19,6 +19,7 @@ fn settings_constructor_rejects_bad_brightness_and_preserves_full_durations_and_
             brightness_percent,
             sleep_ms: u64::MAX,
             press_threshold_ms: u64::MAX,
+            long_press_threshold_ms: 500,
         };
         let result = Settings::from_data(data);
         if brightness_percent > 100 {
@@ -48,6 +49,7 @@ fn reconstruction_validates_settings_without_silently_defaulting() {
         brightness_percent: 0,
         sleep_ms: 0,
         press_threshold_ms: u64::MAX,
+        long_press_threshold_ms: 500,
     };
     let restored = Configuration::from_data(data.clone(), c.registry()).unwrap();
     assert_eq!(restored.settings().data(), data.settings);
@@ -60,6 +62,7 @@ fn editor_settings_edit_produces_atomic_candidate_without_new_ids() {
         brightness_percent: 42,
         sleep_ms: 0,
         press_threshold_ms: 73,
+        long_press_threshold_ms: 500,
     };
     let next = c
         .configuration()
@@ -168,6 +171,7 @@ fn restore_preserves_settings_and_current_ledger_without_merging_or_defaulting()
                 brightness_percent: 17,
                 sleep_ms: u64::MAX,
                 press_threshold_ms: 0,
+                long_press_threshold_ms: 500,
             }),
         )
         .unwrap();

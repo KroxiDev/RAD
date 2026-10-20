@@ -1,8 +1,6 @@
-use serde_json::Value;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Command {
-    pub operation: String,
-    pub arguments: Value,
+    pub request: rad_api::Request,
     pub json: bool,
     pub wait_ms: Option<u64>,
 }
@@ -32,115 +30,122 @@ pub fn parse(args: &[String]) -> Result<Invocation, InvalidArguments> {
         }
     }
     let mut wait_ms = None;
-    let (operation, arguments) = match positional.as_slice() {
-        ["status"] => ("status", serde_json::json!({})),
-        ["get", id] if entity_id(id) => ("get", serde_json::json!({"id":id})),
-        ["list", rest @ ..] => (
-            "list",
-            serde_json::json!({"cursor":cursor(rest)?,"limit":32}),
-        ),
-        ["plugin-configuration", id, rest @ ..] if entity_id(id) => (
-            "plugin_configuration",
-            serde_json::json!({"id":id,"cursor":cursor(rest)?}),
-        ),
-        ["plugin-catalog", rest @ ..] => (
-            "plugin_catalog",
-            serde_json::json!({"cursor":cursor(rest)?}),
-        ),
-        ["schema", kind, rest @ ..] if scalar(kind) => (
-            "schema",
-            serde_json::json!({"type":kind,"cursor":cursor(rest)?}),
-        ),
-        ["options", id, field, rest @ ..] if entity_id(id) && scalar(field) => (
-            "options",
-            options_arguments(serde_json::json!({"id":id,"field":field}), rest)?,
-        ),
-        ["options", "--type", kind, field, rest @ ..] if scalar(kind) && scalar(field) => (
-            "options",
-            options_arguments(serde_json::json!({"type":kind,"field":field}), rest)?,
-        ),
+    use rad_api::{Change, Request as R};
+    let request = match positional.as_slice() {
+        ["status"] => R::Status {},
+        ["get", id] if entity_id(id) => R::Get { id: (*id).into() },
+        ["list", rest @ ..] => R::List {
+            cursor: cursor(rest)?,
+            limit: 32,
+        },
+        ["plugin-configuration", id, rest @ ..] if entity_id(id) => R::PluginConfiguration {
+            id: (*id).into(),
+            cursor: cursor(rest)?,
+        },
+        ["plugin-catalog", rest @ ..] => R::PluginCatalog {
+            cursor: cursor(rest)?,
+        },
+        ["schema", kind, rest @ ..] if scalar(kind) => R::Schema {
+            type_key: (*kind).into(),
+            cursor: cursor(rest)?,
+        },
+        ["options", id, field, rest @ ..] if entity_id(id) && scalar(field) => {
+            options(Some(id), None, field, rest)?
+        }
+        ["options", "--type", kind, field, rest @ ..] if scalar(kind) && scalar(field) => {
+            options(None, Some(kind), field, rest)?
+        }
         ["set", id, field, value] if entity_id(id) && !id.starts_with('f') && scalar(field) => {
             if value.len() > 65536 {
                 return Err(InvalidArguments);
             }
-            let value: Value =
-                rad_wire::parse_json(value.as_bytes()).map_err(|_| InvalidArguments)?;
-            (
-                "edit",
-                serde_json::json!({"changes":[{"kind":"set","id":id,"field":field,"value":value}]}),
-            )
+            let value = rad_wire::parse_json(value.as_bytes()).map_err(|_| InvalidArguments)?;
+            // Textual field/value is the CLI input boundary. Its only structural
+            // definition is the same API FieldEdit used by all clients.
+            let edit = serde_json::from_value(serde_json::json!({"field":field,"value":value}))
+                .map_err(|_| InvalidArguments)?;
+            R::Edit {
+                changes: vec![Change::Set {
+                    id: (*id).into(),
+                    edit,
+                }],
+            }
         }
-        ["move", id, position] if entity_id(id) && id.starts_with('b') => {
-            let position = decimal(position)
-                .filter(|n| *n < 32)
-                .ok_or(InvalidArguments)?;
-            (
-                "edit",
-                serde_json::json!({"changes":[{"kind":"move","id":id,"position":position}]}),
-            )
-        }
+        ["move", id, position] if entity_id(id) && id.starts_with('b') => R::Edit {
+            changes: vec![Change::Move {
+                id: (*id).into(),
+                position: decimal(position)
+                    .filter(|n| *n < 32)
+                    .ok_or(InvalidArguments)? as usize,
+            }],
+        },
         ["order", id, "--indices", indices] if entity_id(id) && id.starts_with('b') => {
             if indices.len() > 65536 {
                 return Err(InvalidArguments);
             }
-            let indices: Vec<u64> = serde_json::from_str(indices).map_err(|_| InvalidArguments)?;
+            let indices: Vec<usize> =
+                serde_json::from_str(indices).map_err(|_| InvalidArguments)?;
             if indices.len() > MAX_ACTIONS {
                 return Err(InvalidArguments);
             }
             let mut sorted = indices.clone();
             sorted.sort_unstable();
-            if sorted.iter().copied().ne(0..indices.len() as u64) {
+            if sorted.iter().copied().ne(0..indices.len()) {
                 return Err(InvalidArguments);
             }
-            (
-                "edit",
-                serde_json::json!({"changes":[{"kind":"order","id":id,"indices":indices}]}),
-            )
+            R::Edit {
+                changes: vec![Change::Order {
+                    id: (*id).into(),
+                    indices,
+                }],
+            }
         }
         ["run", id, rest @ ..] if entity_id(id) && !id.starts_with('f') => {
             wait_ms = wait_options(rest)?;
-            ("run", serde_json::json!({"id":id}))
+            R::Run { id: (*id).into() }
         }
         ["result", id, rest @ ..] if execution_id(id) => {
             wait_ms = wait_options(rest)?;
-            ("result", serde_json::json!({"execution_id":id}))
+            R::Result {
+                execution_id: (*id).into(),
+            }
         }
         _ => return Err(InvalidArguments),
     };
     Ok(Invocation::Command(Command {
-        operation: operation.into(),
-        arguments,
+        request,
         json,
         wait_ms,
     }))
 }
-fn cursor(args: &[&str]) -> Result<Value, InvalidArguments> {
+fn cursor(args: &[&str]) -> Result<Option<String>, InvalidArguments> {
     match args {
-        [] => Ok(Value::Null),
-        ["--cursor", value] if !value.is_empty() && value.len() <= 128 => {
-            Ok(Value::String((*value).into()))
-        }
+        [] => Ok(None),
+        ["--cursor", value] if !value.is_empty() && value.len() <= 128 => Ok(Some((*value).into())),
         _ => Err(InvalidArguments),
     }
 }
-/// `[--cursor TOKEN]` and any number of `--with DEP=VALUE` in any order. The context
-/// key is sent only when a draft value is given; the runtime validates its content.
-fn options_arguments(mut arguments: Value, args: &[&str]) -> Result<Value, InvalidArguments> {
+fn options(
+    id: Option<&str>,
+    type_key: Option<&str>,
+    field: &str,
+    args: &[&str],
+) -> Result<rad_api::Request, InvalidArguments> {
     let mut cursor = None;
-    let mut context = serde_json::Map::new();
+    let mut context = std::collections::BTreeMap::new();
     let mut remaining = args;
     while let Some((flag, rest)) = remaining.split_first() {
         let (value, tail) = rest.split_first().ok_or(InvalidArguments)?;
         match *flag {
             "--cursor" if cursor.is_none() && !value.is_empty() && value.len() <= 128 => {
-                cursor = Some(*value);
+                cursor = Some((*value).to_owned())
             }
             "--with" => {
                 let (dependency, chosen) = value.split_once('=').ok_or(InvalidArguments)?;
                 if !scalar(dependency)
                     || chosen.is_empty()
                     || context
-                        .insert(dependency.into(), (*chosen).into())
+                        .insert(dependency.to_owned(), chosen.to_owned())
                         .is_some()
                 {
                     return Err(InvalidArguments);
@@ -150,11 +155,13 @@ fn options_arguments(mut arguments: Value, args: &[&str]) -> Result<Value, Inval
         }
         remaining = tail;
     }
-    arguments["cursor"] = cursor.map_or(Value::Null, Value::from);
-    if !context.is_empty() {
-        arguments["context"] = Value::Object(context);
-    }
-    Ok(arguments)
+    Ok(rad_api::Request::Options {
+        id: id.map(str::to_owned),
+        type_key: type_key.map(str::to_owned),
+        field: field.into(),
+        cursor,
+        context: (!context.is_empty()).then_some(context),
+    })
 }
 fn scalar(value: &str) -> bool {
     !value.is_empty() && value.len() <= 16384 && !value.starts_with("--")

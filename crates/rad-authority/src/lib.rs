@@ -52,6 +52,9 @@ pub enum Effect {
         execution: ExecutionId,
     },
     Dispatch(DispatchIntent),
+    ReleaseHold {
+        execution: ExecutionId,
+    },
     HardwareAccepted {
         execution: ExecutionId,
     },
@@ -200,6 +203,9 @@ pub struct Authority {
     exports: BTreeMap<CommitId, ExportPin>,
     collection: Option<CommitId>,
     input: rad_core::input::Input,
+    physical: BTreeMap<ExecutionId, rad_core::input::ControlEvent>,
+    holds: [Option<ExecutionId>; 32],
+    releasing_holds: std::collections::BTreeSet<ExecutionId>,
     engine: rad_core::execution::Engine,
     installed: Vec<rad_core::configuration::ExternalType>,
     plugins: BTreeMap<String, plugins::Plugin>,
@@ -210,6 +216,7 @@ pub struct Authority {
     plugin_jobs: BTreeMap<DispatchId, (String, plugins::ExecutionBinding)>,
     runs: BTreeMap<ExecutionId, i64>,
     jobs: BTreeMap<DispatchId, i64>,
+    execution_revision: u64,
     published: Candidate,
     active: EntityIdentity,
     revision: i64,
@@ -255,10 +262,14 @@ impl Authority {
             asleep: false,
             sleep_deadline: None,
             input: rad_core::input::Input::default(),
+            physical: BTreeMap::new(),
+            holds: [None; 32],
+            releasing_holds: Default::default(),
             engine: rad_core::execution::Engine::new(session.get(), 1)
                 .expect("nonzero session and counter"),
             runs: BTreeMap::new(),
             jobs: BTreeMap::new(),
+            execution_revision: 0,
             installed: vec![],
             plugins: BTreeMap::new(),
             next_plugin_selection: 1,
@@ -626,8 +637,8 @@ impl Authority {
                 StorageState::Uncertain
             };
             self.awaiting = false;
-            self.invalidate_input();
-            let mut e = vec![Effect::Unknown { request }];
+            let mut e = self.invalidate_input();
+            e.push(Effect::Unknown { request });
             while let Some((request, _)) = self.queue.pop_front() {
                 e.push(self.reject(request, Rejection::StorageUncertain));
             }
@@ -846,7 +857,24 @@ impl Authority {
         target: Target,
         trigger: rad_core::execution::Trigger,
     ) -> Result<(ExecutionId, Vec<Effect>), ExecutionError> {
+        self.admit_control(target, trigger, None)
+    }
+    fn admit_control(
+        &mut self,
+        target: Target,
+        trigger: rad_core::execution::Trigger,
+        control: Option<rad_core::input::ControlEvent>,
+    ) -> Result<(ExecutionId, Vec<Effect>), ExecutionError> {
+        if control.is_some_and(|c| c.gesture == rad_core::input::ControlGesture::HoldStart)
+            && self.holds.iter().flatten().count() + self.releasing_holds.len()
+                >= rad_core::input::KEY_COUNT
+        {
+            return Err(ExecutionError::Capacity);
+        }
         let plugins = self.plugin_selection(target);
+        if let Some(control) = control {
+            self.validate_control(target, control)?;
+        }
         // Failed external preflight exposes no executors to Engine. Engine keeps
         // permission/busy error precedence and rejects before producing intents;
         // do not duplicate its authorization policy here.
@@ -866,6 +894,15 @@ impl Authority {
         )?;
         let plugins = plugins?;
         self.observed_executions.insert(a.id);
+        if let Some(control) = control {
+            self.physical.insert(a.id, control);
+            if control.gesture == rad_core::input::ControlGesture::HoldStart {
+                self.engine
+                    .pin_result(a.id)
+                    .expect("physical holds bounded by key count below result capacity");
+                self.holds[control.key] = Some(a.id);
+            }
+        }
         if self.engine.snapshot(a.id).is_some() {
             self.runs.insert(a.id, self.revision);
             self.plugin_runs.insert(a.id, plugins.bindings);
@@ -901,10 +938,16 @@ impl Authority {
         self.plugin_jobs.remove(&id);
         Ok(self.dispatch_effects(intents))
     }
+    /// Invalidation epoch, not a durable identity. Equality alone is meaningful.
+    pub fn execution_revision(&self) -> u64 {
+        self.execution_revision
+    }
     fn dispatch_effects(&mut self, intents: Vec<DispatchIntent>) -> Vec<Effect> {
+        self.execution_revision = self.execution_revision.wrapping_add(1);
         let mut e = vec![];
         let mut intents: VecDeque<_> = intents.into();
-        while let Some(intent) = intents.pop_front() {
+        while let Some(mut intent) = intents.pop_front() {
+            intent.control = self.physical.get(&intent.id.execution()).copied();
             if let rad_core::execution::Operation::Navigate(folder) = intent.operation {
                 let exists = self
                     .published
@@ -943,10 +986,21 @@ impl Authority {
                 e.push(Effect::Dispatch(intent));
             }
         }
-        self.runs
-            .retain(|id, _| self.engine.snapshot(*id).is_some());
-        self.plugin_runs
-            .retain(|id, _| self.engine.snapshot(*id).is_some());
+        self.runs.retain(|id, _| {
+            self.engine.snapshot(*id).is_some()
+                || self.holds.contains(&Some(*id))
+                || self.releasing_holds.contains(id)
+        });
+        self.plugin_runs.retain(|id, _| {
+            self.engine.snapshot(*id).is_some()
+                || self.holds.contains(&Some(*id))
+                || self.releasing_holds.contains(id)
+        });
+        self.physical.retain(|id, _| {
+            self.engine.snapshot(*id).is_some()
+                || self.holds.contains(&Some(*id))
+                || self.releasing_holds.contains(id)
+        });
         self.refresh_views();
         e
     }
@@ -1000,7 +1054,8 @@ impl Authority {
                     .find(|f| f.binding.identity() == self.active)
                     .unwrap()
                     .binding;
-                self.input
+                let canceled = self
+                    .input
                     .handle(
                         now,
                         rad_core::input::Change::Layout {
@@ -1009,6 +1064,7 @@ impl Authority {
                         },
                     )
                     .expect("valid empty layout");
+                e.extend(self.input_effects(canceled));
                 self.input
                     .handle(now, rad_core::input::Change::Report(pressed))
                     .expect("unassigned keys cannot overflow");
@@ -1021,11 +1077,11 @@ impl Authority {
         };
         e.extend(self.input_effects(output));
         if self.state != StorageState::Ready {
-            self.invalidate_input();
+            e.extend(self.invalidate_input());
         }
         Ok(e)
     }
-    fn invalidate_input(&mut self) {
+    fn invalidate_input(&mut self) -> Vec<Effect> {
         let folder = self
             .published
             .configuration()
@@ -1035,7 +1091,7 @@ impl Authority {
             .find(|f| f.binding.identity() == self.active)
             .unwrap()
             .binding;
-        let _ = self
+        let output = self
             .input
             .handle(
                 self.now,
@@ -1045,7 +1101,9 @@ impl Authority {
                 },
             )
             .expect("validated empty layout");
-        let _ = self.sync_input();
+        let mut effects = self.input_effects(output);
+        effects.extend(self.sync_input());
+        effects
     }
     fn input_effects(&mut self, output: Vec<rad_core::input::Output>) -> Vec<Effect> {
         let mut e = vec![];
@@ -1057,11 +1115,30 @@ impl Authority {
                     e.push(Effect::Wake);
                     e.push(self.display_effect());
                 }
-                rad_core::input::Output::Candidate { button, .. } => {
+                rad_core::input::Output::Gesture {
+                    key,
+                    button: _,
+                    gesture: rad_core::input::ControlGesture::HoldEnd,
+                } => {
+                    if let Some(execution) = self.holds[key].take() {
+                        self.engine
+                            .cancel_pending(execution)
+                            .expect("monotonic cancellation");
+                        self.releasing_holds.insert(execution);
+                        e.push(Effect::ReleaseHold { execution });
+                    }
+                }
+                rad_core::input::Output::Candidate { key, button }
+                | rad_core::input::Output::Gesture { key, button, .. } => {
                     if self.state == StorageState::Ready {
-                        match self.admit(
+                        let gesture = match output {
+                            rad_core::input::Output::Gesture { gesture, .. } => gesture,
+                            _ => rad_core::input::ControlGesture::Press,
+                        };
+                        match self.admit_control(
                             Target::Button(button.identity()),
                             rad_core::execution::Trigger::Hardware,
+                            Some(rad_core::input::ControlEvent { key, gesture }),
                         ) {
                             Ok((execution, intents)) => {
                                 e.push(Effect::HardwareAccepted { execution });
@@ -1090,6 +1167,17 @@ impl Authority {
                     .map(|b| b.binding)
             })
         });
+        let gestures = std::array::from_fn(|i| {
+            buttons[i]
+                .and_then(|binding| {
+                    data.buttons
+                        .iter()
+                        .find(|b| b.binding == binding)
+                        .map(|b| b.gesture)
+                })
+                .unwrap_or_default()
+        });
+        let long_press_ms = data.settings.long_press_threshold_ms;
         let output = self
             .input
             .handle(
@@ -1107,10 +1195,24 @@ impl Authority {
                 rad_core::input::Change::Threshold(data.settings.press_threshold_ms),
             )
             .expect("threshold update cannot overflow");
+        let gestures = self
+            .input
+            .handle(
+                self.now,
+                rad_core::input::Change::Gestures {
+                    selected: gestures,
+                    long_press_ms,
+                },
+            )
+            .expect("gesture update cannot overflow");
         let mut e = self.input_effects(output);
         e.extend(self.input_effects(more));
-        self.plugin_runs
-            .retain(|id, _| self.engine.snapshot(*id).is_some());
+        e.extend(self.input_effects(gestures));
+        self.plugin_runs.retain(|id, _| {
+            self.engine.snapshot(*id).is_some()
+                || self.holds.contains(&Some(*id))
+                || self.releasing_holds.contains(id)
+        });
         self.refresh_views();
         e
     }
@@ -1147,7 +1249,7 @@ impl Authority {
             } else {
                 StorageState::Uncertain
             };
-            self.invalidate_input();
+            e.extend(self.invalidate_input());
             while let Some((request, _)) = self.queue.pop_front() {
                 e.push(self.reject(request, Rejection::StorageUncertain));
             }
@@ -1259,10 +1361,13 @@ impl Authority {
         {
             self.sleep_deadline = None;
             self.asleep = true;
-            self.input
+            let output = self
+                .input
                 .handle(self.now, rad_core::input::Change::Sleep)
                 .expect("monotonic sleep");
-            return vec![self.display_effect()];
+            let mut effects = self.input_effects(output);
+            effects.push(self.display_effect());
+            return effects;
         }
         vec![]
     }
@@ -1281,11 +1386,13 @@ pub use queries::*;
 
 impl Authority {
     pub fn input_disconnect(&mut self, now: u64) -> Result<Vec<Effect>, AdmissionError> {
-        let e = self.before_event(now)?;
-        self.input
+        let mut e = self.before_event(now)?;
+        let output = self
+            .input
             .handle(now, rad_core::input::Change::Disconnect)
             .expect("monotonic disconnect");
         self.held = [false; 32];
+        e.extend(self.input_effects(output));
         Ok(e)
     }
 }
@@ -1369,5 +1476,69 @@ impl Authority {
             }
         }
         self.complete(id, outcome)
+    }
+}
+
+impl Authority {
+    pub fn report_hold_end_failure(&mut self, execution: ExecutionId) {
+        self.engine.report_cleanup_failure(execution);
+        self.execution_revision = self.execution_revision.wrapping_add(1);
+        self.refresh_views();
+    }
+    pub fn input_clock_ms(&self) -> u64 {
+        self.now
+    }
+    /// Runtime calls after all sent holds ended or their original process was lost.
+    pub fn hold_released(&mut self, execution: ExecutionId) {
+        self.engine.release_result(execution);
+        self.execution_revision = self.execution_revision.wrapping_add(1);
+        self.releasing_holds.remove(&execution);
+        self.physical.remove(&execution);
+        self.plugin_runs.retain(|id, _| {
+            self.engine.snapshot(*id).is_some()
+                || self.holds.contains(&Some(*id))
+                || self.releasing_holds.contains(id)
+        });
+        self.runs.retain(|id, _| {
+            self.engine.snapshot(*id).is_some()
+                || self.holds.contains(&Some(*id))
+                || self.releasing_holds.contains(id)
+        });
+        self.refresh_views();
+    }
+    fn validate_control(
+        &self,
+        target: Target,
+        control: rad_core::input::ControlEvent,
+    ) -> Result<(), ExecutionError> {
+        use rad_core::{configuration::ActionKind, input::ControlGesture};
+        let button = self
+            .published
+            .configuration()
+            .data()
+            .buttons
+            .iter()
+            .find(|b| target == Target::Button(b.binding.identity()))
+            .ok_or(ExecutionError::NotFound)?;
+        let gesture = match control.gesture {
+            ControlGesture::Press => rad_plugin_contract::Gesture::Press,
+            ControlGesture::LongPress => rad_plugin_contract::Gesture::LongPress,
+            _ => rad_plugin_contract::Gesture::Hold,
+        };
+        for action in &button.actions {
+            if let ActionKind::External { type_key, .. } = &action.kind {
+                let definition = self
+                    .plugins
+                    .get(type_key.plugin())
+                    .and_then(|p| p.manifest.actions.iter().find(|a| a.id == type_key.name()))
+                    .ok_or(ExecutionError::ExecutorUnavailable)?;
+                if !definition.gestures.contains(&gesture) {
+                    return Err(ExecutionError::ExecutorUnavailable);
+                }
+            } else if gesture == rad_plugin_contract::Gesture::Hold {
+                return Err(ExecutionError::ExecutorUnavailable);
+            }
+        }
+        Ok(())
     }
 }

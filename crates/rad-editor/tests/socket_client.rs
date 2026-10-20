@@ -1,7 +1,4 @@
-use rad_editor::{
-    Request,
-    native::{self, Job, Reply},
-};
+use rad_editor::native::{self, Job, Reply};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
@@ -38,7 +35,7 @@ fn editor_worker_uses_editor_socket_and_real_client_handshake_before_run() {
             &mut stream,
             "hello",
             "ok",
-            json!({"protocol":1,"session_id":"00000000000000000000000000000001","limits":{},"capabilities":[]}),
+            json!({"protocol":1,"session_id":"00000000000000000000000000000001","limits":serde_json::from_str::<serde_json::Value>(include_str!("../../rad-api/vectors/limits-v1.json")).unwrap(),"capabilities":[]}),
         );
         exchange(
             &mut stream,
@@ -54,7 +51,7 @@ fn editor_worker_uses_editor_socket_and_real_client_handshake_before_run() {
         Ok(Reply::Connected)
     ));
     worker
-        .submit(Job::Request(Request::new("run", json!({"id":"b1"}))))
+        .submit(Job::Request(request("run", json!({"id":"b1"}))))
         .unwrap();
     let event = worker.receive().unwrap();
     let Ok(Reply::Response {
@@ -66,7 +63,7 @@ fn editor_worker_uses_editor_socket_and_real_client_handshake_before_run() {
     };
     assert_eq!(operation, "run");
     assert_eq!(
-        response.data["execution_id"],
+        serde_json::to_value(&response.data).unwrap()["execution_id"],
         "00000000000000000000000000000001:1"
     );
     server.join().unwrap();
@@ -113,17 +110,17 @@ fn reconnect_same_runtime_revision_recovers_pixels_and_new_config_refetches() {
                 let request: Value = serde_json::from_slice(&body).unwrap();
                 let data = match request["op"].as_str().unwrap() {
                     "hello" => {
-                        json!({"protocol":1,"session_id":"00000000000000000000000000000001","limits":{},"capabilities":[]})
+                        json!({"protocol":1,"session_id":"00000000000000000000000000000001","limits":serde_json::from_str::<serde_json::Value>(include_str!("../../rad-api/vectors/limits-v1.json")).unwrap(),"capabilities":[]})
                     }
                     "plugin_visual" => {
-                        json!({"availability":"current","revision":"3","text":null,"color":null,"image":true})
+                        json!({"text_position":"bottom","availability":"current","revision":"3","text":null,"color":null,"image":true})
                     }
                     "plugin_visual_read" => {
                         assert_eq!(request["args"]["revision"], "3");
                         server_reads.fetch_add(1, Ordering::SeqCst);
                         json!({"hex":hex,"next_offset":null})
                     }
-                    "disconnect" => break,
+                    "status" => break,
                     op => panic!("unexpected operation {op}"),
                 };
                 let response = json!({"v":1,"id":request["id"],"session_id":"00000000000000000000000000000001","status":"ok","data":data,"error":null});
@@ -169,7 +166,7 @@ fn reconnect_same_runtime_revision_recovers_pixels_and_new_config_refetches() {
     assert!(visual(&mut worker, "7").pixels.is_none());
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     worker
-        .submit(Job::Request(Request::new("disconnect", json!({}))))
+        .submit(Job::Request(request("status", json!({}))))
         .unwrap();
     let disconnected = worker.receive().unwrap();
     assert!(!disconnected.connected && disconnected.result.is_err());
@@ -186,10 +183,14 @@ fn reconnect_same_runtime_revision_recovers_pixels_and_new_config_refetches() {
     assert!(visual(&mut worker, "8").pixels.is_some());
     assert_eq!(reads.load(Ordering::SeqCst), 3);
     worker
-        .submit(Job::Request(Request::new("disconnect", json!({}))))
+        .submit(Job::Request(request("status", json!({}))))
         .unwrap();
     assert!(worker.receive().unwrap().result.is_err());
     server.join().unwrap();
     drop(worker);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+fn request(op: &str, args: serde_json::Value) -> rad_api::Request {
+    rad_api::Request::parse(op, args).expect("valid typed fixture request")
 }

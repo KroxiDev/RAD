@@ -2100,6 +2100,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rad-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rad-authority"
 version = "0.1.0"
 dependencies = [
@@ -2114,6 +2122,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "mio",
+ "rad-api",
  "rad-wire",
  "serde_json",
 ]
@@ -2158,6 +2167,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "image",
+ "rad-api",
  "rad-client",
  "rad-plugin-contract",
  "serde_json",
@@ -2245,6 +2255,7 @@ dependencies = [
 name = "rad-protocol"
 version = "0.1.0"
 dependencies = [
+ "rad-api",
  "rad-authority",
  "rad-core",
  "rad-plugin-contract",
@@ -2259,6 +2270,7 @@ dependencies = [
  "getrandom 0.4.3",
  "libc",
  "mio",
+ "rad-api",
  "rad-authority",
  "rad-client",
  "rad-core",
@@ -2275,6 +2287,7 @@ dependencies = [
  "rad-store",
  "rad-transport",
  "rad-wire",
+ "serde",
  "serde_json",
 ]
 
@@ -2294,6 +2307,7 @@ dependencies = [
 name = "rad-transport"
 version = "0.1.0"
 dependencies = [
+ "rad-api",
  "libc",
  "mio",
  "rad-wire",

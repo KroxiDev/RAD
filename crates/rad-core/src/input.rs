@@ -4,6 +4,7 @@
 //! EVERY published layout transition, even A → B → A between reports. Parameter
 //! edits do not change the layout and are never captured here. Resolve current
 //! configuration/permissions when admitting a returned Binding in the engine.
+use crate::configuration::Gesture;
 use crate::identity::{Binding, EntityKind};
 
 /// XL input report width; fixed arrays make out-of-range positions unrepresentable.
@@ -30,12 +31,36 @@ pub enum Change {
     Sleep,
     /// Milliseconds, captured on the next press; existing deadlines stay unchanged.
     Threshold(u64),
+    Gestures {
+        selected: [crate::configuration::Gesture; KEY_COUNT],
+        long_press_ms: u64,
+    },
 }
 /// At most 32 candidates, or one Wake, per transition. Never external effects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Output {
     Wake,
-    Candidate { key: usize, button: Binding },
+    Candidate {
+        key: usize,
+        button: Binding,
+    },
+    Gesture {
+        key: usize,
+        button: Binding,
+        gesture: ControlGesture,
+    },
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlGesture {
+    Press,
+    HoldStart,
+    HoldEnd,
+    LongPress,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlEvent {
+    pub key: usize,
+    pub gesture: ControlGesture,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputError {
@@ -50,7 +75,10 @@ pub struct Input {
     folder: Option<Binding>,
     buttons: [Option<Binding>; KEY_COUNT],
     held: [bool; KEY_COUNT],
-    pending: [Option<(Binding, u64)>; KEY_COUNT],
+    pending: [Option<(Binding, u64, Gesture)>; KEY_COUNT],
+    gestures: [Gesture; KEY_COUNT],
+    active_holds: [Option<Binding>; KEY_COUNT],
+    long_press_ms: u64,
     threshold_ms: u64,
     seen_report: bool,
     asleep: bool,
@@ -94,6 +122,7 @@ impl Input {
                 for (key, button) in buttons.iter().enumerate() {
                     if self.folder != Some(folder) || *button != self.buttons[key] {
                         self.pending[key] = None;
+                        self.end_hold(key, &mut output);
                     }
                 }
                 self.folder = Some(folder);
@@ -114,6 +143,7 @@ impl Input {
                 self.seen_report = true;
                 for (key, down) in pressed.iter().copied().enumerate() {
                     if !down {
+                        self.end_hold(key, &mut output);
                         self.pending[key] = None;
                     }
                     if down
@@ -121,33 +151,70 @@ impl Input {
                         && !suppress
                         && let Some(button) = self.buttons[key]
                     {
-                        self.pending[key] = Some((
-                            button,
-                            now_ms
-                                .checked_add(self.threshold_ms)
-                                .ok_or(InputError::DeadlineOverflow)?,
-                        ));
+                        let gesture = self.gestures[key];
+                        if gesture == Gesture::Hold {
+                            self.active_holds[key] = Some(button);
+                            output.push(Output::Gesture {
+                                key,
+                                button,
+                                gesture: ControlGesture::HoldStart,
+                            });
+                        } else {
+                            let threshold = if gesture == Gesture::LongPress {
+                                self.long_press_ms
+                            } else {
+                                self.threshold_ms
+                            };
+                            self.pending[key] = Some((
+                                button,
+                                now_ms
+                                    .checked_add(threshold)
+                                    .ok_or(InputError::DeadlineOverflow)?,
+                                gesture,
+                            ));
+                        }
                     }
                 }
                 self.held = pressed;
             }
             Change::Threshold(value) => self.threshold_ms = value,
+            Change::Gestures {
+                selected,
+                long_press_ms,
+            } => {
+                self.gestures = selected;
+                self.long_press_ms = long_press_ms;
+            }
             Change::Tick => {}
             Change::Sleep => {
+                for key in 0..KEY_COUNT {
+                    self.end_hold(key, &mut output);
+                }
                 self.asleep = true;
                 self.pending = [None; KEY_COUNT];
             }
             Change::Disconnect => {
+                for key in 0..KEY_COUNT {
+                    self.end_hold(key, &mut output);
+                }
                 self.held = [false; KEY_COUNT];
                 self.pending = [None; KEY_COUNT];
                 self.seen_report = false;
             }
         }
         for key in 0..KEY_COUNT {
-            if let Some((button, deadline)) = self.pending[key]
+            if let Some((button, deadline, gesture)) = self.pending[key]
                 && now_ms >= deadline
             {
-                output.push(Output::Candidate { key, button });
+                output.push(if gesture == Gesture::LongPress {
+                    Output::Gesture {
+                        key,
+                        button,
+                        gesture: ControlGesture::LongPress,
+                    }
+                } else {
+                    Output::Candidate { key, button }
+                });
                 self.pending[key] = None;
             }
         }
@@ -155,12 +222,21 @@ impl Input {
     }
 }
 impl Input {
+    fn end_hold(&mut self, key: usize, output: &mut Vec<Output>) {
+        if let Some(button) = self.active_holds[key].take() {
+            output.push(Output::Gesture {
+                key,
+                button,
+                gesture: ControlGesture::HoldEnd,
+            });
+        }
+    }
     /// Earliest pending deadline; allows a runtime to sleep instead of polling.
     pub fn next_deadline_ms(&self) -> Option<u64> {
         self.pending
             .iter()
             .flatten()
-            .map(|(_, deadline)| *deadline)
+            .map(|(_, deadline, _)| *deadline)
             .min()
     }
 }

@@ -66,5 +66,8 @@
       },
       "credential_slots": []
     }
+  ],
+  "capabilities": [
+    "visual_freshness"
   ]
 }

@@ -170,7 +170,7 @@ fn connect(runtime: &Path, endpoint: Endpoint) -> Client {
 fn call(client: &mut Client, op: &str, args: Value) -> Value {
     let response = client.request(op, args).unwrap();
     assert!(response.error.is_none(), "{op}: {:?}", response.error);
-    response.data
+    serde_json::to_value(response.data).unwrap()
 }
 
 fn code(client: &mut Client, op: &str, args: Value) -> String {
@@ -179,6 +179,7 @@ fn code(client: &mut Client, op: &str, args: Value) -> String {
         .error
         .unwrap_or_else(|| panic!("{op} was accepted: {:?}", response.data))
         .code
+        .to_string()
 }
 
 /// Waits for installed metadata; on-demand processes need not be running.
@@ -514,7 +515,9 @@ fn ask_in_background(
     std::thread::spawn(move || {
         let started = Instant::now();
         let response = client.request("options", question).unwrap();
-        let outcome = response.error.map_or("ok".to_owned(), |e| e.code);
+        let outcome = response
+            .error
+            .map_or("ok".to_owned(), |e| e.code.to_string());
         (outcome, started.elapsed())
     })
 }
@@ -958,5 +961,50 @@ fn completed_query_stops_without_further_client_traffic() {
             baseline,
             "finished query must retire and reap without another client event"
         );
+    });
+}
+
+#[test]
+fn plugin_settings_are_snapshotted_for_options_and_replace_visual_subscriptions() {
+    world("settings-snapshots", |runtime| {
+        let mut editor = connect(&runtime, Endpoint::Editor);
+        ready(&mut editor);
+        let set = |editor: &mut Client, port| {
+            call(
+                editor,
+                "set_plugin_settings",
+                json!({"plugin_id":PLUGIN,"parameters":{"schema_version":1,"values":{"port":port}}}),
+            );
+        };
+        set(&mut editor, 5555);
+        let mut query_client = connect(&runtime, Endpoint::Editor);
+        let query = std::thread::spawn(move || ask(&mut query_client, normal_question()));
+        let until = Instant::now() + Duration::from_secs(3);
+        while OPEN_REQUESTS.load(std::sync::atomic::Ordering::Acquire) == 0 {
+            assert!(Instant::now() < until);
+            std::thread::yield_now();
+        }
+        set(&mut editor, 6666);
+        assert_eq!(
+            listed(&query.join().unwrap()),
+            pairs(&[("port5555", "Port 5555")])
+        );
+        assert_eq!(
+            listed(&ask(&mut editor, normal_question())),
+            pairs(&[("port6666", "Port 6666")])
+        );
+        pick_button(&mut editor, values("normal"));
+        call(
+            &mut editor,
+            "edit",
+            json!({"changes":[{"kind":"set","id":"b1","field":"visual","value":{"type":format!("{PLUGIN}#probe"),"parameters":{"schema_version":1,"values":{"scenario":"normal","group":"a"}}}}]}),
+        );
+        await_visual(&mut editor, "b1", |v| {
+            v["availability"] == "current" && v["text"] == "port6666"
+        });
+        set(&mut editor, 7777);
+        await_visual(&mut editor, "b1", |v| {
+            v["availability"] == "current" && v["text"] == "port7777"
+        });
     });
 }

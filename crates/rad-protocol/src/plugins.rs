@@ -3,35 +3,7 @@ use super::*;
 use rad_plugin_contract::{ChoiceList, Definition, Field, FieldKind, OptionsScope, Parameters};
 use std::hash::{Hash, Hasher};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PluginOperation {
-    Install,
-    Update,
-    Reinstall,
-    Uninstall,
-    Rollback,
-}
-impl PluginOperation {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Install => "install",
-            Self::Update => "update",
-            Self::Reinstall => "reinstall",
-            Self::Uninstall => "uninstall",
-            Self::Rollback => "rollback",
-        }
-    }
-    pub fn parse(value: &str) -> Option<Self> {
-        Some(match value {
-            "install" => Self::Install,
-            "update" => Self::Update,
-            "reinstall" => Self::Reinstall,
-            "uninstall" => Self::Uninstall,
-            "rollback" => Self::Rollback,
-            _ => return None,
-        })
-    }
-}
+pub use rad_api::PluginOperation;
 #[derive(Clone, PartialEq, Eq)]
 pub struct PluginAdmin {
     pub operation: PluginOperation,
@@ -112,75 +84,85 @@ impl Protocol {
                     .is_some_and(|s| options.iter().any(|o| &o.value == s))
             );
         }
-        let response = self.envelope(c, Status::Ok, data, None);
+        let response = self.envelope(
+            c,
+            Status::Ok,
+            rad_api::ResponseData::Options(
+                serde_json::from_value(data).expect("options projection"),
+            ),
+            None,
+        );
         if self.encode_response(&response).is_err() {
             return self.rejection(c, "resource_exhausted", false);
         }
         response
     }
 }
-pub(super) fn admin(c: IncomingContext, args: &Map<String, Value>) -> Checked<PluginAdmin> {
+pub(super) fn admin(c: IncomingContext, request: &rad_api::Request) -> Checked<PluginAdmin> {
     if c.origin != Origin::Editor {
         return Err("permission_denied");
     }
-    closed(args, &["operation", "plugin_id", "source", "trusted"])?;
-    let operation = string(args, "operation")?;
-    if !["install", "update", "reinstall", "uninstall", "rollback"].contains(&operation) {
+    let rad_api::Request::PluginAdmin {
+        operation,
+        plugin_id,
+        source,
+        trusted,
+    } = request
+    else {
         return Err("invalid_request");
-    }
-    let downloads = ["install", "update", "reinstall"].contains(&operation);
+    };
+    let operation = *operation;
+    let downloads = matches!(
+        operation,
+        PluginOperation::Install | PluginOperation::Update | PluginOperation::Reinstall
+    );
     let source = if downloads {
-        if args.get("trusted") != Some(&Value::Bool(true)) {
+        if *trusted != Some(true) {
             return Err("confirmation_required");
         }
-        Some(string(args, "source")?.to_owned())
+        Some(source.clone().ok_or("invalid_request")?)
     } else {
-        if args.get("source").is_some_and(|v| !v.is_null()) {
+        if source.is_some() {
             return Err("invalid_request");
         }
         None
     };
-    let plugin_id = if operation != "install" {
-        Some(string(args, "plugin_id")?.to_owned())
+    let plugin_id = if operation != PluginOperation::Install {
+        Some(plugin_id.clone().ok_or("invalid_request")?)
     } else {
         None
     };
     Ok(PluginAdmin {
-        operation: PluginOperation::parse(operation).ok_or("invalid_request")?,
+        operation,
         plugin_id,
         source,
     })
 }
-pub(super) fn catalog(
-    a: &Authority,
-    c: IncomingContext,
-    args: &Map<String, Value>,
-) -> Checked<Value> {
-    closed(args, &["cursor"])?;
+pub(super) fn catalog(a: &Authority, c: IncomingContext, cursor: Option<&str>) -> Checked<Value> {
     let mut items = Vec::new();
     for (m, selection, _) in a.plugin_manifests() {
         let ready = a.plugin_available(&m.id, selection);
         for (kind, separator, defs) in [("action", ':', &m.actions), ("visual", '#', &m.visuals)] {
             for d in defs {
-                items.push(json!({"type":format!("{}{separator}{}",m.id,d.id),"kind":kind,"label":d.label,"version":m.version,"ready":ready}));
+                items.push(json!({"type":format!("{}{separator}{}",m.id,d.id),"kind":kind,"label":d.label,"version":m.version,"ready":ready,"gestures":d.gestures}));
             }
         }
     }
-    page(a, c, "catalog", args, items)
+    page(a, c, "catalog", cursor, items)
 }
 pub(super) fn schema(
     a: &Authority,
     c: IncomingContext,
-    args: &Map<String, Value>,
+    name: &str,
+    cursor: Option<&str>,
 ) -> Checked<Value> {
-    let name = string(args, "type")?;
     let (plugin, key, visual) = split(name)?;
     let d = published(a, plugin, key, visual)?.definition;
     let mut result = page(
         a,
         c,
         name,
-        args,
+        cursor,
         d.schema.fields.iter().map(|f| json!(f)).collect(),
     )?;
     result["type"] = json!(name);
@@ -236,7 +218,7 @@ fn page(
     a: &Authority,
     c: IncomingContext,
     query: &str,
-    args: &Map<String, Value>,
+    cursor: Option<&str>,
     items: Vec<Value>,
 ) -> Checked<Value> {
     let mut hash = std::hash::DefaultHasher::new();
@@ -252,13 +234,12 @@ fn page(
             .value(),
         hash.finish()
     );
-    let offset = match args.get("cursor") {
-        Some(Value::Null) => 0,
-        Some(Value::String(s)) => s
+    let offset = match cursor {
+        None => 0,
+        Some(s) => s
             .strip_prefix(&prefix)
             .and_then(|n| n.parse::<usize>().ok())
             .ok_or("cursor_expired")?,
-        _ => return Err("invalid_request"),
     };
     if offset > items.len() {
         return Err("cursor_expired");
@@ -287,10 +268,10 @@ fn page(
 pub(super) fn configuration(
     a: &Authority,
     c: IncomingContext,
-    args: &Map<String, Value>,
+    id: &str,
+    cursor: Option<&str>,
 ) -> Checked<Value> {
-    closed(args, &["id", "cursor"])?;
-    let entity = id(args, "id")?;
+    let entity = parse_id(id)?;
     let (key, bytes, visual) = a
         .plugin_configuration(c.origin, entity)
         .ok_or("not_found")?;
@@ -298,7 +279,7 @@ pub(super) fn configuration(
         .chunks(2048)
         .map(|part| json!(part.iter().map(|b| format!("{b:02x}")).collect::<String>()))
         .collect();
-    let mut result = page(a, c, &format!("configuration:{entity:?}"), args, items)?;
+    let mut result = page(a, c, &format!("configuration:{entity:?}"), cursor, items)?;
     result["type"] = json!(format!(
         "{}{}{}",
         key.plugin(),
@@ -319,25 +300,27 @@ pub(super) enum Listing {
 pub(super) fn options(
     a: &Authority,
     c: IncomingContext,
-    args: &Map<String, Value>,
+    id: &str,
+    field_name: &str,
+    cursor: Option<&str>,
+    context: Option<&std::collections::BTreeMap<String, String>>,
 ) -> Checked<Listing> {
-    closed(args, &["id", "field", "cursor", "context"])?;
-    let entity = id(args, "id")?;
+    let entity = parse_id(id)?;
     let (key, stored, visual) = a
         .plugin_configuration(c.origin, entity)
         .ok_or("not_found")?;
     let published = published(a, key.plugin(), key.name(), visual)?;
-    let field = field(published.definition, args)?;
+    let field = field(published.definition, field_name)?;
     match &field.kind {
         FieldKind::Choice { options } => {
-            if args.contains_key("context") {
+            if context.is_some() {
                 return Err("invalid_request");
             }
             page(
                 a,
                 c,
                 &format!("options:{entity:?}:{}", field.id),
-                args,
+                cursor,
                 options.iter().map(|s| json!(s)).collect(),
             )
             .map(Listing::Fixed)
@@ -355,7 +338,8 @@ pub(super) fn options(
                 field,
                 depends_on,
                 stored.as_ref(),
-                args,
+                cursor,
+                context,
                 subject,
             )
             .map(Box::new)
@@ -371,15 +355,17 @@ pub(super) fn options(
 pub(super) fn type_options(
     a: &Authority,
     origin: Origin,
-    args: &Map<String, Value>,
+    type_key: &str,
+    field_name: &str,
+    cursor: Option<&str>,
+    context: Option<&std::collections::BTreeMap<String, String>>,
 ) -> Checked<PluginOptions> {
     if origin != Origin::Editor && !a.global_consult() {
         return Err("permission_denied");
     }
-    closed(args, &["type", "field", "cursor", "context"])?;
-    let (plugin, name, visual) = split(string(args, "type")?)?;
+    let (plugin, name, visual) = split(type_key)?;
     let published = published(a, plugin, name, visual)?;
-    let field = field(published.definition, args)?;
+    let field = field(published.definition, field_name)?;
     let FieldKind::DynamicChoice { depends_on } = &field.kind else {
         return Err("invalid_request");
     };
@@ -388,12 +374,12 @@ pub(super) fn type_options(
         field,
         depends_on,
         None,
-        args,
+        cursor,
+        context,
         OptionsSubject::Type,
     )
 }
-fn field<'a>(definition: &'a Definition, args: &Map<String, Value>) -> Checked<&'a Field> {
-    let name = string(args, "field")?;
+fn field<'a>(definition: &'a Definition, name: &str) -> Checked<&'a Field> {
     definition
         .schema
         .fields
@@ -414,13 +400,12 @@ fn dynamic(
     field: &Field,
     depends_on: &[String],
     stored: Option<&Parameters>,
-    args: &Map<String, Value>,
+    cursor: Option<&str>,
+    draft: Option<&std::collections::BTreeMap<String, String>>,
     subject: OptionsSubject,
 ) -> Checked<PluginOptions> {
-    match args.get("cursor") {
-        Some(Value::Null) => {}
-        Some(Value::String(_)) => return Err("cursor_expired"),
-        _ => return Err("invalid_request"),
+    if cursor.is_some() {
+        return Err("cursor_expired");
     }
     let definition = published.definition;
     let schema_version = definition.schema.version;
@@ -440,8 +425,12 @@ fn dynamic(
             values.insert(dependency.clone(), value.clone());
         }
     }
-    if let Some(draft) = args.get("context") {
-        values.extend(draft.as_object().ok_or("invalid_request")?.clone());
+    if let Some(draft) = draft {
+        values.extend(
+            draft
+                .iter()
+                .map(|(k, v)| (k.clone(), Value::String(v.clone()))),
+        );
     }
     let context = Parameters {
         schema_version,
@@ -471,17 +460,16 @@ fn dynamic(
 pub(super) fn dependencies(
     a: &Authority,
     c: IncomingContext,
-    args: &Map<String, Value>,
+    cursor: Option<&str>,
 ) -> Checked<Value> {
     let references = a.plugin_dependencies(c.origin).ok_or("permission_denied")?;
-    closed(args, &["cursor"])?;
     let items=references.into_iter().map(|(id,dependency)| {
         let slots=a.plugin_credential_status(&id);
         let installed=a.plugin_manifests().any(|(manifest,_,_)|manifest.id==id);
         let needs=installed.then(||slots.iter().any(|(_,present)|!present));
         json!({"id":id,"version":dependency.version.map(|v|json!({"major":v.major,"minor":v.minor,"patch":v.patch})),"origin":dependency.origin,"credential_slots":slots.iter().map(|(slot,_)|slot).collect::<Vec<_>>(),"needs_credentials":needs})
     }).collect();
-    let mut result = page(a, c, "plugin_dependencies", args, items)?;
+    let mut result = page(a, c, "plugin_dependencies", cursor, items)?;
     result["view_revision"] = json!(
         a.view_revision(c.origin)
             .ok_or("resource_exhausted")?

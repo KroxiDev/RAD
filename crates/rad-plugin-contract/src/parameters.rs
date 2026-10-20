@@ -15,6 +15,9 @@ impl std::fmt::Debug for Parameters {
     }
 }
 impl Parameters {
+    pub fn text(&self, key: &str) -> Option<&str> {
+        self.values.get(key).and_then(Value::as_str)
+    }
     pub(crate) fn check_shape(&self) -> Result<(), Error> {
         if self.schema_version == 0
             || self.values.len() > 32

@@ -2,6 +2,7 @@ use rad_editor::plugins::FormDraft;
 use rad_plugin_contract::{Definition, Field, FieldKind, Schema};
 fn definition() -> Definition {
     Definition {
+        gestures: rad_plugin_contract::default_gestures(),
         response_timeout: None,
         id: "run".into(),
         label: "Run".into(),
@@ -83,7 +84,8 @@ use rad_editor::session::{Port, Session};
 use serde_json::{Value, json};
 struct Script(std::collections::VecDeque<(&'static str, Value)>);
 impl Port for Script {
-    fn request(&mut self, op: &str, _: Value) -> Result<Response, Failure> {
+    fn call(&mut self, request: rad_api::Request) -> Result<Response, Failure> {
+        let op = request.operation().as_str();
         let (expected, data) = self.0.pop_front().expect("extra unbounded read");
         assert_eq!(op, expected);
         Ok(Response {
@@ -91,7 +93,17 @@ impl Port for Script {
             id: Some("1".into()),
             session_id: None,
             status: Status::Ok,
-            data,
+            data: rad_api::ResponseData::decode(
+                rad_api::Operation::parse(op).unwrap(),
+                rad_api::Status::Ok,
+                data,
+            )
+            .map_err(|_| Failure {
+                code: "invalid_request",
+                id: None,
+                session_id: None,
+                outcome: None,
+            })?,
             error: None,
         })
     }
@@ -99,7 +111,7 @@ impl Port for Script {
 #[test]
 fn visual_chunk_must_advance_and_never_repeats_empty_chunk() {
     let mut s=Session::new(Script(vec![
- ("plugin_visual",json!({"availability":"current","revision":"1","text":null,"color":null,"image":true})),
+ ("plugin_visual",json!({"text_position":"bottom","availability":"current","revision":"1","text":null,"color":null,"image":true})),
  ("plugin_visual_read",json!({"hex":"00","next_offset":"1"})),
  ("plugin_visual_read",json!({"hex":"","next_offset":"1"})),
  ].into()));
@@ -124,9 +136,9 @@ fn paged_configuration_is_exact_and_visual_forms_do_not_add_actions() {
         "fixture#status",
         json!({"schema_version":1,"values":{"count":2}}),
     );
-    assert_eq!(request.operation, "edit");
-    assert_eq!(request.arguments["changes"][0]["field"], "visual");
-    assert_eq!(request.arguments["changes"].as_array().unwrap().len(), 1);
+    assert_eq!(request.operation().as_str(), "edit");
+    assert_eq!(request.arguments()["changes"][0]["field"], "visual");
+    assert_eq!(request.arguments()["changes"].as_array().unwrap().len(), 1);
     let mut fresh = FormDraft::new(definition());
     assert!(fresh.publish().is_err());
     fresh.set(0, Some("2".into()));
@@ -155,7 +167,7 @@ fn unchanged_visual_revision_reuses_pixels_without_reloading_png() {
     let mut s = Session::new(Script(
         vec![(
             "plugin_visual",
-            json!({"availability":"stale","revision":"3","text":"last","color":null,"image":true}),
+            json!({"text_position":"bottom","availability":"stale","revision":"3","text":"last","color":null,"image":true}),
         )]
         .into(),
     ));
@@ -167,9 +179,9 @@ fn unchanged_visual_revision_reuses_pixels_without_reloading_png() {
 #[test]
 fn one_bad_visual_does_not_hide_a_healthy_sibling() {
     let mut s=Session::new(Script(vec![
- ("plugin_visual",json!({"availability":"current","revision":"1","text":null,"color":null,"image":true})),
+ ("plugin_visual",json!({"text_position":"bottom","availability":"current","revision":"1","text":null,"color":null,"image":true})),
  ("plugin_visual_read",json!({"hex":"00","next_offset":null})),
- ("plugin_visual",json!({"availability":"current","revision":"2","text":"healthy","color":[1,2,3,255],"image":false})),
+ ("plugin_visual",json!({"text_position":"bottom","availability":"current","revision":"2","text":"healthy","color":[1,2,3,255],"image":false})),
  ].into()));
     let views = s
         .plugin_visuals_isolated(&["b1".into(), "b2".into()], &Default::default())
@@ -194,4 +206,95 @@ fn navigation_and_twenty_actions_do_not_offer_plugin_add_forms() {
         json!({"fields":{"type":"fixture:run"}});
         19
     ]));
+}
+
+#[test]
+fn plugin_settings_use_manifest_schema_and_preserve_opaque_unknown_values() {
+    let mut manifest: rad_plugin_contract::Manifest = serde_json::from_str(include_str!(
+        "../../rad-plugin-host/fixture/manifest-v1.json"
+    ))
+    .unwrap();
+    manifest.settings = Some(definition().schema);
+    manifest
+        .capabilities
+        .push(rad_plugin_contract::SETTINGS.into());
+    for values in [json!({"count":2}), json!({"count":2,"future":true})] {
+        let bytes = serde_json::to_vec(&json!({"schema_version":1,"values":values})).unwrap();
+        let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let mut session = Session::new(Script(
+            [
+                (
+                    "plugin_settings",
+                    json!({"plugin_id":manifest.id,"encoding":"hex","hex":hex}),
+                ),
+                (
+                    "plugin_manifest",
+                    json!({"plugin_id":manifest.id,"document":manifest}),
+                ),
+            ]
+            .into(),
+        ));
+        let loaded = session.plugin_form(&manifest.id, None).unwrap();
+        assert_eq!(loaded.original, bytes);
+        let mut form = loaded.form.unwrap();
+        assert_eq!(form.publish(), Ok(None));
+        assert_eq!(form.compatible(), values.get("future").is_none());
+        form.set(0, Some("3".into()));
+        assert_eq!(form.publish().is_ok(), values.get("future").is_none());
+    }
+}
+
+#[test]
+fn settings_publication_is_one_typed_edit_without_credentials() {
+    let request = rad_editor::plugins::FormTarget::Settings("org.rad.fixture".into()).request(
+        "org.rad.fixture",
+        json!({"schema_version":1,"values":{"port":4455}}),
+    );
+    assert!(matches!(
+        request,
+        rad_api::Request::SetPluginSettings { .. }
+    ));
+    assert_eq!(
+        request.arguments(),
+        json!({"plugin_id":"org.rad.fixture","parameters":{"schema_version":1,"values":{"port":4455}}})
+    );
+}
+
+#[test]
+fn missing_plugin_retains_settings_bytes_without_an_editable_form() {
+    struct Missing(Script);
+    impl Port for Missing {
+        fn call(&mut self, request: rad_api::Request) -> Result<Response, Failure> {
+            if matches!(request, rad_api::Request::PluginManifest { .. }) {
+                Ok(Response {
+                    v: 1,
+                    id: Some("1".into()),
+                    session_id: None,
+                    status: rad_api::Status::Error,
+                    data: rad_api::ResponseData::None,
+                    error: Some(rad_api::Error {
+                        code: rad_api::ErrorCode::NotFound,
+                        message: String::new(),
+                        details: json!({}),
+                        outcome: None,
+                    }),
+                })
+            } else {
+                self.0.call(request)
+            }
+        }
+    }
+    let bytes = b"opaque future plugin settings";
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    let mut session = Session::new(Missing(Script(
+        [(
+            "plugin_settings",
+            json!({"plugin_id":"org.rad.missing","encoding":"hex","hex":hex}),
+        )]
+        .into(),
+    )));
+    let loaded = session.plugin_form("org.rad.missing", None).unwrap();
+    assert_eq!(loaded.original, bytes);
+    assert!(loaded.form.is_none());
+    assert!(session.is_open());
 }

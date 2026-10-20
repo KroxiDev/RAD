@@ -28,6 +28,7 @@ impl Admin {
                     self.finish(actor, false, Some(manager_error(e)));
                 }
                 Ok(prepared) => {
+                    let prepared = *prepared;
                     let id = prepared.plugin_id().to_owned();
                     let manifest = prepared.manifest().cloned();
                     let change = match &manifest {

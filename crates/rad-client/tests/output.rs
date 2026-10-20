@@ -9,9 +9,9 @@ fn response(code: &str, outcome: Option<Outcome>) -> Response {
         id: None,
         session_id: None,
         status: Status::Error,
-        data: Value::Null,
+        data: rad_api::ResponseData::None,
         error: Some(Error {
-            code: code.into(),
+            code: rad_api::ErrorCode::parse(code).unwrap(),
             message: "Safe message".into(),
             details: json!({}),
             outcome,
@@ -58,7 +58,11 @@ fn exit_codes_distinguish_rejection_failure_storage_transport_and_unknown_outcom
         ("failed", 6),
         ("timed_out", 6),
     ] {
-        ok.data = json!({"state":state});
+        ok.data = rad_api::ResponseData::Execution(rad_api::ExecutionResult {
+            execution_id: "fixture".into(),
+            state: serde_json::from_value(json!(state)).unwrap(),
+            steps: vec![],
+        });
         assert_eq!(exit_code(&ok), expected);
     }
 }
@@ -69,6 +73,7 @@ fn structured_output_is_one_complete_response_and_text_is_english() {
     write(&response, true, &mut bytes).unwrap();
     let value: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(value["error"]["code"], "permission_denied");
+    assert_eq!(value["cli_version"], rad_api::CLI_VERSION);
     assert_eq!(bytes.last(), Some(&b'\n'));
     bytes.clear();
     write(&response, false, &mut bytes).unwrap();

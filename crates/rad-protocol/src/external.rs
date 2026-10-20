@@ -18,6 +18,12 @@ pub enum External {
     PluginAdmin(PluginAdmin),
     PluginOptions(Box<PluginOptions>),
     PluginStatus,
+    PluginRetry {
+        plugin_id: String,
+    },
+    PluginLog {
+        plugin_id: String,
+    },
     PluginVisual {
         id: ShortId,
     },
@@ -66,11 +72,19 @@ pub enum External {
 pub(super) fn parse(
     a: &Authority,
     c: IncomingContext,
-    op: &str,
-    m: &Map<String, Value>,
+    request: &rad_api::Request,
     caps: Capabilities,
 ) -> Checked<External> {
-    if op.starts_with("transfer_") || op == "restore_commit" {
+    use rad_api::Request as R;
+    if matches!(
+        request,
+        R::TransferBegin { .. }
+            | R::TransferWrite { .. }
+            | R::TransferRead { .. }
+            | R::TransferFinish { .. }
+            | R::TransferDrop { .. }
+            | R::RestoreCommit { .. }
+    ) {
         if c.origin != Origin::Editor {
             return Err("permission_denied");
         };
@@ -78,20 +92,14 @@ pub(super) fn parse(
             return Err("executor_unavailable");
         }
     }
-    match op {
-        "transfer_begin" => {
-            closed(m, &["kind", "size"])?;
-            let kind = match string(m, "kind")? {
-                "image_import" => TransferKind::ImageImport,
-                "restore" => TransferKind::Restore,
-                "export" => TransferKind::Export,
-                _ => return Err("invalid_request"),
+    match request {
+        R::TransferBegin { kind, size } => {
+            let kind = match kind {
+                rad_api::TransferKind::ImageImport => TransferKind::ImageImport,
+                rad_api::TransferKind::Restore => TransferKind::Restore,
+                rad_api::TransferKind::Export => TransferKind::Export,
             };
-            let size = match m.get("size") {
-                Some(Value::Null) => None,
-                Some(Value::String(s)) => Some(decimal(s)?),
-                _ => return Err("invalid_request"),
-            };
+            let size = size.as_deref().map(decimal).transpose()?;
             let max = if kind == TransferKind::ImageImport {
                 8 * 1024 * 1024
             } else {
@@ -102,64 +110,69 @@ pub(super) fn parse(
             };
             Ok(External::TransferBegin { kind, size })
         }
-        "transfer_write" => {
-            closed(m, &["transfer_id", "offset", "base64"])?;
-            Ok(External::TransferWrite {
-                transfer_id: token(m, "transfer_id")?,
-                offset: decimal(string(m, "offset")?)?,
-                bytes: decode_base64(string(m, "base64")?)?,
-            })
-        }
-        "transfer_read" => {
-            closed(m, &["transfer_id", "offset"])?;
-            Ok(External::TransferRead {
-                transfer_id: token(m, "transfer_id")?,
-                offset: decimal(string(m, "offset")?)?,
-            })
-        }
-        "transfer_finish" | "transfer_drop" => {
-            closed(m, &["transfer_id"])?;
-            let transfer_id = token(m, "transfer_id")?;
-            Ok(if op == "transfer_finish" {
+        R::TransferWrite {
+            transfer_id,
+            offset,
+            base64,
+        } => Ok(External::TransferWrite {
+            transfer_id: token(transfer_id)?,
+            offset: decimal(offset)?,
+            bytes: decode_base64(base64)?,
+        }),
+        R::TransferRead {
+            transfer_id,
+            offset,
+        } => Ok(External::TransferRead {
+            transfer_id: token(transfer_id)?,
+            offset: decimal(offset)?,
+        }),
+        R::TransferFinish { transfer_id } | R::TransferDrop { transfer_id } => {
+            let transfer_id = token(transfer_id)?;
+            Ok(if matches!(request, R::TransferFinish { .. }) {
                 External::TransferFinish { transfer_id }
             } else {
                 External::TransferDrop { transfer_id }
             })
         }
-        "restore_commit" => {
-            closed(m, &["transfer_id", "confirm_replace"])?;
-            if m.get("confirm_replace") != Some(&Value::Bool(true)) {
+        R::RestoreCommit {
+            transfer_id,
+            confirm_replace,
+        } => {
+            if !confirm_replace {
                 return Err("invalid_request");
             };
             Ok(External::RestoreCommit {
-                transfer_id: token(m, "transfer_id")?,
+                transfer_id: token(transfer_id)?,
                 confirmed: true,
             })
         }
-        "launcher_catalog" => {
+        R::LauncherCatalog { query, cursor } => {
             if c.origin != Origin::Editor {
                 return Err("permission_denied");
             };
             if !caps.launcher {
                 return Err("executor_unavailable");
             };
-            closed(m, &["cursor", "query"])?;
-            let query = string(m, "query")?;
             if serde_json::to_vec(query).unwrap().len() > 8192 {
                 return Err("invalid_request");
             };
             Ok(External::LauncherCatalog {
-                cursor: opaque_cursor(m)?,
-                query: query.into(),
+                cursor: cursor.as_deref().map(token).transpose()?,
+                query: query.clone(),
             })
         }
-        "options" => {
+        R::Options {
+            id: Some(id),
+            type_key,
+            field,
+            cursor,
+            context,
+        } => {
             if !caps.launcher {
                 return Err("executor_unavailable");
             };
-            closed(m, &["id", "field", "cursor"])?;
-            let id = id(m, "id")?;
-            if string(m, "field")? != "desktop_entry" {
+            let id = parse_id(id)?;
+            if type_key.is_some() || context.is_some() || field != "desktop_entry" {
                 return Err("invalid_request");
             };
             match a.get(c.origin, id) {
@@ -169,16 +182,15 @@ pub(super) fn parse(
             };
             Ok(External::LauncherOptions {
                 id,
-                cursor: opaque_cursor(m)?,
+                cursor: cursor.as_deref().map(token).transpose()?,
             })
         }
-        "media_read" => {
+        R::MediaRead { id, offset } => {
             if !caps.media {
                 return Err("executor_unavailable");
             };
-            closed(m, &["id", "offset"])?;
-            let id = id(m, "id")?;
-            let offset = decimal(string(m, "offset")?)?;
+            let id = parse_id(id)?;
+            let offset = decimal(offset)?;
             if offset > 512 * 1024 {
                 return Err("invalid_request");
             };
@@ -195,19 +207,11 @@ pub(super) fn parse(
         _ => Err("invalid_request"),
     }
 }
-fn token(m: &Map<String, Value>, key: &str) -> Checked<String> {
-    let s = string(m, key)?;
+fn token(s: &str) -> Checked<String> {
     if s.is_empty() || s.len() > 128 || s.chars().any(char::is_control) {
         Err("invalid_request")
     } else {
         Ok(s.into())
-    }
-}
-fn opaque_cursor(m: &Map<String, Value>) -> Checked<Option<String>> {
-    match m.get("cursor") {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(_)) => token(m, "cursor").map(Some),
-        _ => Err("invalid_request"),
     }
 }
 fn decode_base64(s: &str) -> Checked<Vec<u8>> {

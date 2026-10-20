@@ -842,7 +842,7 @@ fn future_document_in_package_reports_unsupported_version() {
     let length = u32::from_be_bytes(bytes[20..24].try_into().unwrap()) as usize;
     let document = String::from_utf8(bytes[60..60 + length].to_vec())
         .unwrap()
-        .replace("\"version\":2", "\"version\":3");
+        .replace("\"version\":3", "\"version\":4");
     let bytes = with_document(bytes, document.into_bytes());
     let (root, area) = area();
     assert!(matches!(
@@ -884,7 +884,7 @@ fn real_large_v1_package_at_document_boundary_can_be_restored() {
 }
 
 #[test]
-fn frozen_v2_package_roundtrips_exactly_with_portable_settings_and_counters() {
+fn frozen_v2_package_imports_then_roundtrips_v3_with_portable_settings_and_counters() {
     use rad_core::identity::IdentityRecord;
     let bytes = include_bytes!("../../../docs/fixtures/v2/profile.radpkg");
     let (root, area) = area();
@@ -911,7 +911,9 @@ fn frozen_v2_package_roundtrips_exactly_with_portable_settings_and_counters() {
     let configuration = Configuration::from_data(verified.data, &registry).unwrap();
     assert_eq!(
         rad_codec::encode(&configuration).unwrap(),
-        include_bytes!("../../../docs/fixtures/v2/profile.json")
+        include_str!("../../../docs/fixtures/v2/profile.json")
+            .replacen("\"version\":2", "\"version\":3", 1)
+            .as_bytes()
     );
     let mut encoded = vec![];
     export(
@@ -923,7 +925,12 @@ fn frozen_v2_package_roundtrips_exactly_with_portable_settings_and_counters() {
         &mut encoded,
     )
     .unwrap();
-    assert_eq!(encoded, bytes);
+    assert_eq!(&encoded[8..10], &2u16.to_be_bytes());
+    let prepared = prepare(&mut encoded.as_slice(), &area).unwrap();
+    let (reimported, media_again) = prepared.into_verified_data().unwrap();
+    assert_eq!(reimported.data, *configuration.data());
+    assert_eq!(reimported.identity.counters, registry.counters());
+    drop(media_again);
     drop(media);
     drop(area);
     std::fs::remove_dir(root).unwrap();

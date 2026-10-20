@@ -30,7 +30,8 @@ fn run() -> u8 {
         );
         return 0;
     };
-    let prior = matches!(command.operation.as_str(), "edit" | "run").then_some(Outcome::NotApplied);
+    let prior = matches!(command.request.operation().as_str(), "edit" | "run")
+        .then_some(Outcome::NotApplied);
     let result = std::env::var_os("XDG_RUNTIME_DIR")
         .ok_or(Failure {
             code: "runtime_unavailable",
@@ -55,7 +56,11 @@ fn run() -> u8 {
     }) {
         eprintln!("Runtime unavailable or response outcome unknown");
     }
-    emit(response, structured, Some(&command.operation))
+    emit(
+        response,
+        structured,
+        Some(command.request.operation().as_str()),
+    )
 }
 fn emit(response: rad_client::response::Response, structured: bool, operation: Option<&str>) -> u8 {
     let written = match operation {

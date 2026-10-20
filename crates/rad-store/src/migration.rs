@@ -7,9 +7,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-fn backup_path(path: &Path) -> PathBuf {
+fn backup_path(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
-    name.push(".v1-backup");
+    name.push(suffix);
     PathBuf::from(name)
 }
 fn same_bytes(a: &Path, b: &Path) -> Result<bool, StoreError> {
@@ -34,8 +34,8 @@ fn same_bytes(a: &Path, b: &Path) -> Result<bool, StoreError> {
         }
     }
 }
-fn preserve(path: &Path) -> Result<(), StoreError> {
-    let backup = backup_path(path);
+fn preserve(path: &Path, suffix: &str) -> Result<(), StoreError> {
+    let backup = backup_path(path, suffix);
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -95,14 +95,16 @@ pub(crate) fn migrate(path: &Path, connection: &mut Connection) -> Result<(), St
     let read = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
     let legacy = ledger::read_legacy(&read)?;
     crate::recovery::validate(&read)?;
-    preserve(path)?;
+    preserve(path, ".v1-backup")?;
     read.rollback()?;
     database::configure(connection)?;
     let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
     let work = (|| -> Result<(), StoreError> {
         // Configuring connection pragmas requires leaving the read transaction.
         // Refuse to migrate if another writer changed any byte in that gap.
-        if !same_bytes(path, &backup_path(path))? || ledger::read_legacy(&tx)? != legacy {
+        if !same_bytes(path, &backup_path(path, ".v1-backup"))?
+            || ledger::read_legacy(&tx)? != legacy
+        {
             return Err(StoreError::Corrupt);
         }
         let ids: Vec<i64> = tx
@@ -151,4 +153,78 @@ pub(crate) fn migrate(path: &Path, connection: &mut Connection) -> Result<(), St
     #[cfg(test)]
     crate::fault_tests::checkpoint("migration-committed");
     Ok(())
+}
+
+/// Upgrade embedded documents while keeping the unchanged SQLite v2 envelope.
+pub(crate) fn migrate_documents(
+    path: &Path,
+    connection: &mut Connection,
+) -> Result<(), StoreError> {
+    const BACKUP: &str = ".document-v2-backup";
+    let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
+    let registry = ledger::read(&tx)?;
+    crate::recovery::validate(&tx)?;
+    Store::read_head(&tx, &registry)?;
+    let documents: Vec<(i64, Vec<u8>)> = tx
+        .prepare("SELECT id,document FROM revisions ORDER BY id")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut migrate = Vec::new();
+    let mut corrupt = Vec::new();
+    for (id, bytes) in documents {
+        match rad_codec::document_version(&bytes) {
+            Ok(version) if version > 3 => return Err(StoreError::UnsupportedVersion),
+            Ok(1 | 2) => match Store::read_revision(&tx, id, &registry) {
+                Ok(_) => migrate.push(id),
+                Err(StoreError::Corrupt | StoreError::Invalid) => corrupt.push(id),
+                Err(error) => return Err(error),
+            },
+            _ => {}
+        }
+    }
+    if migrate.is_empty() {
+        return Ok(());
+    }
+    preserve(path, BACKUP)?;
+    tx.rollback()?;
+    database::configure(connection)?;
+    let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
+    let work = (|| -> Result<(), StoreError> {
+        if !same_bytes(path, &backup_path(path, BACKUP))? || ledger::read(&tx)? != registry {
+            return Err(StoreError::Corrupt);
+        }
+        for id in corrupt {
+            tx.execute(
+                "UPDATE recovery SET hold=?1 WHERE singleton=1 AND hold=0",
+                [id],
+            )?;
+        }
+        for id in migrate {
+            let loaded = match Store::read_revision(&tx, id, &registry) {
+                Ok(loaded) => loaded,
+                Err(StoreError::Corrupt | StoreError::Invalid) => {
+                    tx.execute(
+                        "UPDATE recovery SET hold=?1 WHERE singleton=1 AND hold=0",
+                        [id],
+                    )?;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let bytes =
+                rad_codec::encode(&loaded.configuration).map_err(|_| StoreError::Invalid)?;
+            tx.execute(
+                "UPDATE revisions SET document=?1,digest=?2 WHERE id=?3",
+                params![bytes, digest(&bytes), id],
+            )?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = work {
+        return match tx.rollback() {
+            Ok(()) if !error.may_have_effect() => Err(error),
+            _ => Err(StoreError::Uncertain),
+        };
+    }
+    tx.commit().map_err(|_| StoreError::Uncertain)
 }

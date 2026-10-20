@@ -34,7 +34,7 @@ fn official_packages_interoperate_with_runtime_and_cli() {
     }
     let mut manager = rad_plugin_manager::Manager::create(
         &root.0.join("data/rad/plugins"),
-        2,
+        rad_plugin_contract::HOST_API,
         rad_plugin_host::TARGET,
     )
     .unwrap();
@@ -50,8 +50,12 @@ fn official_packages_interoperate_with_runtime_and_cli() {
                 .success()
         );
         let bytes = std::fs::read(&output).unwrap();
-        let candidate =
-            rad_plugin_package::Candidate::parse(&bytes, 2, rad_plugin_host::TARGET).unwrap();
+        let candidate = rad_plugin_package::Candidate::parse(
+            &bytes,
+            rad_plugin_contract::HOST_API,
+            rad_plugin_host::TARGET,
+        )
+        .unwrap();
         assert_eq!(
             rad_plugin_package::encode(&candidate),
             bytes,
@@ -60,17 +64,22 @@ fn official_packages_interoperate_with_runtime_and_cli() {
         let mut corrupt = bytes.clone();
         corrupt[0] ^= 1;
         assert!(
-            rad_plugin_package::Candidate::parse(&corrupt, 2, rad_plugin_host::TARGET).is_err(),
+            rad_plugin_package::Candidate::parse(
+                &corrupt,
+                rad_plugin_contract::HOST_API,
+                rad_plugin_host::TARGET
+            )
+            .is_err(),
             "negative: damaged magic"
         );
         assert!(
-            rad_plugin_package::Candidate::parse(&bytes, 1, rad_plugin_host::TARGET).is_err(),
-            "negative: old host API"
+            rad_plugin_package::Candidate::parse(&bytes, 0, rad_plugin_host::TARGET).is_err(),
+            "negative: unsupported contract major"
         );
         assert!(
             rad_plugin_package::Candidate::parse(
                 &bytes[..bytes.len() - 1],
-                2,
+                rad_plugin_contract::HOST_API,
                 rad_plugin_host::TARGET
             )
             .is_err(),

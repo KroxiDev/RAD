@@ -59,6 +59,16 @@ impl Native {
         let mut output = vec![];
         while let Some(effect) = queue.pop_front() {
             match effect {
+                Effect::ReleaseHold { execution } => {
+                    for (id, result) in self.plugins.release_hold(actor, execution, monotonic_ms()?)
+                    {
+                        queue.extend(
+                            actor
+                                .job_complete(id, result)
+                                .map_err(|_| LauncherError::Protocol)?,
+                        );
+                    }
+                }
                 Effect::Dispatch(intent) => {
                     let submitted = match &intent.operation {
                         rad_core::execution::Operation::External { .. } => {

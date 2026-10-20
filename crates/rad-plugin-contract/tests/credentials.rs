@@ -1,16 +1,16 @@
 use rad_plugin_contract::*;
 use serde_json::json;
 fn manifest() -> Manifest {
-    serde_json::from_value(json!({"contract":1,"id":"org.rad.test","version":{"major":1,"minor":0,"patch":0},
-    "host_min":3,"host_max":3,"targets":["test"],"actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[]},"credential_slots":["password"]}],"visuals":[]})).unwrap()
+    serde_json::from_value(json!({"contract":1,"capabilities":["credentials","dynamic_options","jpeg","response_timeout","visual_freshness"],"id":"org.rad.test","version":{"major":1,"minor":0,"patch":0},
+    "host_min":1,"host_max":1,"targets":["test"],"actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[]},"credential_slots":["password"]}],"visuals":[]})).unwrap()
 }
 #[test]
-fn credentials_require_api_three_and_stay_out_of_parameters() {
+fn credentials_require_capability_and_stay_out_of_parameters() {
     let mut m = manifest();
-    assert!(m.validate(3, "test").is_ok());
-    m.host_min = 2;
-    assert_eq!(m.validate(3, "test"), Err(Error::InvalidManifest));
-    m.host_min = 3;
+    assert!(m.validate(1, "test").is_ok());
+    m.capabilities.retain(|c| c != CREDENTIALS);
+    assert_eq!(m.validate(1, "test"), Err(Error::InvalidManifest));
+    m.capabilities.push(CREDENTIALS.into());
     let p = Parameters {
         schema_version: 1,
         values: Default::default(),
@@ -25,7 +25,7 @@ fn credentials_require_api_three_and_stay_out_of_parameters() {
         d.credential_slots = vec![format!("slot{n}")];
         m.actions.push(d);
     }
-    assert_eq!(m.validate(3, "test"), Err(Error::InvalidManifest));
+    assert_eq!(m.validate(1, "test"), Err(Error::InvalidManifest));
 }
 fn framed(message: serde_json::Value) -> Vec<u8> {
     let b = serde_json::to_vec(
@@ -61,7 +61,7 @@ fn credentials_codec_is_bounded_redacted_and_additive() {
     assert!(decode(&framed(json!({"kind":"invoke","action":"run","credential_revision":0,"parameters":{"schema_version":1,"values":{}}}))).is_err());
 }
 #[test]
-fn action_response_timeout_is_declared_bounded_and_api_three_only() {
+fn action_response_timeout_is_declared_bounded_and_capability_only() {
     let mut m = serde_json::to_value(manifest()).unwrap();
     m["actions"][0]["schema"]["fields"] = json!([{"id":"seconds","label":"Seconds","required":false,"kind":{"type":"integer","min":1,"max":120}}]);
     m["actions"][0]["response_timeout"] = json!({"field":"seconds","default_seconds":30});
@@ -74,7 +74,7 @@ fn action_response_timeout_is_declared_bounded_and_api_three_only() {
         let mut bad_m = m.clone();
         bad_m["actions"][0]["response_timeout"] = bad;
         let parsed = serde_json::from_value::<Manifest>(bad_m).unwrap();
-        assert!(parsed.validate(3, "test").is_err());
+        assert!(parsed.validate(1, "test").is_err());
     }
 }
 #[test]
@@ -109,11 +109,11 @@ fn declared_budget_uses_seconds_and_legacy_default_without_widening_schema() {
             Err(Error::InvalidParameters)
         );
     }
-    m.host_min = 2;
-    assert_eq!(m.validate(3, "test"), Err(Error::InvalidManifest));
-    m.host_min = 3;
+    m.capabilities.retain(|c| c != RESPONSE_TIMEOUT);
+    assert_eq!(m.validate(1, "test"), Err(Error::InvalidManifest));
+    m.capabilities.push(RESPONSE_TIMEOUT.into());
     m.visuals.push(m.actions.remove(0));
-    assert_eq!(m.validate(3, "test"), Err(Error::InvalidManifest));
+    assert_eq!(m.validate(1, "test"), Err(Error::InvalidManifest));
 }
 #[test]
 fn largest_escaped_snapshot_fits_and_limits_are_enforced_before_writing() {

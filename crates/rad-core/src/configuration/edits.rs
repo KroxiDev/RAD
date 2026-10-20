@@ -23,6 +23,8 @@ impl Configuration {
                 && matches!(
                     edit,
                     Edit::SetSettings(_)
+                        | Edit::SetPluginSettings { .. }
+                        | Edit::SetGesture { .. }
                         | Edit::RemoveAction { .. }
                         | Edit::ReplaceActionType { .. }
                         | Edit::DuplicateButton { .. }
@@ -42,6 +44,18 @@ impl Configuration {
                 authorize_change(&data, edit)?;
             }
             match edit {
+                Edit::SetGesture { button, gesture } => {
+                    button_mut(&mut data, *button)?.gesture = *gesture;
+                }
+                Edit::SetPluginSettings { plugin, settings } => {
+                    ExternalType::new(plugin.clone(), "settings".into())?;
+                    if let Some(settings) = settings {
+                        data.plugin_settings
+                            .insert(plugin.clone(), settings.clone());
+                    } else {
+                        data.plugin_settings.remove(plugin);
+                    }
+                }
                 Edit::SetSettings(settings) => {
                     Settings::from_data(*settings)?;
                     data.settings = *settings;
@@ -374,6 +388,7 @@ impl ButtonData {
             visual: VisualSource::Manual,
             permissions: LocalPermissions::default(),
             mode: Mode::default(),
+            gesture: Gesture::Press,
             actions: vec![],
         }
     }

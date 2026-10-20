@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 [dependencies]
+rad-plugin-package = { path = "../rad-plugin-package" }
+rad-api = { path = "../rad-api" }
 rad-credentials = { path = "../rad-credentials" }
 rad-plugin-manager = { path = "../rad-plugin-manager" }
 rad-plugin-contract = { path = "../rad-plugin-contract" }
@@ -18,12 +20,12 @@ rad-launcher = { path = "../rad-launcher" }
 rad-transport = { path = "../rad-transport" }
 rad-protocol = { path = "../rad-protocol" }
 rad-wire = { path = "../rad-wire" }
+serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 rad-deck = { path = "../rad-deck" }
 rad-media = { path = "../rad-media" }
 rad-package = { path = "../rad-package" }
 [dev-dependencies]
-rad-plugin-package = { path = "../rad-plugin-package" }
 rad-client = { path = "../rad-client" }
 [features]
 fixture-tests = ["rad-plugin-host/fixture-tests", "rad-plugin-manager/fixture-tests"]

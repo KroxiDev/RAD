@@ -624,3 +624,95 @@ fn largest_clock_epoch_is_checked_and_invalid_completion_preserves_slot() {
     t.finish(r.key, b"{}").unwrap();
     assert_eq!(t.request_count(), 0);
 }
+
+#[test]
+fn pre_admission_rejections_preserve_cause_and_mutation_outcome() {
+    for operation in [
+        "set_plugin_settings",
+        "plugin_retry",
+        "plugin_admin",
+        "credential_replace",
+        "credential_remove",
+        "transfer_write",
+        "transfer_read",
+        "media_read",
+        "status",
+    ] {
+        for exhausted in [false, true] {
+            let f = Fixture::new();
+            let mut t = Transport::bind(&f.0, 1).unwrap();
+            let mut c = connect(&f, "editor.sock");
+            t.drive(0).unwrap();
+            send(&mut c, HELLO);
+            t.drive(1).unwrap();
+            let _hello = t.take_next().unwrap();
+            if exhausted {
+                for id in 2..=4 {
+                    send(&mut c, &status(id));
+                }
+                t.drive(2).unwrap();
+                while t.take_next().is_some() {}
+            }
+            send(
+                &mut c,
+                &format!(r#"{{"v":1,"id":"5","op":"{operation}","args":{{}}}}"#),
+            );
+            t.drive(3).unwrap();
+            if !exhausted {
+                t.drive(5003).unwrap();
+            }
+            let mut bytes = [0; 2048];
+            let n = c.read(&mut bytes).unwrap();
+            let response: serde_json::Value = serde_json::from_slice(&bytes[4..n]).unwrap();
+            assert_eq!(
+                response["error"]["code"],
+                if exhausted {
+                    "resource_exhausted"
+                } else {
+                    "deadline_exceeded"
+                }
+            );
+            assert!(
+                rad_api::Response::decode_value(
+                    response.clone(),
+                    5,
+                    Some("00000000000000000000000000000001"),
+                    rad_api::Operation::parse(operation).unwrap()
+                )
+                .is_ok()
+            );
+            let mutation = !matches!(operation, "transfer_read" | "media_read" | "status");
+            assert_eq!(
+                response["error"]["outcome"],
+                if mutation {
+                    serde_json::json!("not_applied")
+                } else {
+                    serde_json::Value::Null
+                },
+                "{operation}, exhausted={exhausted}"
+            );
+        }
+    }
+}
+
+#[test]
+fn correlated_wire_rejection_keeps_known_mutation_not_applied() {
+    let f = Fixture::new();
+    let mut t = Transport::bind(&f.0, 1).unwrap();
+    let mut c = connect(&f, "editor.sock");
+    t.drive(0).unwrap();
+    send(&mut c, HELLO);
+    t.drive(1).unwrap();
+    let _hello = t.take_next().unwrap();
+    send(
+        &mut c,
+        r#"{"v":2,"id":"2","op":"plugin_retry","args":{"plugin_id":"fixture"}}"#,
+    );
+    t.drive(2).unwrap();
+    let mut bytes = [0; 2048];
+    let n = c.read(&mut bytes).unwrap();
+    let response: serde_json::Value = serde_json::from_slice(&bytes[4..n]).unwrap();
+    assert_eq!(response["error"]["code"], "unsupported_version");
+    assert_eq!(response["error"]["outcome"], "not_applied");
+    assert!(t.take_next().is_none());
+}

@@ -8,8 +8,7 @@ fn status_json_generates_only_the_official_status_request() {
     assert_eq!(
         parse(&args(&["status", "--json"])).unwrap(),
         Invocation::Command(Command {
-            operation: "status".into(),
-            arguments: json!({}),
+            request: rad_api::Request::Status {},
             json: true,
             wait_ms: None,
         })
@@ -43,8 +42,7 @@ fn query_commands_preserve_exact_ids_and_do_not_offer_admin_or_socket_override()
         assert_eq!(
             parse(&args(&input)).unwrap(),
             Invocation::Command(Command {
-                operation: operation.into(),
-                arguments,
+                request: rad_api::Request::parse(operation, arguments).unwrap(),
                 json: false,
                 wait_ms: None
             })
@@ -73,8 +71,8 @@ fn edit_commands_encode_existing_entity_changes_not_documents_or_administration(
             json!([{"kind":"set","id":"b1","field":"name","value":"Studio"}]),
         ),
         (
-            vec!["set", "a3", "volume", "42"],
-            json!([{"kind":"set","id":"a3","field":"volume","value":42}]),
+            vec!["set", "a3", "milliseconds", "42"],
+            json!([{"kind":"set","id":"a3","field":"milliseconds","value":42}]),
         ),
         (
             vec!["move", "b1", "31"],
@@ -88,14 +86,14 @@ fn edit_commands_encode_existing_entity_changes_not_documents_or_administration(
         assert_eq!(
             parse(&args(&input)).unwrap(),
             Invocation::Command(Command {
-                operation: "edit".into(),
-                arguments: json!({"changes":changes}),
+                request: rad_api::Request::parse("edit", json!({"changes":changes})).unwrap(),
                 json: false,
                 wait_ms: None
             })
         );
     }
     for input in [
+        vec!["set", "a3", "volume", "42"],
         vec!["move", "b1", "32"],
         vec!["move", "a1", "0"],
         vec!["move", "b1", "01"],
@@ -139,8 +137,7 @@ fn execution_wait_options_never_become_server_side_wait_or_human_bypass() {
         assert_eq!(
             parse(&args(&input)).unwrap(),
             Invocation::Command(Command {
-                operation: op.into(),
-                arguments: value,
+                request: rad_api::Request::parse(op, value).unwrap(),
                 json: false,
                 wait_ms: wait
             })
@@ -207,8 +204,12 @@ fn order_takes_only_the_new_sequence_and_refuses_the_retired_pauses_option() {
     assert_eq!(
         parse(&args(&["order", "b2", "--indices", "[1,0]"])).unwrap(),
         Invocation::Command(Command {
-            operation: "edit".into(),
-            arguments: json!({"changes":[{"kind":"order","id":"b2","indices":[1,0]}]}),
+            request: rad_api::Request::Edit {
+                changes: vec![rad_api::Change::Order {
+                    id: "b2".into(),
+                    indices: vec![1, 0]
+                }]
+            },
             json: false,
             wait_ms: None
         })

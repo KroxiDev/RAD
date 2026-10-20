@@ -1,6 +1,6 @@
 //! Revision-bound, bounded projection of used plugins, never installation authority.
 use crate::{Request, session::Error};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::BTreeSet;
 
 // The canonical configuration is bounded to 1 MiB. Every distinct reference
@@ -29,8 +29,9 @@ pub struct Dependencies {
 }
 impl Dependencies {
     pub fn request(&self) -> Option<Request> {
-        (!self.complete && !self.failed)
-            .then(|| Request::new("plugin_dependencies", json!({"cursor":self.cursor})))
+        (!self.complete && !self.failed).then(|| Request::PluginDependencies {
+            cursor: self.cursor.clone(),
+        })
     }
     pub fn accept(&mut self, data: Value) -> Result<(), Error> {
         let result = self.accept_page(data);

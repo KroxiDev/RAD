@@ -77,6 +77,8 @@ struct Connection {
     output: VecDeque<Output>,
     accepted: u64,
     last_received: u64,
+    subscribed: bool,
+    notices: BTreeMap<u8, Vec<u8>>,
     hello: bool,
     close_after_flush: bool,
     frame_started: Option<u64>,
@@ -143,7 +145,7 @@ impl Transport {
                 (!c.hello && now.saturating_sub(c.accepted) >= 2000)
                     || c.frame_started
                         .is_some_and(|start| now.saturating_sub(start) >= 2000)
-                    || now.saturating_sub(c.last_received) >= 60000
+                    || (!c.subscribed && now.saturating_sub(c.last_received) >= 60000)
                     || c.output
                         .front()
                         .is_some_and(|o| now.saturating_sub(o.queued) >= 2000)
@@ -226,6 +228,8 @@ impl Transport {
                             output: VecDeque::new(),
                             accepted: self.now,
                             last_received: self.now,
+                            subscribed: false,
+                            notices: BTreeMap::new(),
                             hello: false,
                             close_after_flush: false,
                             frame_started: None,
@@ -274,11 +278,23 @@ impl Transport {
                                     let Some(request_id) = e.id else { return false };
                                     let code = match e.code {
                                         rad_wire::ErrorCode::UnsupportedVersion => {
-                                            "unsupported_version"
+                                            rad_api::ErrorCode::UnsupportedVersion
                                         }
-                                        _ => "invalid_request",
+                                        _ => rad_api::ErrorCode::InvalidRequest,
                                     };
-                                    if !self.error(c, request_id, code, "") {
+                                    // A correlated envelope rejection has not been admitted.
+                                    // Recover only an unambiguous operation through the same
+                                    // bounded, duplicate-rejecting JSON parser as rad-wire.
+                                    let operation = rad_wire::parse_json(frame.payload())
+                                        .ok()
+                                        .and_then(|value| {
+                                            value
+                                                .get("op")
+                                                .and_then(serde_json::Value::as_str)
+                                                .map(str::to_owned)
+                                        })
+                                        .unwrap_or_default();
+                                    if !self.error(c, request_id, code, &operation) {
                                         return false;
                                     }
                                     c.close_after_flush = e.close;
@@ -294,7 +310,7 @@ impl Transport {
                                 if !self.error(
                                     c,
                                     request.id(),
-                                    "resource_exhausted",
+                                    rad_api::ErrorCode::ResourceExhausted,
                                     request.operation(),
                                 ) {
                                     return false;
@@ -355,6 +371,12 @@ impl Transport {
             if !c.writable {
                 break;
             }
+            if c.output.is_empty()
+                && let Some((_, payload)) = c.notices.pop_first()
+                && !Self::enqueue(c, &payload, self.now)
+            {
+                return false;
+            }
             let Some(front) = c.output.front_mut() else {
                 break;
             };
@@ -411,25 +433,29 @@ impl Transport {
 }
 
 impl Transport {
-    fn error(&self, c: &mut Connection, id: u64, code: &str, operation: &str) -> bool {
-        let mutation = matches!(
-            operation,
-            "run"
-                | "edit"
-                | "create_folder"
-                | "create_button"
-                | "add_action"
-                | "duplicate"
-                | "delete"
-                | "move_folder"
-                | "set_permissions"
-                | "navigate"
-                | "undo"
-                | "redo"
-                | "set_settings"
-                | "restore_commit"
-        ) || operation.starts_with("transfer_");
-        let payload=serde_json::to_vec(&serde_json::json!({"v":1,"id":id.to_string(),"session_id":format!("{:032x}",self.session),"status":"error","data":null,"error":{"code":code,"message":"Request rejected","details":{},"outcome":if mutation{Some("not_applied")}else{None}}})).unwrap();
+    fn error(
+        &self,
+        c: &mut Connection,
+        id: u64,
+        code: rad_api::ErrorCode,
+        operation: &str,
+    ) -> bool {
+        let mutation =
+            rad_api::Operation::parse(operation).is_some_and(rad_api::Operation::is_mutation);
+        let response = rad_api::Response {
+            v: rad_api::VERSION,
+            id: Some(id.to_string()),
+            session_id: Some(format!("{:032x}", self.session)),
+            status: rad_api::Status::Error,
+            data: rad_api::ResponseData::None,
+            error: Some(rad_api::Error {
+                code,
+                message: "Request rejected".into(),
+                details: serde_json::json!({}),
+                outcome: mutation.then_some(rad_api::Outcome::NotApplied),
+            }),
+        };
+        let payload = serde_json::to_vec(&response).expect("serializable transport rejection");
         Self::enqueue(c, &payload, self.now)
     }
 }
@@ -448,7 +474,12 @@ impl Transport {
             };
             self.ready.retain(|r| r.key != key);
             if let Some(mut c) = self.connections.remove(&key.connection) {
-                if self.error(&mut c, key.id, "deadline_exceeded", &pending.operation) {
+                if self.error(
+                    &mut c,
+                    key.id,
+                    rad_api::ErrorCode::DeadlineExceeded,
+                    &pending.operation,
+                ) {
                     self.connections.insert(key.connection, c);
                 } else {
                     self.disconnected(key.connection);
@@ -486,7 +517,9 @@ impl Transport {
             include(self.now);
         }
         for c in self.connections.values() {
-            if (c.readable && !c.close_after_flush) || (c.writable && !c.output.is_empty()) {
+            if (c.readable && !c.close_after_flush)
+                || (c.writable && (!c.output.is_empty() || !c.notices.is_empty()))
+            {
                 include(self.now);
             }
             if !c.hello {
@@ -495,7 +528,9 @@ impl Transport {
             if let Some(start) = c.frame_started {
                 include(start + 2000);
             }
-            include(c.last_received + 60000);
+            if !c.subscribed {
+                include(c.last_received + 60000);
+            }
             if let Some(o) = c.output.front() {
                 include(o.queued + 2000);
             }
@@ -580,5 +615,40 @@ impl Transport {
     }
     pub fn connection_ids(&self) -> impl Iterator<Item = u64> + '_ {
         self.connections.keys().copied()
+    }
+}
+
+impl Transport {
+    // Fixed key space and payload bound; pending frames coalesce before framing.
+    fn queue_notice(c: &mut Connection, kind: u8, payload: &[u8]) -> bool {
+        if kind >= 8 || payload.is_empty() || payload.len() > 4096 {
+            return false;
+        }
+        c.notices.insert(kind, payload.to_vec());
+        c.writable = true;
+        true
+    }
+    /// Dedicated subscription sockets do not expire merely for being quiet.
+    pub fn subscribe(&mut self, connection: u64) -> bool {
+        let Some(c) = self.connections.get_mut(&connection) else {
+            return false;
+        };
+        c.subscribed = true;
+        true
+    }
+    /// Notice payloads are opaque to transport. At most eight kinds per peer,
+    /// plus the one in-flight frame, never replace partially written bytes.
+    pub fn notify(
+        &mut self,
+        connection: u64,
+        kind: u8,
+        payload: &[u8],
+    ) -> Result<(), TransportError> {
+        if let Some(c) = self.connections.get_mut(&connection)
+            && (!c.subscribed || !Self::queue_notice(c, kind, payload))
+        {
+            return Err(TransportError::InvalidResponse);
+        }
+        Ok(())
     }
 }

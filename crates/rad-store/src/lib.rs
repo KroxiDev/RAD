@@ -160,6 +160,8 @@ impl Store {
         }
         if version == 1 {
             migration::migrate(path, &mut connection)?;
+        } else {
+            migration::migrate_documents(path, &mut connection)?;
         }
         database::configure(&connection)?;
         let mut store = Self {

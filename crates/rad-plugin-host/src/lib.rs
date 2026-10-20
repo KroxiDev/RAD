@@ -1,7 +1,11 @@
 //! Bounded process owner. Pump never waits on a child or a pipe; no reader threads.
+mod holds;
+mod stderr;
+pub use holds::{HoldTicket, MAX_HOLDS, MAX_PLUGIN_HOLDS};
 mod worker;
 use rad_plugin_contract::{Correlation, Manifest, Message, Outcome, Parameters, VisualState};
 use std::{collections::BTreeMap, process::Command, sync::Arc};
+pub use stderr::{MAX_LINE_BYTES as MAX_STDERR_LINE_BYTES, MAX_LINES as MAX_STDERR_LINES};
 use worker::{Pending, Visual, Worker};
 pub const TARGET: &str = env!("RAD_PLUGIN_TARGET");
 pub use rad_plugin_contract::{ChoiceList, MAX_PLUGINS, OptionsScope};
@@ -52,6 +56,12 @@ pub enum Diagnostic {
     Exited,
     Backpressure,
 }
+/// Immutable per-operation portable settings and physical control event.
+#[derive(Debug, Clone, Default)]
+pub struct InvokeContext {
+    pub settings: Option<Parameters>,
+    pub control: Option<rad_plugin_contract::ControlEvent>,
+}
 #[derive(Default)]
 pub struct Host {
     // Tickets keep this allocation alive: address identity cannot ABA across Hosts.
@@ -85,6 +95,14 @@ impl Host {
     pub fn state(&self, id: &str) -> Option<State> {
         self.workers.get(id).map(|w| w.state)
     }
+    /// Capability agreed by this live process generation, never merely declared metadata.
+    pub fn negotiated_capability(&self, id: &str, generation: u64, capability: &str) -> bool {
+        self.workers.get(id).is_some_and(|w| {
+            w.generation == generation
+                && w.state == State::Ready
+                && rad_plugin_contract::supports(&w.capabilities, capability)
+        })
+    }
     pub fn bindings(&self) -> impl Iterator<Item = (&Manifest, u64, State)> {
         self.workers
             .values()
@@ -108,11 +126,50 @@ impl Host {
         params: Parameters,
         timing: (u64, Option<u64>),
     ) -> Result<Correlation, Error> {
+        self.invoke_with_context(
+            id,
+            generation,
+            action,
+            params,
+            timing,
+            InvokeContext::default(),
+        )
+    }
+    pub fn invoke_with_context(
+        &mut self,
+        id: &str,
+        generation: u64,
+        action: &str,
+        params: Parameters,
+        timing: (u64, Option<u64>),
+        context: InvokeContext,
+    ) -> Result<Correlation, Error> {
+        if context.control.as_ref().is_some_and(|c| {
+            matches!(
+                c.gesture,
+                rad_plugin_contract::ControlGesture::HoldStart
+                    | rad_plugin_contract::ControlGesture::HoldEnd
+            )
+        }) {
+            return Err(Error::Invalid);
+        }
+        self.invoke_context_inner(id, generation, action, params, timing, context)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn invoke_context_inner(
+        &mut self,
+        id: &str,
+        generation: u64,
+        action: &str,
+        params: Parameters,
+        timing: (u64, Option<u64>),
+        context: InvokeContext,
+    ) -> Result<Correlation, Error> {
         let (deadline, credential_revision) = timing;
         if self
             .workers
             .values()
-            .map(|w| w.pending.len())
+            .map(|w| w.pending.values().filter(|p| !p.reserved_end).count())
             .sum::<usize>()
             >= MAX_JOBS
         {
@@ -132,11 +189,25 @@ impl Host {
             .find(|d| d.id == action)
             .ok_or(Error::Invalid)?;
         params.validate(definition).map_err(|_| Error::Invalid)?;
-        if w.pending.len() >= MAX_PLUGIN_JOBS {
+        validate_settings(&w.manifest, context.settings.as_ref())?;
+        if let Some(event) = &context.control {
+            use rad_plugin_contract::{ControlGesture, Gesture};
+            let gesture = match event.gesture {
+                ControlGesture::Press => Gesture::Press,
+                ControlGesture::HoldStart | ControlGesture::HoldEnd => Gesture::Hold,
+                ControlGesture::LongPress => Gesture::LongPress,
+            };
+            if !definition.gestures.contains(&gesture) {
+                return Err(Error::Invalid);
+            }
+        }
+        if w.pending.values().filter(|p| !p.reserved_end).count() >= MAX_PLUGIN_JOBS {
             return Err(Error::Capacity);
         }
         w.check_credentials(credential_revision)?;
         let c = w.send(Message::Invoke {
+            settings: context.settings,
+            control: context.control,
             credential_revision,
             action: action.into(),
             parameters: params,
@@ -168,11 +239,25 @@ impl Host {
         deadline: u64,
         credential_revision: Option<u64>,
     ) -> Result<Correlation, Error> {
+        self.options_with_settings(id, generation, query, deadline, credential_revision, None)
+    }
+    pub fn options_with_settings(
+        &mut self,
+        id: &str,
+        generation: u64,
+        query: OptionsQuery,
+        deadline: u64,
+        credential_revision: Option<u64>,
+        settings: Option<Parameters>,
+    ) -> Result<Correlation, Error> {
         if deadline <= self.now {
             return Err(Error::Clock);
         }
         let w = self.workers.get_mut(id).ok_or(Error::Unavailable)?;
-        if w.generation != generation || w.state != State::Ready || w.api < 2 {
+        if w.generation != generation
+            || w.state != State::Ready
+            || !rad_plugin_contract::supports(&w.capabilities, rad_plugin_contract::DYNAMIC_OPTIONS)
+        {
             return Err(Error::Unavailable);
         }
         let definitions = match query.scope {
@@ -189,7 +274,9 @@ impl Host {
             return Err(Error::Capacity);
         }
         w.check_credentials(credential_revision)?;
+        validate_settings(&w.manifest, settings.as_ref())?;
         let c = w.send(Message::Options {
+            settings,
             credential_revision,
             scope: query.scope,
             definition: query.definition,
@@ -295,6 +382,17 @@ impl Host {
         ttl_ms: u64,
         credential_revision: Option<u64>,
     ) -> Result<Correlation, Error> {
+        self.subscribe_with_settings(id, source, parameters, ttl_ms, credential_revision, None)
+    }
+    pub fn subscribe_with_settings(
+        &mut self,
+        id: &str,
+        source: &str,
+        parameters: Parameters,
+        ttl_ms: u64,
+        credential_revision: Option<u64>,
+        settings: Option<Parameters>,
+    ) -> Result<Correlation, Error> {
         if !(1..=60000).contains(&ttl_ms) {
             return Err(Error::Invalid);
         }
@@ -316,7 +414,9 @@ impl Host {
             )
             .map_err(|_| Error::Invalid)?;
         w.check_credentials(credential_revision)?;
+        validate_settings(&w.manifest, settings.as_ref())?;
         let c = w.send(Message::Subscribe {
+            settings,
             credential_revision,
             source: source.into(),
             parameters,
@@ -324,6 +424,9 @@ impl Host {
         w.visuals.insert(
             c.request,
             Visual {
+                observed_current: false,
+                received_state: false,
+                renewals: 0,
                 credential_revision,
                 state: VisualState::Unavailable,
                 expires,
@@ -356,6 +459,41 @@ impl Host {
             .then(|| w.visuals.get(&key.request))
             .flatten()
             .map(|v| &v.state)
+    }
+    /// Accepted payloadless renewals for the current subscription, saturating.
+    pub fn visual_renewals(&self, id: &str, key: Correlation) -> u64 {
+        self.workers
+            .get(id)
+            .filter(|w| w.generation == key.generation)
+            .and_then(|w| w.visuals.get(&key.request))
+            .map_or(0, |v| v.renewals)
+    }
+    pub fn visual_valid_until(&self, id: &str, key: Correlation) -> Option<u64> {
+        self.workers
+            .get(id)
+            .filter(|w| w.generation == key.generation)
+            .and_then(|w| w.visuals.get(&key.request))
+            .map(|v| v.expires)
+    }
+    /// Owned process only; callers must not interpret absence as group cleanup.
+    pub fn process_id(&self, id: &str) -> Option<u32> {
+        self.workers
+            .get(id)?
+            .child
+            .as_ref()
+            .map(std::process::Child::id)
+    }
+    pub fn credential_leak_detected(&self, id: &str) -> bool {
+        self.workers
+            .get(id)
+            .is_some_and(|w| w.stderr.credential_leak_detected || w.protocol_credential_leak)
+    }
+    /// Most recent sanitized stderr lines, bounded and rate-limited per process.
+    pub fn stderr(&self, id: &str) -> Vec<String> {
+        self.workers
+            .get(id)
+            .map(|w| w.stderr.lines.iter().cloned().collect())
+            .unwrap_or_default()
     }
     pub fn diagnostics(&self, id: &str) -> Vec<Diagnostic> {
         self.workers
@@ -485,3 +623,19 @@ impl Host {
 
 mod credentials;
 pub use credentials::CredentialState;
+
+fn validate_settings(manifest: &Manifest, settings: Option<&Parameters>) -> Result<(), Error> {
+    if let Some(settings) = settings {
+        let schema = manifest.settings.as_ref().ok_or(Error::Invalid)?;
+        let definition = rad_plugin_contract::Definition {
+            id: "settings".into(),
+            label: "Settings".into(),
+            schema: schema.clone(),
+            credential_slots: vec![],
+            response_timeout: None,
+            gestures: rad_plugin_contract::default_gestures(),
+        };
+        settings.validate(&definition).map_err(|_| Error::Invalid)?;
+    }
+    Ok(())
+}

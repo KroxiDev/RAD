@@ -115,6 +115,7 @@ pub struct DispatchIntent {
     pub action: crate::identity::Binding,
     pub operation: Operation,
     pub deadline_ms: u64,
+    pub control: Option<crate::input::ControlEvent>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
@@ -196,6 +197,7 @@ struct State {
     residuals: std::collections::BTreeSet<DispatchId>,
     runs: Vec<Run>,
     results: std::collections::VecDeque<std::sync::Arc<Terminal>>,
+    result_pins: std::collections::BTreeSet<ExecutionId>,
 }
 #[derive(Debug)]
 pub struct Engine {
@@ -216,6 +218,7 @@ impl Engine {
                 residuals: std::collections::BTreeSet::new(),
                 runs: vec![],
                 results: std::collections::VecDeque::new(),
+                result_pins: Default::default(),
             },
         })
     }
@@ -257,6 +260,42 @@ impl Engine {
             .chain(self.state.results.iter().map(|r| &r.result))
             .find(|r| r.id == id)
             .cloned()
+            .map(|mut result| {
+                if self.state.result_pins.contains(&id)
+                    && result.status == ExecutionStatus::Succeeded
+                {
+                    result.status = ExecutionStatus::Running;
+                }
+                result
+            })
+    }
+    /// Retain an execution while a bounded external cleanup obligation is outstanding.
+    pub fn pin_result(&mut self, id: ExecutionId) -> Result<(), ExecutionError> {
+        if self.state.result_pins.len() >= MAX_RESULTS {
+            return Err(ExecutionError::Capacity);
+        }
+        if self.result(id).is_none() {
+            return Err(ExecutionError::NotFound);
+        }
+        self.state.result_pins.insert(id);
+        Ok(())
+    }
+    pub fn release_result(&mut self, id: ExecutionId) {
+        if self.state.result_pins.remove(&id)
+            && let Some(result) = self.state.results.iter_mut().find(|r| r.result.id == id)
+        {
+            std::sync::Arc::make_mut(result).finished_at = self.state.now;
+        }
+    }
+    /// Cleanup failure never restarts a plan or replaces an earlier failure with success.
+    pub fn report_cleanup_failure(&mut self, id: ExecutionId) {
+        if let Some(run) = self.state.runs.iter_mut().find(|r| r.result.id == id) {
+            run.failure.get_or_insert(ExecutionStatus::Failed);
+        } else if let Some(result) = self.state.results.iter_mut().find(|r| r.result.id == id)
+            && result.result.status == ExecutionStatus::Succeeded
+        {
+            std::sync::Arc::make_mut(result).result.status = ExecutionStatus::Failed;
+        }
     }
     /// Admission-time configuration, available only while the execution is active.
     pub fn snapshot(&self, id: ExecutionId) -> Option<&Snapshot> {
@@ -458,6 +497,7 @@ impl Run {
             action: step.action,
             operation: operation.clone(),
             deadline_ms: deadline,
+            control: None,
         }))
     }
     /// Lets the next step start now that nothing holds the plan back.
@@ -474,6 +514,24 @@ pub enum Completion {
     Failed(Failure),
 }
 impl Engine {
+    /// Stop only steps not dispatched yet; in-flight jobs retain their credit and outcome.
+    pub fn cancel_pending(&mut self, id: ExecutionId) -> Result<(), ExecutionError> {
+        self.transition(|state| {
+            if let Some(run) = state.runs.iter_mut().find(|r| r.result.id == id) {
+                if run
+                    .result
+                    .steps
+                    .iter()
+                    .any(|step| step.status == StepStatus::Waiting)
+                {
+                    run.stop_pending(ExecutionStatus::Failed);
+                }
+                let intents = state.pump()?;
+                debug_assert!(intents.is_empty());
+            }
+            Ok(())
+        })
+    }
     /// Report actual job termination, not just a timeout or cancellation request.
     pub fn complete(
         &mut self,
@@ -491,9 +549,9 @@ impl Engine {
                 return Err(ExecutionError::TimeReversed);
             }
             state.now = now_ms;
-            state
-                .results
-                .retain(|r| now_ms - r.finished_at < RESULT_TTL_MS);
+            state.results.retain(|r| {
+                state.result_pins.contains(&r.result.id) || now_ms - r.finished_at < RESULT_TTL_MS
+            });
             state.pump()
         })
     }
@@ -508,6 +566,7 @@ impl Engine {
                 self.state
                     .results
                     .iter()
+                    .filter(|r| !self.state.result_pins.contains(&r.result.id))
                     .filter_map(|r| r.finished_at.checked_add(RESULT_TTL_MS)),
             )
             .min()
@@ -648,7 +707,12 @@ impl State {
             finished_at: self.now,
         }));
         while self.results.len() > MAX_RESULTS {
-            self.results.pop_front();
+            let index = self
+                .results
+                .iter()
+                .position(|r| !self.result_pins.contains(&r.result.id))
+                .expect("bounded result pins");
+            self.results.remove(index);
         }
     }
 }

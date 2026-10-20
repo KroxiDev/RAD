@@ -1,4 +1,4 @@
-//! Dynamic options against the real `org.rad.test.options` process (host API 2).
+//! Dynamic options against the real `org.rad.test.options` process (major 1 with dynamic_options).
 use rad_plugin_contract::*;
 use rad_plugin_host::{
     Diagnostic, Error, Host, MAX_PLUGIN_JOBS, OptionsOutcome, OptionsQuery, State, TARGET,
@@ -407,7 +407,7 @@ fn queries_that_do_not_fit_the_manifest_fail_before_anything_is_sent() {
 }
 
 #[test]
-fn querying_options_never_invokes_and_a_jpeg_visual_is_accepted_on_api_two() {
+fn querying_options_never_invokes_and_a_negotiated_jpeg_visual_is_accepted() {
     let (mut host, g) = start();
     for (field, values) in [
         ("group", json!({"scenario":"normal"})),
@@ -488,7 +488,7 @@ fn option_deadlines_enter_next_poll_without_periodic_wakeups() {
 }
 
 #[test]
-fn an_api_one_plugin_refuses_queries_without_a_frame_and_keeps_working() {
+fn a_plugin_without_options_capability_refuses_queries_without_a_frame_and_keeps_working() {
     const FIXTURE: &str = "org.rad.fixture";
     let v1 = Document::new(include_bytes!("../fixture/manifest-v1.json"))
         .unwrap()
@@ -509,8 +509,8 @@ fn an_api_one_plugin_refuses_queries_without_a_frame_and_keeps_working() {
         host.pump(0).unwrap();
         std::thread::sleep(Duration::from_millis(1));
     }
-    // `mode` is not a dynamic field: this query would be `Invalid` on API 2, so
-    // `Unavailable` shows the API gate refuses before the manifest is consulted.
+    // `mode` is not a dynamic field: this query would be `Invalid` with dynamic_options, so
+    // `Unavailable` shows the capability gate refuses before the manifest is consulted.
     let refused = query(OptionsScope::Action, "run", "mode", json!({}));
     assert_eq!(
         host.options(FIXTURE, g, refused, 5000),
@@ -537,10 +537,10 @@ fn an_api_one_plugin_refuses_queries_without_a_frame_and_keeps_working() {
 }
 
 #[test]
-fn a_jpeg_visual_from_a_plugin_negotiated_at_api_one_is_a_protocol_violation() {
-    // Same process as above, but its manifest only asks for API 1 (so it has no dynamic fields).
+fn a_jpeg_visual_without_its_negotiated_capability_is_a_protocol_violation() {
+    // Same process as above, but its manifest does not offer JPEG.
     let mut m = manifest();
-    (m.host_min, m.host_max) = (1, 1);
+    m.capabilities.retain(|c| c != "jpeg");
     for d in m.actions.iter_mut().chain(m.visuals.iter_mut()) {
         d.schema
             .fields

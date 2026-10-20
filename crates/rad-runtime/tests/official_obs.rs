@@ -30,7 +30,7 @@ fn official_obs_interoperates_with_runtime_and_cli() {
     let candidate = rad_plugin_package::Candidate::from_parts(
         &manifest,
         &executable,
-        3,
+        rad_plugin_contract::HOST_API,
         rad_plugin_host::TARGET,
     )
     .unwrap();
@@ -38,7 +38,7 @@ fn official_obs_interoperates_with_runtime_and_cli() {
     let bytes = rad_plugin_package::encode(&candidate);
     let mut manager = rad_plugin_manager::Manager::create(
         &root.0.join("data/rad/plugins"),
-        3,
+        rad_plugin_contract::HOST_API,
         rad_plugin_host::TARGET,
     )
     .unwrap();

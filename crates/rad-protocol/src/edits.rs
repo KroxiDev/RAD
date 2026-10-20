@@ -5,22 +5,26 @@ use rad_core::configuration::{
     DesktopEntry, Edit, ExternalType, Mode, TextPosition, VisualSource, Wait,
 };
 use rad_core::identity::EntityIdentity;
-pub(super) fn command(op: &str, args: &Map<String, Value>) -> Checked<Command> {
-    match op {
-        "create_button" | "create_folder" => {
-            let key = if op == "create_button" {
-                "folder_id"
-            } else {
-                "parent_id"
-            };
-            closed(args, &[key, "position", "name"])?;
-            let folder = id(args, key)?;
+pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
+    use rad_api::Request as R;
+    match request {
+        R::CreateButton {
+            folder_id: folder,
+            position: pos,
+            name,
+        }
+        | R::CreateFolder {
+            parent_id: folder,
+            position: pos,
+            name,
+        } => {
+            let folder = parse_id(folder)?;
             if folder.kind() != EntityKind::Folder {
                 return Err("invalid_request");
-            };
-            let position = position(args)?;
-            let name = string(args, "name")?.to_owned();
-            let is_folder = op == "create_folder";
+            }
+            let position = position(*pos)?;
+            let name = name.clone();
+            let is_folder = matches!(request, R::CreateFolder { .. });
             Ok(Command::PrepareEdits(vec![Box::new(move |cfg| {
                 let folder = resolve(cfg, folder)?;
                 Ok(vec![if is_folder {
@@ -38,17 +42,24 @@ pub(super) fn command(op: &str, args: &Map<String, Value>) -> Checked<Command> {
                 }])
             })]))
         }
-        "add_action" => {
-            closed(args, &["button_id", "type", "parameters"])?;
-            let id = id(args, "button_id")?;
-            let parameters = args.get("parameters").ok_or("invalid_request")?;
-            let kind = match string(args, "type")? {
-                "launcher" => ActionKind::Launcher(launcher(parameters)?),
-                "wait" => ActionKind::Wait(wait(parameters)?),
-                name => ActionKind::External {
+        R::AddAction {
+            button_id,
+            type_key,
+            parameters,
+        } => {
+            let id = parse_id(button_id)?;
+            let kind = match (type_key.as_str(), parameters) {
+                ("launcher", rad_api::ActionParameters::Launcher(p)) => {
+                    ActionKind::Launcher(launcher(&p.desktop_entry)?)
+                }
+                ("wait", rad_api::ActionParameters::Wait(p)) => {
+                    ActionKind::Wait(milliseconds(p.milliseconds)?)
+                }
+                (name, rad_api::ActionParameters::Plugin(p)) => ActionKind::External {
                     type_key: external_key(name, ':')?,
-                    parameters: parameter_bytes(parameters)?,
+                    parameters: parameter_bytes(p)?,
                 },
+                _ => return Err("invalid_request"),
             };
             Ok(Command::PrepareEdits(vec![Box::new(move |cfg| {
                 Ok(vec![Edit::AddAction {
@@ -57,16 +68,13 @@ pub(super) fn command(op: &str, args: &Map<String, Value>) -> Checked<Command> {
                 }])
             })]))
         }
-        "edit" => {
-            closed(args, &["changes"])?;
-            let changes = args
-                .get("changes")
-                .and_then(Value::as_array)
-                .filter(|v| !v.is_empty() && v.len() <= 256)
-                .ok_or("invalid_request")?;
+        R::Edit { changes } => {
+            if changes.is_empty() || changes.len() > 256 {
+                return Err("invalid_request");
+            }
             let steps = changes
                 .iter()
-                .map(parse_change)
+                .map(convert_change)
                 .collect::<Checked<Vec<_>>>()?
                 .into_iter()
                 .map(|change| {
@@ -76,7 +84,7 @@ pub(super) fn command(op: &str, args: &Map<String, Value>) -> Checked<Command> {
                 .collect();
             Ok(Command::PrepareEdits(steps))
         }
-        _ => admin::command(op, args),
+        _ => admin::command(request),
     }
 }
 pub(super) fn resolve(
@@ -98,12 +106,12 @@ pub(super) fn resolve(
         .map(|b| b.identity())
         .ok_or(ConfigurationError::NotFound)
 }
-pub(super) fn position(args: &Map<String, Value>) -> Checked<usize> {
-    args.get("position")
-        .and_then(Value::as_u64)
-        .filter(|n| *n < 32)
-        .map(|n| n as usize)
-        .ok_or("invalid_request")
+pub(super) fn position(position: usize) -> Checked<usize> {
+    if position < 32 {
+        Ok(position)
+    } else {
+        Err("invalid_request")
+    }
 }
 
 pub(super) fn button(cfg: &Configuration, id: ShortId) -> Result<&ButtonData, ConfigurationError> {
@@ -113,20 +121,23 @@ pub(super) fn button(cfg: &Configuration, id: ShortId) -> Result<&ButtonData, Co
         .find(|b| b.binding.short() == id)
         .ok_or(ConfigurationError::NotFound)
 }
-fn launcher(v: &Value) -> Checked<DesktopEntry> {
-    let m = v.as_object().ok_or("invalid_request")?;
-    closed(m, &["desktop_entry"])?;
-    DesktopEntry::new(string(m, "desktop_entry")?.into()).map_err(|_| "invalid_request")
+fn launcher(entry: &str) -> Checked<DesktopEntry> {
+    DesktopEntry::new(entry.into()).map_err(|_| "invalid_request")
 }
-fn wait(v: &Value) -> Checked<Wait> {
-    let m = v.as_object().ok_or("invalid_request")?;
-    closed(m, &["milliseconds"])?;
-    milliseconds(m.get("milliseconds").ok_or("invalid_request")?)
+fn milliseconds(value: u64) -> Checked<Wait> {
+    Wait::new(value).map_err(|_| "invalid_request")
 }
-fn milliseconds(v: &Value) -> Checked<Wait> {
-    Wait::new(v.as_u64().ok_or("invalid_request")?).map_err(|_| "invalid_request")
+fn parameters(value: &rad_api::ActionParameters) -> Checked<ActionParameters> {
+    Ok(match value {
+        rad_api::ActionParameters::Plugin(p) => ActionParameters::External(parameter_bytes(p)?),
+        rad_api::ActionParameters::Launcher(p) => {
+            ActionParameters::Launcher(launcher(&p.desktop_entry)?)
+        }
+        rad_api::ActionParameters::Wait(p) => ActionParameters::Wait(milliseconds(p.milliseconds)?),
+    })
 }
 enum Change {
+    Gesture(ShortId, rad_core::configuration::Gesture),
     Name(ShortId, String),
     Visual(ShortId, VisualSource),
     /// Text and image always; the text position only when the edit names it.
@@ -141,127 +152,90 @@ enum Change {
     Order(ShortId, Vec<usize>),
     Move(ShortId, usize),
 }
-fn parse_change(v: &Value) -> Checked<Change> {
-    let m = v.as_object().ok_or("invalid_request")?;
-    let target = id(m, "id")?;
-    match string(m, "kind")? {
-        "set" => {
-            closed(m, &["kind", "id", "field", "value"])?;
-            let value = m.get("value").ok_or("invalid_request")?;
-            let max = if matches!(string(m, "field")?, "parameters" | "visual") {
+fn convert_change(change: &rad_api::Change) -> Checked<Change> {
+    use rad_api::{Change as C, FieldEdit as F};
+    Ok(match change {
+        C::Order { id, indices } => Change::Order(parse_id(id)?, indices.clone()),
+        C::Move { id, position: pos } => Change::Move(parse_id(id)?, position(*pos)?),
+        C::Set { id, edit } => {
+            let target = parse_id(id)?;
+            let max = if matches!(edit, F::Parameters(_) | F::Visual(_)) {
                 17408
             } else {
                 8192
             };
-            if serde_json::to_vec(value).unwrap().len() > max {
+            // Account for the value, not the discriminator added by the typed edit.
+            if serde_json::to_vec(
+                &serde_json::to_value(edit).map_err(|_| "invalid_request")?["value"],
+            )
+            .map_err(|_| "invalid_request")?
+            .len()
+                > max
+            {
                 return Err("invalid_request");
-            };
-            match string(m, "field")? {
-                "visual" => {
-                    let v = value.as_object().ok_or("invalid_request")?;
-                    closed(v, &["type", "parameters"])?;
-                    let visual = if string(v, "type")? == "manual" {
+            }
+            match edit {
+                F::Gesture(v) => Change::Gesture(
+                    target,
+                    match v {
+                        rad_api::Gesture::Press => rad_core::configuration::Gesture::Press,
+                        rad_api::Gesture::Hold => rad_core::configuration::Gesture::Hold,
+                        rad_api::Gesture::LongPress => rad_core::configuration::Gesture::LongPress,
+                    },
+                ),
+                F::Name(name) => Change::Name(target, name.clone()),
+                F::Visual(v) => Change::Visual(
+                    target,
+                    if v.type_key == "manual" {
                         VisualSource::Manual
                     } else {
                         VisualSource::External {
-                            type_key: external_key(string(v, "type")?, '#')?,
+                            type_key: external_key(&v.type_key, '#')?,
                             configuration: parameter_bytes(
-                                v.get("parameters").ok_or("invalid_request")?,
+                                v.parameters.as_ref().ok_or("invalid_request")?,
                             )?,
                         }
-                    };
-                    Ok(Change::Visual(target, visual))
-                }
-                "name" => Ok(Change::Name(
-                    target,
-                    value.as_str().ok_or("invalid_request")?.into(),
-                )),
-                "mode" => Ok(Change::Mode(
-                    target,
-                    match value.as_str() {
-                        Some("sequential") => Mode::Sequential,
-                        Some("parallel") => Mode::Parallel,
-                        _ => return Err("invalid_request"),
                     },
-                )),
-                "appearance" => {
-                    let m = value.as_object().ok_or("invalid_request")?;
-                    closed(m, &["text", "image", "text_position"])?;
-                    let image = match m.get("image") {
-                        Some(Value::Null) => None,
-                        Some(Value::String(s)) => Some(s.clone()),
-                        _ => return Err("invalid_request"),
-                    };
-                    let text_position = match m.get("text_position") {
-                        None => None,
-                        Some(Value::Null) => Some(None),
-                        Some(Value::String(s)) => Some(Some(match s.as_str() {
-                            "top" => TextPosition::Top,
-                            "middle" => TextPosition::Middle,
-                            "bottom" => TextPosition::Bottom,
-                            "above_image" => TextPosition::AboveImage,
-                            "below_image" => TextPosition::BelowImage,
-                            _ => return Err("invalid_request"),
-                        })),
-                        Some(_) => return Err("invalid_request"),
-                    };
-                    Ok(Change::Appearance {
-                        id: target,
-                        text: string(m, "text")?.into(),
-                        image,
-                        text_position,
-                    })
-                }
-                "desktop_entry" => Ok(Change::Parameters(
+                ),
+                F::Mode(mode) => Change::Mode(
                     target,
-                    ActionParameters::Launcher(
-                        DesktopEntry::new(value.as_str().ok_or("invalid_request")?.into())
-                            .map_err(|_| "invalid_request")?,
-                    ),
-                )),
-                "milliseconds" => Ok(Change::Parameters(
-                    target,
-                    ActionParameters::Wait(milliseconds(value)?),
-                )),
-                // The object's own field says which kind of action it is meant for.
-                "parameters" => Ok(Change::Parameters(
-                    target,
-                    if value.get("schema_version").is_some() {
-                        ActionParameters::External(parameter_bytes(value)?)
-                    } else if value.get("milliseconds").is_some() {
-                        ActionParameters::Wait(wait(value)?)
-                    } else {
-                        ActionParameters::Launcher(launcher(value)?)
+                    match mode {
+                        rad_api::Mode::Sequential => Mode::Sequential,
+                        rad_api::Mode::Parallel => Mode::Parallel,
                     },
-                )),
-                _ => Err("invalid_request"),
+                ),
+                F::Appearance(v) => Change::Appearance {
+                    id: target,
+                    text: v.text.clone(),
+                    image: v.image.clone(),
+                    text_position: v.text_position.map(|p| {
+                        p.map(|p| match p {
+                            rad_api::TextPosition::Top => TextPosition::Top,
+                            rad_api::TextPosition::Middle => TextPosition::Middle,
+                            rad_api::TextPosition::Bottom => TextPosition::Bottom,
+                            rad_api::TextPosition::AboveImage => TextPosition::AboveImage,
+                            rad_api::TextPosition::BelowImage => TextPosition::BelowImage,
+                        })
+                    }),
+                },
+                F::DesktopEntry(v) => {
+                    Change::Parameters(target, ActionParameters::Launcher(launcher(v)?))
+                }
+                F::Milliseconds(v) => {
+                    Change::Parameters(target, ActionParameters::Wait(milliseconds(*v)?))
+                }
+                F::Parameters(v) => Change::Parameters(target, parameters(v)?),
             }
         }
-        "order" => {
-            closed(m, &["kind", "id", "indices"])?;
-            let indices = m
-                .get("indices")
-                .and_then(Value::as_array)
-                .ok_or("invalid_request")?
-                .iter()
-                .map(|v| {
-                    v.as_u64()
-                        .and_then(|n| usize::try_from(n).ok())
-                        .ok_or("invalid_request")
-                })
-                .collect::<Checked<_>>()?;
-            Ok(Change::Order(target, indices))
-        }
-        "move" => {
-            closed(m, &["kind", "id", "position"])?;
-            Ok(Change::Move(target, position(m)?))
-        }
-        _ => Err("invalid_request"),
-    }
+    })
 }
 impl Change {
     fn prepare(self, cfg: &Configuration) -> Result<Vec<Edit>, ConfigurationError> {
         let e = match self {
+            Self::Gesture(id, gesture) => Edit::SetGesture {
+                button: button(cfg, id)?.binding.identity(),
+                gesture,
+            },
             Self::Visual(id, visual) => Edit::SetVisual {
                 button: button(cfg, id)?.binding.identity(),
                 visual,
@@ -338,13 +312,13 @@ fn external_key(name: &str, separator: char) -> Checked<ExternalType> {
     let (plugin, kind) = name.split_once(separator).ok_or("invalid_request")?;
     ExternalType::new(plugin.into(), kind.into()).map_err(|_| "invalid_request")
 }
-fn parameter_bytes(value: &Value) -> Checked<Vec<u8>> {
+fn parameter_bytes(value: &rad_api::PluginParameters) -> Checked<Vec<u8>> {
     let bytes = serde_json::to_vec(value).map_err(|_| "invalid_request")?;
     if bytes.len() > 16384 {
         return Err("invalid_request");
     }
     // Manifest-specific validation is performed once by Authority before Persist.
-    serde_json::from_value::<rad_plugin_contract::Parameters>(value.clone())
+    serde_json::from_slice::<rad_plugin_contract::Parameters>(&bytes)
         .map_err(|_| "invalid_request")?;
     Ok(bytes)
 }

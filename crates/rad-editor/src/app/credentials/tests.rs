@@ -175,9 +175,22 @@ fn panel_confirms_only_ack_and_discards_unsubmitted_drafts_on_context_change() {
             unknown: true,
         }))
         .unwrap();
+    loop {
+        panel_frame(&ctx, &mut panel, &mut worker, vec![]);
+        if let Ok(query) = asked.try_recv() {
+            assert!(
+                matches!(query.operation, Operation::Status),
+                "Unknown only rereads, never repeats the write"
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    answer.send(Ok(State::Absent)).unwrap();
     let failed = loop {
         let f = panel_frame(&ctx, &mut panel, &mut worker, vec![]);
-        if f.texts.iter().any(|(s, _)| s.contains("Outcome unknown")) {
+        if f.texts.iter().any(|(s, _)| s == "New credential") {
             break f;
         }
         assert!(Instant::now() < deadline);
@@ -241,7 +254,7 @@ fn worker_uses_editor_socket_and_waits_for_durable_ack_without_replay() {
             let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(request["op"], expected);
             let data = if expected == "hello" {
-                serde_json::json!({"protocol":1,"session_id":"00000000000000000000000000000001","limits":{},"capabilities":[]})
+                serde_json::json!({"protocol":1,"session_id":"00000000000000000000000000000001","limits":serde_json::from_str::<serde_json::Value>(include_str!("../../../../rad-api/vectors/limits-v1.json")).unwrap(),"capabilities":[]})
             } else {
                 assert_eq!(
                     request["args"],
@@ -524,6 +537,7 @@ fn credential_confirmation_does_not_dispatch_product_shortcuts() {
         Event {
             plugin_apply: false,
             plugin_admin: false,
+            plugin_manifest: false,
             plugin_dependencies: false,
             plugin_form: false,
             plugin_visual: false,
@@ -564,4 +578,18 @@ fn only_final_ok_is_a_credential_ack_not_admitted_or_applied() {
         assert!(result.is_err(), "only credential final Ok is an ACK");
         assert!(result.unwrap_err().unknown);
     }
+}
+
+fn decode_state(
+    data: serde_json::Value,
+    mutating: bool,
+    status: rad_client::response::Status,
+) -> Result<State, crate::session::Error> {
+    let data = rad_api::ResponseData::decode(rad_api::Operation::CredentialStatus, status, data)
+        .map_err(|_| crate::session::Error {
+            code: "invalid_request".into(),
+            cause: None,
+            unknown: mutating,
+        })?;
+    super::decode_state(data, mutating, status)
 }

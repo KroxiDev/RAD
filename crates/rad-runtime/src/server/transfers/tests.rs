@@ -94,13 +94,28 @@ fn busy_transfer_queries_have_no_mutation_outcome_and_mutations_keep_not_applied
         let mut client = Client::connect(&root, Endpoint::Editor).unwrap();
         ready_tx.send(()).unwrap();
         go_rx.recv().unwrap();
-        for operation in ["transfer_read", "media_read", "transfer_write"] {
-            let response = client.request(operation, json!({})).unwrap();
+        for request in [
+            rad_api::Request::TransferRead {
+                transfer_id: "held".into(),
+                offset: "0".into(),
+            },
+            rad_api::Request::MediaRead {
+                id: "b1".into(),
+                offset: "0".into(),
+            },
+            rad_api::Request::TransferWrite {
+                transfer_id: "held".into(),
+                offset: "0".into(),
+                base64: String::new(),
+            },
+        ] {
+            let operation = request.operation();
+            let response = client.call(request).unwrap();
             let error = response.error.unwrap();
             assert_eq!(error.code, "resource_exhausted");
             assert_eq!(
                 error.outcome,
-                (operation == "transfer_write").then_some(Outcome::NotApplied),
+                (operation == rad_api::Operation::TransferWrite).then_some(Outcome::NotApplied),
                 "Busy reads are not mutations"
             );
         }

@@ -4,10 +4,15 @@ use crate::{
     output,
     response::{Response, Status},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 use std::time::{Duration, Instant};
 pub fn command(client: &mut Client, command: &Command) -> Result<Response, Failure> {
-    let first_deadline = if command.operation == "result" {
+    let operation = command.request.operation();
+    let execution_id = match &command.request {
+        rad_api::Request::Result { execution_id } => Some(execution_id.as_str()),
+        _ => None,
+    };
+    let first_deadline = if operation == rad_api::Operation::Result {
         command
             .wait_ms
             .map(|ms| Instant::now() + Duration::from_millis(ms))
@@ -15,10 +20,8 @@ pub fn command(client: &mut Client, command: &Command) -> Result<Response, Failu
         None
     };
     let first = match first_deadline {
-        Some(deadline) => {
-            client.request_until(&command.operation, command.arguments.clone(), deadline)
-        }
-        None => client.request(&command.operation, command.arguments.clone()),
+        Some(deadline) => client.call_until(command.request.clone(), deadline),
+        None => client.call(command.request.clone()),
     };
     let response = match first {
         Ok(response) => response,
@@ -26,44 +29,39 @@ pub fn command(client: &mut Client, command: &Command) -> Result<Response, Failu
             if first_deadline.is_some_and(|d| Instant::now() >= d)
                 && error.code == "deadline_exceeded" =>
         {
-            return Ok(timeout(
-                &output::failure(error),
-                command.arguments["execution_id"].as_str().unwrap_or(""),
-            ));
+            return Ok(timeout(&output::failure(error), execution_id.unwrap_or("")));
         }
         Err(error) => return Err(error),
     };
     if response.status == Status::Error {
         return Ok(response);
     }
-    if command.operation == "get" {
-        let id = command.arguments["id"]
-            .as_str()
-            .ok_or_else(|| invalid(&response))?;
-        return crate::query::assemble(response, id, |op, args| client.request(op, args));
+    if operation == rad_api::Operation::Get {
+        let rad_api::Request::Get { id } = &command.request else {
+            unreachable!()
+        };
+        return crate::query::assemble(response, id, |request| client.call(request));
     }
-    if command.operation == "result" {
-        terminal(
-            &response,
-            command.arguments["execution_id"]
-                .as_str()
-                .ok_or_else(|| invalid(&response))?,
-        )?;
+    if operation == rad_api::Operation::Result {
+        terminal(&response, execution_id.ok_or_else(|| invalid(&response))?)?;
     }
     let Some(wait_ms) = command.wait_ms else {
         return Ok(response);
     };
-    let execution = if command.operation == "run" {
-        response.data["execution_id"].as_str()
+    let execution = if operation == rad_api::Operation::Run {
+        match &response.data {
+            rad_api::ResponseData::Admitted(value) => Some(value.execution_id.as_str()),
+            _ => None,
+        }
     } else {
-        command.arguments["execution_id"].as_str()
+        execution_id
     }
     .ok_or_else(|| invalid(&response))?
     .to_owned();
     let deadline =
         first_deadline.unwrap_or_else(|| Instant::now() + Duration::from_millis(wait_ms));
     let mut response = response;
-    if command.operation == "result" {
+    if operation == rad_api::Operation::Result {
         if terminal(&response, &execution)? {
             return Ok(response);
         }
@@ -73,8 +71,12 @@ pub fn command(client: &mut Client, command: &Command) -> Result<Response, Failu
         if Instant::now() >= deadline {
             return Ok(timeout(&response, &execution));
         }
-        response = match client.request_until("result", json!({"execution_id":execution}), deadline)
-        {
+        response = match client.call_until(
+            rad_api::Request::Result {
+                execution_id: execution.clone(),
+            },
+            deadline,
+        ) {
             Ok(response) => response,
             Err(error) if Instant::now() >= deadline && error.code == "deadline_exceeded" => {
                 return Ok(timeout(&output::failure(error), &execution));
@@ -102,18 +104,15 @@ pub fn command(client: &mut Client, command: &Command) -> Result<Response, Failu
     }
 }
 fn terminal(response: &Response, execution: &str) -> Result<bool, Failure> {
-    if response.status != Status::Ok
-        || response.data["execution_id"] != execution
-        || !response.data["steps"].is_array()
-    {
+    let rad_api::ResponseData::Execution(result) = &response.data else {
+        return Err(invalid(response));
+    };
+    if response.status != Status::Ok || result.execution_id != execution {
         return Err(invalid(response));
     }
-    match response.data["state"].as_str() {
-        Some("running") => Ok(false),
-        Some("succeeded" | "failed" | "timed_out") => Ok(true),
-        _ => Err(invalid(response)),
-    }
+    Ok(result.state != rad_api::ExecutionState::Running)
 }
+
 fn invalid(response: &Response) -> Failure {
     Failure {
         code: "invalid_request",
@@ -137,6 +136,6 @@ fn timeout(last: &Response, execution: &str) -> Response {
         outcome: None,
     });
     response.error.as_mut().unwrap().details = json!({"execution_id":execution});
-    response.data = Value::Null;
+    response.data = rad_api::ResponseData::None;
     response
 }

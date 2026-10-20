@@ -26,6 +26,7 @@ pub(super) struct ExecutionBinding {
     pub selection: u64,
     pub generation: Option<u64>,
     pub credentials: Option<CredentialSnapshot>,
+    pub settings: Option<Vec<u8>>,
 }
 pub(super) struct ExecutionSelection {
     pub bindings: BTreeMap<String, ExecutionBinding>,
@@ -321,6 +322,11 @@ impl Authority {
                 .map(|generation| (id.as_str(), generation))
         })
     }
+    pub fn job_settings(&self, id: DispatchId) -> Option<Vec<u8>> {
+        self.plugin_jobs
+            .get(&id)
+            .and_then(|(_, b)| b.settings.clone())
+    }
     pub fn job_plugin_selection(&self, id: DispatchId) -> Option<(&str, u64)> {
         self.plugin_jobs
             .get(&id)
@@ -386,6 +392,10 @@ impl Authority {
                         selection: p.selection,
                         generation: p.generation,
                         credentials: p.credentials.clone(),
+                        settings: data
+                            .plugin_settings
+                            .get(type_key.plugin())
+                            .map(|s| s.bytes().to_vec()),
                     },
                 );
             }
@@ -394,6 +404,27 @@ impl Authority {
     }
     pub(super) fn validate_plugin_changes(&self, candidate: &Candidate) -> Result<(), PluginError> {
         let old = self.published.configuration().data();
+        for (id, settings) in &candidate.configuration().data().plugin_settings {
+            if old.plugin_settings.get(id) == Some(settings) {
+                continue;
+            }
+            let schema = self
+                .plugins
+                .get(id)
+                .and_then(|p| p.manifest.settings.as_ref())
+                .ok_or(PluginError::Incompatible)?;
+            let definition = rad_plugin_contract::Definition {
+                id: "settings".into(),
+                label: "Settings".into(),
+                schema: schema.clone(),
+                credential_slots: vec![],
+                response_timeout: None,
+                gestures: rad_plugin_contract::default_gestures(),
+            };
+            Document::new(settings.bytes())
+                .and_then(|d| d.parameters(&definition))
+                .map_err(|_| PluginError::Incompatible)?;
+        }
         for b in &candidate.configuration().data().buttons {
             let previous = old.buttons.iter().find(|o| o.binding == b.binding);
             for a in &b.actions {
@@ -407,6 +438,31 @@ impl Authority {
                             .iter()
                             .any(|p| p.binding == a.binding && p.kind == a.kind)
                     });
+                    if previous.is_some_and(|old| old.gesture != b.gesture)
+                        || (!unchanged && b.gesture != rad_core::configuration::Gesture::Press)
+                    {
+                        let gesture = match b.gesture {
+                            rad_core::configuration::Gesture::Press => {
+                                rad_plugin_contract::Gesture::Press
+                            }
+                            rad_core::configuration::Gesture::Hold => {
+                                rad_plugin_contract::Gesture::Hold
+                            }
+                            rad_core::configuration::Gesture::LongPress => {
+                                rad_plugin_contract::Gesture::LongPress
+                            }
+                        };
+                        let def = self
+                            .plugins
+                            .get(type_key.plugin())
+                            .and_then(|p| {
+                                p.manifest.actions.iter().find(|d| d.id == type_key.name())
+                            })
+                            .ok_or(PluginError::Incompatible)?;
+                        if !def.gestures.contains(&gesture) {
+                            return Err(PluginError::Incompatible);
+                        }
+                    }
                     if !unchanged {
                         let p = self
                             .plugins

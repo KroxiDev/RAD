@@ -26,7 +26,10 @@ impl Host {
     ) -> Result<Correlation, Error> {
         let deadline = self.now.checked_add(2000).ok_or(Error::Clock)?;
         let w = self.workers.get_mut(id).ok_or(Error::Unavailable)?;
-        if w.generation != generation || w.state != State::Ready || w.api < 3 {
+        if w.generation != generation
+            || w.state != State::Ready
+            || !rad_plugin_contract::supports(&w.capabilities, rad_plugin_contract::CREDENTIALS)
+        {
             return Err(Error::Unavailable);
         }
         let declared = w.manifest.credential_slots();
@@ -90,9 +93,10 @@ impl Host {
         {
             return Err(Error::Invalid);
         }
-        if w.pending
-            .values()
-            .any(|p| p.credential_revision == Some(revision))
+        if w.hold_uses_revision(revision)
+            || w.pending
+                .values()
+                .any(|p| p.credential_revision == Some(revision))
             || w.queries
                 .values()
                 .any(|p| p.credential_revision == Some(revision))
@@ -134,7 +138,7 @@ impl crate::worker::Worker {
                 Err(Error::Invalid)
             };
         }
-        if self.api >= 3
+        if rad_plugin_contract::supports(&self.capabilities, rad_plugin_contract::CREDENTIALS)
             && revision
                 .and_then(|r| self.credentials.get(&r))
                 .is_some_and(|r| r.state == CredentialState::Applied)
@@ -161,7 +165,7 @@ impl crate::worker::Worker {
             return;
         };
         if self.state != State::Ready
-            || self.api < 3
+            || !rad_plugin_contract::supports(&self.capabilities, rad_plugin_contract::CREDENTIALS)
             || r.state != expected
             || r.correlation != correlation
             || now >= r.deadline

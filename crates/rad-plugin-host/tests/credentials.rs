@@ -5,8 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 fn manifest() -> Manifest {
-    serde_json::from_value(serde_json::json!({"contract":1,"id":"org.rad.credentials-fixture","version":{"major":1,"minor":0,"patch":0},
-    "host_min":3,"host_max":3,"targets":[TARGET],"actions":[{"id":"authenticate","label":"Authenticate","schema":{"version":1,"fields":[]},"credential_slots":["password"]}],"visuals":[]})).unwrap()
+    serde_json::from_value(serde_json::json!({"contract":1,"capabilities":["credentials","dynamic_options","jpeg","response_timeout","visual_freshness"],"id":"org.rad.credentials-fixture","version":{"major":1,"minor":0,"patch":0},
+    "host_min":1,"host_max":1,"targets":[TARGET],"actions":[{"id":"authenticate","label":"Authenticate","schema":{"version":1,"fields":[]},"credential_slots":["password"]}],"visuals":[]})).unwrap()
 }
 fn pump(host: &mut Host, now: &mut u64, done: impl Fn(&Host) -> bool) {
     let end = Instant::now() + Duration::from_secs(3);

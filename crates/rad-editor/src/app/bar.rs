@@ -4,18 +4,18 @@ use super::{
     look::{Icon, Look, icon_button, state_pill},
     string, tr,
 };
-use crate::{Request, native::Job};
+use crate::native::Job;
 use eframe::egui;
 use serde_json::json;
 
 impl App {
     fn folder_title(&self) -> String {
         let Some(board) = &self.board else {
-            return "RAD".into();
+            return tr(self.es, "RAD").into();
         };
         match board.folder["fields"]["name"].as_str() {
             Some(name) if !name.is_empty() => name.to_owned(),
-            _ => tr(self.es, "Main", "Principal").into(),
+            _ => tr(self.es, "Main").into(),
         }
     }
     pub(super) fn bar(&mut self, ui: &mut egui::Ui, look: &Look) {
@@ -26,32 +26,31 @@ impl App {
                 .and_then(|b| b.folder["fields"]["parent_id"].as_str())
                 .map(str::to_owned);
             if let Some(parent) = parent
-                && icon_button(ui, look, Icon::Back, tr(self.es, "Back", "Volver")).clicked()
+                && icon_button(ui, look, Icon::Back, tr(self.es, "Back")).clicked()
             {
-                self.send(Request::new("navigate", json!({"folder_id":parent})));
+                self.send(crate::Request::Navigate { folder_id: parent });
             }
             ui.label(egui::RichText::new(self.folder_title()).heading());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let settings = ui
                     .add(egui::Button::new(egui::RichText::new("⚙").size(17.)).frame(false))
-                    .on_hover_text(tr(self.es, "Settings", "Ajustes"));
+                    .on_hover_text(tr(self.es, "Settings"));
                 if settings.clicked() {
                     self.settings = self.status["settings"].clone();
                     self.global_permissions = json!({"own":self.status["global_permissions"]});
                     self.settings_open = true;
                 }
                 ui.add_enabled_ui(self.connected, |ui| {
-                    for (op, icon, en, es) in [
-                        (
-                            "redo",
-                            Icon::Redo,
-                            "Redo (Ctrl+Shift+Z)",
-                            "Rehacer (Ctrl+Shift+Z)",
-                        ),
-                        ("undo", Icon::Undo, "Undo (Ctrl+Z)", "Deshacer (Ctrl+Z)"),
+                    for (op, icon, en) in [
+                        ("redo", Icon::Redo, "Redo (Ctrl+Shift+Z)"),
+                        ("undo", Icon::Undo, "Undo (Ctrl+Z)"),
                     ] {
-                        if icon_button(ui, look, icon, tr(self.es, en, es)).clicked() {
-                            self.send(Request::new(op, json!({})));
+                        if icon_button(ui, look, icon, tr(self.es, en)).clicked() {
+                            self.send(if op == "redo" {
+                                crate::Request::Redo {}
+                            } else {
+                                crate::Request::Undo {}
+                            });
                         }
                     }
                 });
@@ -59,7 +58,7 @@ impl App {
                     ui.add_space(6.);
                     let dot = match self.status["deck_state"].as_str() {
                         Some("connected") => look.ok,
-                        Some("disconnected") => look.warn,
+                        Some("disconnected" | "inaccessible") => look.warn,
                         _ => look.muted,
                     };
                     let label = crate::status::deck_label(&self.status, self.es);
@@ -72,17 +71,24 @@ impl App {
             ui.horizontal(|ui| {
                 ui.colored_label(
                     look.warn,
-                    tr(
-                        self.es,
-                        "RAD is not running. Start rad-runtime, then",
-                        "RAD no está en marcha. Inicia rad-runtime y luego",
-                    ),
+                    tr(self.es, "RAD is not running. Start rad-runtime, then"),
                 );
-                if ui
-                    .add(look.primary(tr(self.es, "Reconnect", "Reconectar")))
-                    .clicked()
-                {
+                if ui.add(look.primary(tr(self.es, "Reconnect"))).clicked() {
                     self.command(Job::Connect);
+                }
+            });
+        }
+        let attention = crate::status::plugin_attention_states(&self.status);
+        if self.connected && !attention.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(tr(self.es, "Plugins")).clicked() {
+                    self.settings = self.status["settings"].clone();
+                    self.global_permissions = json!({"own":self.status["global_permissions"]});
+                    self.settings_tab = super::settings::Tab::Plugins;
+                    self.settings_open = true;
+                }
+                for state in attention {
+                    ui.colored_label(look.warn, state.label(self.es));
                 }
             });
         }
@@ -97,14 +103,20 @@ impl App {
             } else {
                 look.muted
             };
-            let message = ui.label(egui::RichText::new(&self.message).color(color).small());
+            ui.label(egui::RichText::new(&self.message).color(color).small());
             if !self.message_code.is_empty() {
-                message.on_hover_text(&self.message_code);
+                ui.collapsing(tr(self.es, "View details"), |ui| {
+                    ui.label(&self.message_code);
+                });
             }
             let storage = string(&self.status["storage_state"]);
             if self.connected && !storage.is_empty() && storage != "ready" {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(storage).color(look.warn).small());
+                    ui.label(
+                        egui::RichText::new(crate::status::describe_error(&storage, self.es))
+                            .color(look.warn)
+                            .small(),
+                    );
                 });
             }
         });

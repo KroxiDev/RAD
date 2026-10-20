@@ -66,7 +66,7 @@ fn hello(s: &mut UnixStream) {
     send(
         s,
         "1",
-        json!({"protocol":1,"session_id":SESSION,"limits":{},"capabilities":["status","run","result"]}),
+        json!({"protocol":1,"session_id":SESSION,"limits":serde_json::from_str::<serde_json::Value>(include_str!("../../rad-api/vectors/limits-v1.json")).unwrap(),"capabilities":["status","run","result"]}),
     );
 }
 #[test]
@@ -80,16 +80,24 @@ fn connection_uses_selected_endpoint_handshakes_once_and_correlates_fragmented_r
             receive(&mut s),
             json!({"v":1,"id":"2","op":"status","args":{}})
         );
-        send(&mut s, "2", json!({"storage_state":"ready"}));
+        send(
+            &mut s,
+            "2",
+            json!({"storage_state":"ready","view_revision":"1","active_folder_id":"f1","grid":{"columns":8,"rows":4}}),
+        );
         assert_eq!(
             receive(&mut s),
             json!({"v":1,"id":"3","op":"status","args":{}})
         );
-        send(&mut s, "3", json!({"storage_state":"uncertain"}));
+        send(
+            &mut s,
+            "3",
+            json!({"storage_state":"uncertain","view_revision":"1","active_folder_id":"f1","grid":{"columns":8,"rows":4}}),
+        );
     });
     let mut c = Client::connect(&f.path, Endpoint::Automation).unwrap();
     assert_eq!(
-        c.request("status", json!({})).unwrap().data["storage_state"],
+        serde_json::to_value(c.request("status", json!({})).unwrap().data).unwrap()["storage_state"],
         "ready"
     );
     assert_eq!(
@@ -298,13 +306,13 @@ fn cli_get_assembles_all_sections_and_pages_into_one_response() {
         send(
             &mut s,
             "2",
-            json!({"visibility":"visible","id":"b1","kind":"button","fields":{"name":"Launch"},"sections":["actions"],"view_revision":"1"}),
+            json!({"visibility":"visible","id":"b1","kind":"button","fields":{"name":"Launch","mode":"sequential","gesture":"press","permissions":{"inherit":true},"effective_permissions":{"consult":true,"modify":true,"execute":true},"folder_id":"f1","position":0},"sections":["actions"],"view_revision":"1"}),
         );
         for (id, cursor, items, next) in [
             (
                 "3",
                 Value::Null,
-                json!([{"visibility":"visible","id":"a1"}]),
+                json!([{"visibility":"visible","id":"a1","kind":"action","fields":{"type":"launcher","permissions":{"inherit":true},"effective_permissions":{"consult":true,"modify":true,"execute":true},"parent_id":"b1","parameters":{"desktop_entry":"fixture.desktop"},"folder_id":null},"view_revision":"1","sections":[]}]),
                 json!("next"),
             ),
             (
@@ -335,7 +343,7 @@ fn cli_get_assembles_all_sections_and_pages_into_one_response() {
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         value["data"]["section_data"]["actions"],
-        json!([{"visibility":"visible","id":"a1"},{"visibility":"restricted"}])
+        json!([{"visibility":"visible","id":"a1","kind":"action","fields":{"type":"launcher","permissions":{"inherit":true},"effective_permissions":{"consult":true,"modify":true,"execute":true},"parent_id":"b1","parameters":{"desktop_entry":"fixture.desktop"},"folder_id":null},"view_revision":"1","sections":[]},{"visibility":"restricted"}])
     );
     worker.join().unwrap();
 }
@@ -423,17 +431,55 @@ fn editor_catalog_failure_is_a_read_error_and_keeps_connection_usable() {
                         serde_json::from_slice::<Value>(&payload).unwrap()["op"],
                         "status"
                     );
-                    send(&mut s, "3", json!({"storage_state":"ready"}));
+                    send(
+                        &mut s,
+                        "3",
+                        json!({"storage_state":"ready","view_revision":"1","active_folder_id":"f1","grid":{"columns":8,"rows":4}}),
+                    );
                 }
             }
         });
         let mut c = Client::connect(&f.path, Endpoint::Editor).unwrap();
-        let response = c.request(operation, json!({"cursor":null,"query":""}));
+        let response = c.request(
+            operation,
+            match operation {
+                "launcher_catalog" => json!({"cursor":null,"query":""}),
+                "plugin_catalog" => json!({"cursor":null}),
+                "plugin_configuration" => json!({"id":"b1","cursor":null}),
+                "plugin_visual" => json!({"id":"b1"}),
+                "plugin_visual_read" => json!({"id":"b1","revision":"1","offset":"0"}),
+                _ => json!({}),
+            },
+        );
         let followup = c.request("status", json!({}));
         drop(c);
         worker.join().unwrap();
         let response = response.expect("a read-only catalog failure must not poison the client");
         assert_eq!(response.error.unwrap().code, "service_unavailable");
-        assert_eq!(followup.unwrap().data["storage_state"], "ready");
+        assert_eq!(
+            serde_json::to_value(followup.unwrap().data).unwrap()["storage_state"],
+            "ready"
+        );
     }
+}
+
+#[test]
+fn subscription_rejects_positional_notice_arrays() {
+    let f = Fixture::new();
+    let listener = f.listener("editor.sock");
+    let worker = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        hello(&mut stream);
+        assert_eq!(receive(&mut stream)["op"], "subscribe");
+        send(&mut stream, "2", json!({}));
+        let payload = serde_json::to_vec(&json!([1, SESSION, "board", "2"])).unwrap();
+        stream
+            .write_all(&(payload.len() as u32).to_be_bytes())
+            .unwrap();
+        stream.write_all(&payload).unwrap();
+    });
+    let client = Client::connect(&f.path, Endpoint::Editor).unwrap();
+    let mut subscription = client.subscribe().unwrap();
+    assert_eq!(subscription.recv().unwrap_err().code, "invalid_request");
+    worker.join().unwrap();
 }

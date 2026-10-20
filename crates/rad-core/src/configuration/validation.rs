@@ -88,6 +88,14 @@ pub(super) fn validate_data(
         return Err(ConfigurationError::InvalidTree);
     }
     for button in &data.buttons {
+        if button.gesture == Gesture::Hold
+            && button
+                .actions
+                .iter()
+                .any(|a| !matches!(a.kind, ActionKind::External { .. }))
+        {
+            return Err(ConfigurationError::InvalidActions);
+        }
         if button.binding.short().kind() != EntityKind::Button
             || occupied
                 .iter()

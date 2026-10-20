@@ -1,4 +1,5 @@
 //! Plugin package management. Blocking APIs belong on the bounded runtime worker.
+mod prerelease;
 mod source;
 pub use source::GithubSource;
 

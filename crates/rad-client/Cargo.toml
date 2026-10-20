@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 [dependencies]
+rad-api = { path = "../rad-api" }
 serde_json = "=1.0.154"
 rad-wire = { path = "../rad-wire" }
 mio = { version = "=1.2.4", default-features = false, features = ["os-poll", "net"] }

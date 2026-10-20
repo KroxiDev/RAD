@@ -4,7 +4,7 @@ use crate::{Request, plugins::FormDraft, session::Error};
 use rad_plugin_contract::{
     ChoiceList, ChoiceOption, Definition, FieldKind, MAX_CHOICES, Parameters,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 /// What a form configures, as the runtime's `options` operation needs to know it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,16 +250,22 @@ impl FormDraft {
             .ok()?;
         // A question by entity gets the saved values of the dependencies unless the context
         // overrides them, and a context cannot say "unset": asked by type, nothing comes back.
-        let mut arguments = Map::new();
-        match target.entity.filter(|_| !cleared) {
-            Some(id) => arguments.insert("id".into(), json!(id)),
-            None => arguments.insert("type".into(), json!(target.type_key)),
-        };
-        arguments.insert("field".into(), json!(field.id));
-        arguments.insert("cursor".into(), Value::Null);
-        if !context.is_empty() {
-            arguments.insert("context".into(), Value::Object(context));
-        }
-        Some(Request::new("options", Value::Object(arguments)))
+        let id = target.entity.filter(|_| !cleared);
+        Some(crate::Request::Options {
+            id: id.map(str::to_owned),
+            type_key: id.is_none().then(|| target.type_key.to_owned()),
+            field: field.id.clone(),
+            cursor: None,
+            context: if context.is_empty() {
+                None
+            } else {
+                Some(
+                    context
+                        .into_iter()
+                        .map(|(k, v)| Some((k, v.as_str()?.to_owned())))
+                        .collect::<Option<_>>()?,
+                )
+            },
+        })
     }
 }

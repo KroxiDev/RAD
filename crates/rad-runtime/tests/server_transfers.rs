@@ -16,7 +16,7 @@ impl Drop for Directory {
 fn ok(c: &mut Client, op: &str, args: Value) -> Value {
     let r = c.request(op, args).unwrap();
     assert!(r.error.is_none(), "{op}: {r:?}");
-    r.data
+    serde_json::to_value(r.data).unwrap()
 }
 #[test]
 fn editor_image_export_and_confirmed_restore_cross_the_real_store_lane() {

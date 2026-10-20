@@ -5,21 +5,30 @@ use std::{
     path::{Path, PathBuf},
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Language {
-    En,
-    Es,
-}
+pub struct Language(&'static str);
 impl Language {
+    #[allow(non_upper_case_globals)]
+    pub const En: Self = Self("en");
+    #[allow(non_upper_case_globals)]
+    pub const Es: Self = Self("es");
     pub fn from_locale(locale: &str) -> Self {
-        if locale
-            .split(['_', '-', '.', '@'])
-            .next()
-            .is_some_and(|s| s.eq_ignore_ascii_case("es"))
-        {
-            Self::Es
-        } else {
-            Self::En
-        }
+        Self(crate::texts::locale(locale))
+    }
+    pub fn code(self) -> &'static str {
+        self.0
+    }
+    pub fn available() -> impl Iterator<Item = Self> {
+        crate::texts::EMBEDDED
+            .iter()
+            .map(|(locale, _)| Self(locale))
+    }
+    pub fn name(self) -> &'static str {
+        crate::texts::text(self.0, "language.name")
+    }
+}
+impl From<bool> for Language {
+    fn from(es: bool) -> Self {
+        if es { Self::Es } else { Self::En }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -50,8 +59,7 @@ impl Preferences {
         }
         let language = match value.get("language") {
             None | Some(serde_json::Value::Null) => None,
-            Some(v) if v == "en" => Some(Language::En),
-            Some(v) if v == "es" => Some(Language::Es),
+            Some(serde_json::Value::String(code)) => Some(Language::from_locale(code)),
             _ => return Err(invalid()),
         };
         Ok(Self { language })
@@ -81,9 +89,7 @@ impl Preferences {
                 Err(error) => return Err(error),
             }
         };
-        let language = self
-            .language
-            .map(|l| if l == Language::Es { "es" } else { "en" });
+        let language = self.language.map(Language::code);
         let bytes = serde_json::to_vec(&serde_json::json!({"version":1,"language":language}))?;
         file.write_all(&bytes)?;
         file.sync_all()?;

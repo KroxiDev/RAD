@@ -30,31 +30,40 @@ fn hello_only_announces_implemented_operations_and_correlates_session() {
         panic!("hello must be immediate")
     };
     assert!(effects.is_empty());
-    assert_eq!(response.data["protocol"], 1);
+    assert_eq!(serde_json::to_value(&response.data).unwrap()["protocol"], 1);
     assert_eq!(
-        response.data["session_id"],
+        serde_json::to_value(&response.data).unwrap()["session_id"],
         "00000000000000000000000000000007"
     );
     assert!(
-        response.data["capabilities"]
+        serde_json::to_value(&response.data).unwrap()["capabilities"]
             .as_array()
             .unwrap()
             .contains(&json!("status"))
     );
     assert!(
-        !response.data["capabilities"]
+        !serde_json::to_value(&response.data).unwrap()["capabilities"]
             .as_array()
             .unwrap()
             .contains(&json!("transfer_begin"))
     );
     assert!(
-        !response.data["capabilities"]
+        !serde_json::to_value(&response.data).unwrap()["capabilities"]
             .as_array()
             .unwrap()
             .contains(&json!("create_button"))
     );
-    assert_eq!(response.data["limits"]["frame_bytes"], 65536);
-    rad_wire::response::Response::decode(&serde_json::to_vec(&response).unwrap(), 1, None).unwrap();
+    assert_eq!(
+        serde_json::to_value(&response.data).unwrap()["limits"]["frame_bytes"],
+        65536
+    );
+    rad_api::Response::decode_value(
+        serde_json::to_value(&response).unwrap(),
+        1,
+        None,
+        rad_api::Operation::Hello,
+    )
+    .unwrap();
 }
 fn actor() -> Authority {
     Authority::new(
@@ -88,9 +97,9 @@ fn call(a: &mut Authority, origin: Origin, op: &str, args: serde_json::Value) ->
         &req,
     )
 }
-fn response(r: Resolution) -> rad_wire::response::Response {
+fn response(r: Resolution) -> rad_api::response::Response {
     match r {
-        Resolution::Immediate { response, .. } => response,
+        Resolution::Immediate { response, .. } => *response,
         _ => panic!("expected response"),
     }
 }
@@ -98,18 +107,29 @@ fn response(r: Resolution) -> rad_wire::response::Response {
 fn status_is_origin_filtered_and_closed_dto_rejects_role() {
     let mut a = actor();
     let r = response(call(&mut a, Origin::Editor, "status", json!({})));
-    assert_eq!(r.data["active_folder_id"], "f1");
-    assert_eq!(r.data["settings"]["brightness_percent"], 100);
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["active_folder_id"],
+        "f1"
+    );
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["settings"]["brightness_percent"],
+        100
+    );
     let r = response(call(&mut a, Origin::Automation, "status", json!({})));
-    assert!(r.data.get("settings").is_none());
-    assert!(r.data["active_folder_id"].is_null());
+    assert!(
+        serde_json::to_value(&r.data)
+            .unwrap()
+            .get("settings")
+            .is_none()
+    );
+    assert!(serde_json::to_value(&r.data).unwrap()["active_folder_id"].is_null());
     let r = response(call(
         &mut a,
         Origin::Automation,
         "status",
         json!({"role":"editor"}),
     ));
-    assert_eq!(r.status, rad_wire::response::Status::Error);
+    assert_eq!(r.status, rad_api::response::Status::Error);
 }
 #[test]
 fn visible_get_list_and_sections_share_revision_and_restricted_markers() {
@@ -129,18 +149,33 @@ fn visible_get_list_and_sections_share_revision_and_restricted_markers() {
         .unwrap();
     let mut a = Authority::new(c, 1, NonZeroU128::new(7).unwrap());
     let b = response(call(&mut a, Origin::Editor, "get", json!({"id":"b1"})));
-    assert_eq!(b.data["fields"]["name"], "Test");
-    assert_eq!(b.data["sections"], json!(["appearance", "actions"]));
+    assert_eq!(
+        serde_json::to_value(&b.data).unwrap()["fields"]["name"],
+        "Test"
+    );
+    assert_eq!(
+        serde_json::to_value(&b.data).unwrap()["sections"],
+        json!(["appearance", "actions"])
+    );
     let f = response(call(&mut a, Origin::Editor, "get", json!({"id":"f1"})));
-    assert_eq!(f.data["fields"]["slots"][2]["id"], "b1");
+    assert_eq!(
+        serde_json::to_value(&f.data).unwrap()["fields"]["slots"][2]["id"],
+        "b1"
+    );
     let list = response(call(
         &mut a,
         Origin::Editor,
         "list",
         json!({"cursor":null,"limit":32}),
     ));
-    assert_eq!(list.data["items"][0], b.data);
-    assert_eq!(list.data["view_revision"], b.data["view_revision"]);
+    assert_eq!(
+        serde_json::to_value(&list.data).unwrap()["items"][0],
+        serde_json::to_value(&b.data).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&list.data).unwrap()["view_revision"],
+        serde_json::to_value(&b.data).unwrap()["view_revision"]
+    );
     let appearance = response(call(
         &mut a,
         Origin::Editor,
@@ -148,7 +183,7 @@ fn visible_get_list_and_sections_share_revision_and_restricted_markers() {
         json!({"id":"b1","section":"appearance","cursor":null}),
     ));
     assert_eq!(
-        appearance.data["items"][0],
+        serde_json::to_value(&appearance.data).unwrap()["items"][0],
         json!({"name":"text","value":""})
     );
     let actions = response(call(
@@ -157,10 +192,13 @@ fn visible_get_list_and_sections_share_revision_and_restricted_markers() {
         "get_section",
         json!({"id":"b1","section":"actions","cursor":null}),
     ));
-    assert_eq!(actions.data["items"], json!([]));
+    assert_eq!(
+        serde_json::to_value(&actions.data).unwrap()["items"],
+        json!([])
+    );
     assert_eq!(
         response(call(&mut a, Origin::Editor, "get", json!({"id":"b01"}))).status,
-        rad_wire::response::Status::Error
+        rad_api::response::Status::Error
     );
 }
 #[test]
@@ -174,7 +212,7 @@ fn editor_create_is_deferred_and_automation_cannot_administer_even_with_role() {
     ));
     assert_eq!(
         denied.error.unwrap().outcome,
-        Some(rad_wire::response::Outcome::NotApplied)
+        Some(rad_api::response::Outcome::NotApplied)
     );
     let Resolution::Command(cmd) = call(
         &mut a,
@@ -205,7 +243,10 @@ fn editor_create_is_deferred_and_automation_cannot_administer_even_with_role() {
         },
     );
     assert_eq!(
-        response(call(&mut a, Origin::Editor, "get", json!({"id":"b1"}))).data["fields"]["name"],
+        serde_json::to_value(
+            response(call(&mut a, Origin::Editor, "get", json!({"id":"b1"}))).data
+        )
+        .unwrap()["fields"]["name"],
         "x"
     );
 }
@@ -258,17 +299,26 @@ fn atomic_edits_resolve_current_shadow_and_support_launcher_plan_and_appearance(
         json!({"changes":[{"kind":"set","id":"b1","field":"mode","value":"parallel"},{"kind":"order","id":"b1","indices":[1,0]},{"kind":"set","id":"a1","field":"desktop_entry","value":"new.desktop"},{"kind":"set","id":"b1","field":"appearance","value":{"text":"Hi","image":null}},{"kind":"move","id":"b1","position":3}]}),
     );
     let r = response(call(&mut a, Origin::Editor, "get", json!({"id":"b1"})));
-    assert_eq!(r.data["fields"]["mode"], "parallel");
-    assert_eq!(r.data["fields"]["position"], 3);
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["fields"]["mode"],
+        "parallel"
+    );
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["fields"]["position"],
+        3
+    );
     let r = response(call(
         &mut a,
         Origin::Editor,
         "get_section",
         json!({"id":"b1","section":"actions","cursor":null}),
     ));
-    assert_eq!(r.data["items"][0]["id"], "a2");
     assert_eq!(
-        r.data["items"][1]["fields"]["parameters"]["desktop_entry"],
+        serde_json::to_value(&r.data).unwrap()["items"][0]["id"],
+        "a2"
+    );
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["items"][1]["fields"]["parameters"]["desktop_entry"],
         "new.desktop"
     );
 }
@@ -308,7 +358,11 @@ fn administrative_tree_settings_and_permissions_use_domain_commands() {
         "not_found"
     );
     let s = response(call(&mut a, Origin::Editor, "status", json!({})));
-    assert!(s.data["settings"].get("gui_language").is_none());
+    assert!(
+        serde_json::to_value(&s.data).unwrap()["settings"]
+            .get("gui_language")
+            .is_none()
+    );
     apply(
         &mut a,
         "move_folder",
@@ -322,7 +376,7 @@ fn administrative_tree_settings_and_permissions_use_domain_commands() {
     apply(&mut a, "delete", json!({"id":"f2","confirm_contents":true}));
     let f = response(call(&mut a, Origin::Editor, "get", json!({"id":"f1"})));
     assert!(
-        f.data["fields"]["slots"]
+        serde_json::to_value(&f.data).unwrap()["fields"]["slots"]
             .as_array()
             .unwrap()
             .iter()
@@ -353,14 +407,17 @@ fn run_is_admission_only_and_navigation_keeps_selection_effects() {
         .iter()
         .find_map(|e| p.response_for(&a, context, expected, e))
         .expect("admitted");
-    assert_eq!(r.status, rad_wire::response::Status::Admitted);
+    assert_eq!(r.status, rad_api::response::Status::Admitted);
     let result = response(call(
         &mut a,
         Origin::Editor,
         "result",
-        json!({"execution_id":r.data["execution_id"]}),
+        json!({"execution_id":serde_json::to_value(&r.data).unwrap()["execution_id"]}),
     ));
-    assert_eq!(result.data["state"], "succeeded");
+    assert_eq!(
+        serde_json::to_value(&result.data).unwrap()["state"],
+        "succeeded"
+    );
     let Resolution::Immediate { response, effects } = call(
         &mut a,
         Origin::Editor,
@@ -369,7 +426,7 @@ fn run_is_admission_only_and_navigation_keeps_selection_effects() {
     ) else {
         panic!()
     };
-    assert_eq!(response.status, rad_wire::response::Status::Ok);
+    assert_eq!(response.status, rad_api::response::Status::Ok);
     assert!(
         effects
             .iter()
@@ -468,7 +525,7 @@ fn external_catalog_and_transfers_are_typed_and_enabled_only_by_runtime() {
             )
         ))
         .status,
-        rad_wire::response::Status::Error
+        rad_api::response::Status::Error
     );
 }
 #[test]
@@ -480,10 +537,22 @@ fn launcher_schema_is_concrete_without_external_host_and_hello_is_endpoint_speci
         "schema",
         json!({"type":"launcher","cursor":null}),
     ));
-    assert_eq!(r.data["items"][0]["name"], "desktop_entry");
-    assert_eq!(r.data["items"][0]["type"], "string");
-    assert_eq!(r.data["items"][0]["required"], true);
-    assert_eq!(r.data["next_cursor"], Value::Null);
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["items"][0]["name"],
+        "desktop_entry"
+    );
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["items"][0]["type"],
+        "string"
+    );
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["items"][0]["required"],
+        true
+    );
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["next_cursor"],
+        Value::Null
+    );
     let e = response(call(
         &mut a,
         Origin::Editor,
@@ -553,8 +622,14 @@ fn queued_ids_resolve_at_authority_turn_and_batch_failure_has_no_partial_publica
         .iter()
         .find_map(|e| p.response_for(&a, c, second_id, e))
         .unwrap();
-    assert_eq!(r.status, rad_wire::response::Status::Applied);
-    rad_wire::response::Response::decode(&serde_json::to_vec(&r).unwrap(), 2, None).unwrap();
+    assert_eq!(r.status, rad_api::response::Status::Applied);
+    rad_api::Response::decode_value(
+        serde_json::to_value(&r).unwrap(),
+        2,
+        None,
+        rad_api::Operation::Edit,
+    )
+    .unwrap();
     a.finish(second_id);
     let Resolution::Command(cmd) = call(
         &mut a,
@@ -574,11 +649,14 @@ fn queued_ids_resolve_at_authority_turn_and_batch_failure_has_no_partial_publica
     let r = p.response_for(&a, c, expected, &e[0]).unwrap();
     assert_eq!(
         r.error.unwrap().outcome,
-        Some(rad_wire::response::Outcome::NotApplied)
+        Some(rad_api::response::Outcome::NotApplied)
     );
     assert!(p.response_for(&a, c, second_id, &e[0]).is_none());
     assert_eq!(
-        response(call(&mut a, Origin::Editor, "get", json!({"id":"b1"}))).data["fields"]["name"],
+        serde_json::to_value(
+            response(call(&mut a, Origin::Editor, "get", json!({"id":"b1"}))).data
+        )
+        .unwrap()["fields"]["name"],
         "after"
     );
 }
@@ -594,11 +672,13 @@ fn scalar_input_limit_is_encoded_bytes_and_output_is_bounded_before_transport() 
     ));
     assert_eq!(
         r.error.unwrap().outcome,
-        Some(rad_wire::response::Outcome::NotApplied)
+        Some(rad_api::response::Outcome::NotApplied)
     );
     let p = Protocol::new(NonZeroU128::new(7).unwrap());
     let mut r = response(call(&mut a, Origin::Editor, "status", json!({})));
-    r.data = json!({"huge":"x".repeat(49152)});
+    r.data = rad_api::ResponseData::ImagePrepared(rad_api::ImagePrepared {
+        media_ref: "x".repeat(49152),
+    });
     assert!(p.encode_response(&r).is_err());
 }
 #[test]
@@ -628,9 +708,12 @@ fn pages_are_bounded_and_cursor_expires_after_visible_publication() {
         json!({"cursor":null,"limit":32}),
     ));
     assert!(serde_json::to_vec(&page).unwrap().len() <= 49152);
-    let count = page.data["items"].as_array().unwrap().len();
+    let count = serde_json::to_value(&page.data).unwrap()["items"]
+        .as_array()
+        .unwrap()
+        .len();
     assert!(count > 0 && count < 20);
-    let cursor = page.data["next_cursor"].clone();
+    let cursor = serde_json::to_value(&page.data).unwrap()["next_cursor"].clone();
     assert!(cursor.is_string());
     let rest = response(call(
         &mut a,
@@ -638,7 +721,14 @@ fn pages_are_bounded_and_cursor_expires_after_visible_publication() {
         "list",
         json!({"cursor":cursor,"limit":32}),
     ));
-    assert_eq!(rest.data["items"].as_array().unwrap().len() + count, 20);
+    assert_eq!(
+        serde_json::to_value(&rest.data).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len()
+            + count,
+        20
+    );
     apply(
         &mut a,
         "edit",
@@ -711,10 +801,10 @@ fn permissions_and_hidden_actions_are_projected_without_payload_or_parent_leaks(
     let mut a = Authority::new(c, 1, NonZeroU128::new(7).unwrap());
     let child = response(call(&mut a, Origin::Automation, "get", json!({"id":"a1"})));
     assert_eq!(
-        child.data["fields"]["parameters"],
+        serde_json::to_value(&child.data).unwrap()["fields"]["parameters"],
         json!({"desktop_entry":"safe.desktop"})
     );
-    assert!(child.data["fields"]["parent_id"].is_null());
+    assert!(serde_json::to_value(&child.data).unwrap()["fields"]["parent_id"].is_null());
     assert_eq!(
         response(call(&mut a, Origin::Automation, "get", json!({"id":"b1"})))
             .error
@@ -723,12 +813,17 @@ fn permissions_and_hidden_actions_are_projected_without_payload_or_parent_leaks(
         "not_found"
     );
     assert_eq!(
-        response(call(&mut a, Origin::Automation, "get", json!({"id":"f1"}))).data["fields"]["slots"]
-            [0],
+        serde_json::to_value(
+            response(call(&mut a, Origin::Automation, "get", json!({"id":"f1"}))).data
+        )
+        .unwrap()["fields"]["slots"][0],
         json!({"visibility":"restricted"})
     );
     let editor = response(call(&mut a, Origin::Editor, "get", json!({"id":"a1"})));
-    assert_eq!(editor.data["fields"]["parent_id"], "b1");
+    assert_eq!(
+        serde_json::to_value(&editor.data).unwrap()["fields"]["parent_id"],
+        "b1"
+    );
 }
 #[test]
 fn history_commands_and_uncertain_reply_preserve_correlation_and_outcome() {
@@ -746,7 +841,7 @@ fn history_commands_and_uncertain_reply_preserve_correlation_and_outcome() {
             .error
             .unwrap()
             .outcome,
-        Some(rad_wire::response::Outcome::NotApplied)
+        Some(rad_api::response::Outcome::NotApplied)
     );
     let Resolution::Command(cmd) = call(
         &mut a,
@@ -776,9 +871,15 @@ fn history_commands_and_uncertain_reply_preserve_correlation_and_outcome() {
     assert_eq!(r.error.as_ref().unwrap().code, "storage_uncertain");
     assert_eq!(
         r.error.as_ref().unwrap().outcome,
-        Some(rad_wire::response::Outcome::Unknown)
+        Some(rad_api::response::Outcome::Unknown)
     );
-    rad_wire::response::Response::decode(&p.encode_response(&r).unwrap(), 2, None).unwrap();
+    rad_api::Response::decode_value(
+        rad_wire::parse_json(&p.encode_response(&r).unwrap()).unwrap(),
+        2,
+        None,
+        rad_api::Operation::Edit,
+    )
+    .unwrap();
     assert_eq!(
         response(call(&mut a, Origin::Editor, "get", json!({"id":"b1"})))
             .error
@@ -949,7 +1050,7 @@ fn transfer_chunks_are_canonical_bounded_and_media_reads_require_current_entity(
                 )
             ))
             .status,
-            rad_wire::response::Status::Error
+            rad_api::response::Status::Error
         );
     }
     assert!(
@@ -1009,13 +1110,16 @@ fn wait_action_is_added_consulted_and_retimed_within_its_bounds() {
         json!({"button_id":"b1","type":"wait","parameters":{"milliseconds":1500}}),
     );
     let actions = |a: &mut Authority| {
-        response(call(
-            a,
-            Origin::Editor,
-            "get_section",
-            json!({"id":"b1","section":"actions","cursor":null}),
-        ))
-        .data["items"]
+        serde_json::to_value(
+            response(call(
+                a,
+                Origin::Editor,
+                "get_section",
+                json!({"id":"b1","section":"actions","cursor":null}),
+            ))
+            .data,
+        )
+        .unwrap()["items"]
             .clone()
     };
     let items = actions(&mut a);
@@ -1078,7 +1182,7 @@ fn wait_action_is_added_consulted_and_retimed_within_its_bounds() {
         json!({"type":"wait","cursor":null}),
     ));
     assert_eq!(
-        schema.data["items"],
+        serde_json::to_value(&schema.data).unwrap()["items"],
         json!([{"name":"milliseconds","type":"integer","required":true,"minimum":0,"maximum":600000}])
     );
 }
@@ -1092,13 +1196,16 @@ fn text_position_is_reported_resolved_and_changed_only_when_the_edit_names_it() 
         json!({"folder_id":"f1","position":0,"name":"x"}),
     );
     let section = |a: &mut Authority| {
-        response(call(
-            a,
-            Origin::Editor,
-            "get_section",
-            json!({"id":"b1","section":"appearance","cursor":null}),
-        ))
-        .data["items"]
+        serde_json::to_value(
+            response(call(
+                a,
+                Origin::Editor,
+                "get_section",
+                json!({"id":"b1","section":"appearance","cursor":null}),
+            ))
+            .data,
+        )
+        .unwrap()["items"]
             .clone()
     };
     let set = |a: &mut Authority, value: Value| {
@@ -1173,9 +1280,16 @@ fn order_is_only_a_sequence_now_that_gaps_between_actions_are_gone() {
         "get_section",
         json!({"id":"b1","section":"actions","cursor":null}),
     ));
-    assert_eq!(actions.data["items"][0]["id"], "a2");
+    assert_eq!(
+        serde_json::to_value(&actions.data).unwrap()["items"][0]["id"],
+        "a2"
+    );
     let button = response(call(&mut a, Origin::Editor, "get", json!({"id":"b1"})));
-    assert!(button.data["fields"].get("pauses_ms").is_none());
+    assert!(
+        serde_json::to_value(&button.data).unwrap()["fields"]
+            .get("pauses_ms")
+            .is_none()
+    );
     let rejected = response(call(
         &mut a,
         Origin::Editor,
@@ -1190,7 +1304,7 @@ fn plugin_administration_is_editor_only_and_schema_uses_contract_fields() {
     let mut a = actor();
     let manifest: rad_plugin_contract::Manifest = serde_json::from_value(json!({
         "contract":1,"id":"fixture","version":{"major":1,"minor":0,"patch":0},
-        "host_min":3,"host_max":3,"targets":["x86_64-unknown-linux-gnu"],
+        "host_min":1,"host_max":1,"capabilities":["credentials"],"targets":["x86_64-unknown-linux-gnu"],
         "actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[
             {"id":"mode","label":"Mode","required":true,"kind":{"type":"choice","options":["echo","fail"]}}
         ]},"credential_slots":["token"]}],"visuals":[]
@@ -1212,19 +1326,27 @@ fn plugin_administration_is_editor_only_and_schema_uses_contract_fields() {
         "schema",
         json!({"type":"fixture:run","cursor":null}),
     ));
-    assert_eq!(r.status, rad_wire::response::Status::Ok);
+    assert_eq!(r.status, rad_api::response::Status::Ok);
     assert_eq!(
-        r.data["items"],
+        serde_json::to_value(&r.data).unwrap()["items"],
         serde_json::to_value(&manifest.actions[0].schema.fields).unwrap()
     );
-    assert!(r.data.get("credentials").is_none());
+    assert!(
+        serde_json::to_value(&r.data)
+            .unwrap()
+            .get("credentials")
+            .is_none()
+    );
     let catalog = response(call(
         &mut a,
         Origin::Editor,
         "plugin_catalog",
         json!({"cursor":null}),
     ));
-    assert_eq!(catalog.data["items"][0]["type"], "fixture:run");
+    assert_eq!(
+        serde_json::to_value(&catalog.data).unwrap()["items"][0]["type"],
+        "fixture:run"
+    );
 }
 
 #[test]
@@ -1281,9 +1403,12 @@ fn opaque_plugin_configuration_is_preserved_and_consultation_filtered() {
         "plugin_configuration",
         json!({"id":"a1","cursor":null}),
     ));
-    assert_eq!(r.data["type"], "missing:run");
     assert_eq!(
-        r.data["items"][0],
+        serde_json::to_value(&r.data).unwrap()["type"],
+        "missing:run"
+    );
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["items"][0],
         json!(raw.iter().map(|b| format!("{b:02x}")).collect::<String>())
     );
     let r = response(call(
@@ -1307,7 +1432,7 @@ fn plugin_action_and_independent_visual_edits_validate_before_publication() {
     let mut a = actor();
     let m: rad_plugin_contract::Manifest = serde_json::from_value(json!({
         "contract":1,"id":"fixture","version":{"major":1,"minor":0,"patch":0},
-        "host_min":1,"host_max":1,"targets":["x86_64-unknown-linux-gnu"],
+        "host_min":1,"host_max":1,"capabilities":["visual_freshness"],"targets":["x86_64-unknown-linux-gnu"],
         "actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[]},"credential_slots":[]}],
         "visuals":[{"id":"status","label":"Status","schema":{"version":1,"fields":[{"id":"mode","label":"Mode","required":false,"kind":{"type":"choice","options":["compact","full"]}}]},"credential_slots":[]}]
     })).unwrap();
@@ -1351,14 +1476,20 @@ fn plugin_action_and_independent_visual_edits_validate_before_publication() {
         "plugin_configuration",
         json!({"id":"b1","cursor":null}),
     ));
-    assert_eq!(r.data["type"], "fixture#status");
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["type"],
+        "fixture#status"
+    );
     let r = response(call(
         &mut a,
         Origin::Editor,
         "get_section",
         json!({"id":"b1","section":"appearance","cursor":null}),
     ));
-    assert_eq!(r.data["visual_type"], "fixture#status");
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["visual_type"],
+        "fixture#status"
+    );
     let r = response(call(
         &mut a,
         Origin::Automation,
@@ -1370,7 +1501,10 @@ fn plugin_action_and_independent_visual_edits_validate_before_publication() {
         "visual options use source schema: {:?}",
         r.error
     );
-    assert_eq!(r.data["items"], json!(["compact", "full"]));
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["items"],
+        json!(["compact", "full"])
+    );
     apply(
         &mut a,
         "set_permissions",
@@ -1444,8 +1578,15 @@ fn credential_ipc_preserves_empty_and_fully_escaped_values_but_rejects_overlong_
 fn status_exposes_grid_without_editor_language() {
     let mut a = actor();
     let status = response(call(&mut a, Origin::Editor, "status", json!({})));
-    assert_eq!(status.data["grid"], json!({"columns":8,"rows":4}));
-    assert!(status.data["settings"].get("gui_language").is_none());
+    assert_eq!(
+        serde_json::to_value(&status.data).unwrap()["grid"],
+        json!({"columns":8,"rows":4})
+    );
+    assert!(
+        serde_json::to_value(&status.data).unwrap()["settings"]
+            .get("gui_language")
+            .is_none()
+    );
     let rejected = response(call(
         &mut a,
         Origin::Editor,
@@ -1495,8 +1636,11 @@ fn plugin_dependencies_are_editor_only_and_paginated() {
         json!({"cursor":null}),
     ));
     assert!(page.error.is_none(), "{page:?}");
-    assert_eq!(page.data["items"], json!([]));
-    assert!(page.data["next_cursor"].is_null());
+    assert_eq!(
+        serde_json::to_value(&page.data).unwrap()["items"],
+        json!([])
+    );
+    assert!(serde_json::to_value(&page.data).unwrap()["next_cursor"].is_null());
     let forbidden = response(call(
         &mut a,
         Origin::Automation,
@@ -1584,11 +1728,14 @@ fn large_dependency_list_fits_real_frames_without_losing_tail_and_cursor_expires
         assert!(page.error.is_none(), "{page:?}");
         let encoded = protocol.encode_response(&page).unwrap();
         assert!(encoded.len() <= 65536);
-        for item in page.data["items"].as_array().unwrap() {
+        for item in serde_json::to_value(&page.data).unwrap()["items"]
+            .as_array()
+            .unwrap()
+        {
             assert!(seen.insert(item["id"].as_str().unwrap().to_owned()));
             assert!(item["needs_credentials"].is_null());
         }
-        cursor = page.data["next_cursor"].clone();
+        cursor = serde_json::to_value(&page.data).unwrap()["next_cursor"].clone();
         if cursor.is_null() {
             break;
         }
@@ -1624,4 +1771,113 @@ fn large_dependency_list_fits_real_frames_without_losing_tail_and_cursor_expires
         json!({"cursor":old_cursor}),
     ));
     assert_eq!(page.error.unwrap().code, "cursor_expired");
+}
+
+#[test]
+fn board_is_one_revision_and_runtime_describes_the_grid() {
+    let mut a = actor();
+    let r = response(call(
+        &mut a,
+        Origin::Editor,
+        "board",
+        json!({"folder_id":null}),
+    ));
+    assert!(r.error.is_none(), "board query rejected: {:?}", r.error);
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["grid"],
+        json!({"columns":8,"rows":4})
+    );
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["keys"]
+            .as_array()
+            .unwrap()
+            .len(),
+        32
+    );
+    assert_eq!(
+        serde_json::to_value(&r.data).unwrap()["folder"]["view_revision"],
+        serde_json::to_value(&r.data).unwrap()["view_revision"]
+    );
+}
+
+#[test]
+fn plugin_settings_are_editor_only_and_absent_bytes_are_explicit() {
+    let mut authority = actor();
+    let reply = response(call(
+        &mut authority,
+        Origin::Editor,
+        "plugin_settings",
+        json!({"plugin_id":"missing.plugin"}),
+    ));
+    let rad_api::ResponseData::PluginSettings(settings) = reply.data else {
+        panic!("typed settings");
+    };
+    assert_eq!(settings.plugin_id, "missing.plugin");
+    assert_eq!(settings.hex, None);
+    for (operation, args) in [
+        ("plugin_settings", json!({"plugin_id":"missing.plugin"})),
+        ("plugin_manifest", json!({"plugin_id":"missing.plugin"})),
+        (
+            "set_plugin_settings",
+            json!({"plugin_id":"missing.plugin","parameters":null}),
+        ),
+    ] {
+        let reply = response(call(&mut authority, Origin::Automation, operation, args));
+        assert_eq!(
+            reply.error.unwrap().code,
+            rad_api::ErrorCode::PermissionDenied
+        );
+    }
+}
+
+#[test]
+fn explicit_plugin_retry_is_editor_only_and_routes_to_runtime() {
+    let mut authority = actor();
+    assert!(matches!(
+        call(
+            &mut authority,
+            Origin::Editor,
+            "plugin_retry",
+            json!({"plugin_id":"org.rad.fixture"})
+        ),
+        Resolution::External(_)
+    ));
+    assert_eq!(
+        response(call(
+            &mut authority,
+            Origin::Automation,
+            "plugin_retry",
+            json!({"plugin_id":"org.rad.fixture"})
+        ))
+        .error
+        .unwrap()
+        .code,
+        rad_api::ErrorCode::PermissionDenied
+    );
+}
+
+#[test]
+fn recent_plugin_log_is_editor_only_and_routes_without_starting_plugin() {
+    let mut authority = actor();
+    assert!(matches!(
+        call(
+            &mut authority,
+            Origin::Editor,
+            "plugin_log",
+            json!({"plugin_id":"org.rad.fixture"})
+        ),
+        Resolution::External(_)
+    ));
+    assert_eq!(
+        response(call(
+            &mut authority,
+            Origin::Automation,
+            "plugin_log",
+            json!({"plugin_id":"org.rad.fixture"})
+        ))
+        .error
+        .unwrap()
+        .code,
+        rad_api::ErrorCode::PermissionDenied
+    );
 }

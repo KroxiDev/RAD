@@ -1,7 +1,6 @@
 //! The option lists use a connection of their own: a plugin that is slow to answer must not
 //! delay Apply or anything else the user orders. A fake runtime holds the question open.
 use rad_editor::{
-    Request,
     native::{self, Job, OptionsJob, Reply},
     worker::{SubmitError, Worker},
 };
@@ -47,14 +46,17 @@ fn serve(mut stream: UnixStream, asked: Sender<Value>, released: Arc<Mutex<Recei
                 &mut stream,
                 &request,
                 "ok",
-                json!({"protocol":1,"session_id":SESSION,"limits":{},"capabilities":[]}),
+                json!({"protocol":1,"session_id":SESSION,"limits":serde_json::from_str::<serde_json::Value>(include_str!("../../rad-api/vectors/limits-v1.json")).unwrap(),"capabilities":[]}),
             ),
-            "edit" => write_response(
-                &mut stream,
-                &request,
-                "applied",
-                json!({"changed":true,"revision":"2"}),
-            ),
+            "edit" => {
+                let _ = asked.send(request.clone());
+                write_response(
+                    &mut stream,
+                    &request,
+                    "applied",
+                    json!({"changed":true,"revision":"2"}),
+                );
+            }
             "options" => {
                 let field = request["args"]["field"].as_str().unwrap().to_owned();
                 let _ = asked.send(request.clone());
@@ -133,7 +135,7 @@ impl Drop for FakeRuntime {
 fn question(ticket: u64, field: &str) -> OptionsJob {
     OptionsJob {
         ticket,
-        request: Request::new("options", json!({"type":"p:a","field":field,"cursor":null})),
+        request: request("options", json!({"type":"p:a","field":field,"cursor":null})),
     }
 }
 
@@ -163,7 +165,7 @@ fn a_question_in_flight_delays_neither_apply_nor_anything_else_and_queues_nothin
         .recv_timeout(Duration::from_secs(5))
         .expect("the runtime received the question");
     // The plugin has not answered. The user applies the form meanwhile.
-    let apply = Request::new("edit", json!({"changes":[]}));
+    let apply = request("edit", json!({"changes":[]}));
     main.enqueue(Job::PluginApply(apply)).unwrap();
     let applied = wait(&mut main);
     assert!(
@@ -245,5 +247,54 @@ fn a_connection_idle_for_too_long_is_closed_before_the_new_one_is_opened_and_a_b
         *runtime.connections.lock().unwrap(),
         2,
         "the idle one was replaced, and only after it was closed (the runtime serves one at a time)"
+    );
+}
+
+fn request(op: &str, args: serde_json::Value) -> rad_api::Request {
+    rad_api::Request::parse(op, args).expect("valid typed fixture request")
+}
+
+#[test]
+fn main_rpc_renews_idle_before_sending_a_mutation_without_replay() {
+    let runtime = FakeRuntime::serial("main-idle");
+    let elapsed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let clock = elapsed.clone();
+    let origin = Instant::now();
+    let mut main = native::start_with_clock(
+        runtime.root.clone(),
+        runtime.root.join("no-theme"),
+        move || origin + Duration::from_secs(clock.load(std::sync::atomic::Ordering::SeqCst)),
+    );
+    main.submit(Job::Connect).unwrap();
+    assert!(matches!(wait(&mut main).result, Ok(Reply::Connected)));
+    elapsed.store(30, std::sync::atomic::Ordering::SeqCst);
+    main.submit(Job::Theme).unwrap();
+    wait(&mut main).result.unwrap();
+    assert_eq!(
+        *runtime.connections.lock().unwrap(),
+        1,
+        "local work never renews RPC"
+    );
+    main.submit(Job::PluginApply(request("edit", json!({"changes":[]}))))
+        .unwrap();
+    assert!(matches!(
+        wait(&mut main).result,
+        Ok(Reply::PluginApplied(_))
+    ));
+    assert_eq!(
+        *runtime.connections.lock().unwrap(),
+        2,
+        "idle RPC closes before reconnect and action"
+    );
+    assert_eq!(
+        runtime
+            .questions
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()["op"],
+        "edit"
+    );
+    assert!(
+        runtime.questions.try_recv().is_err(),
+        "mutation is sent exactly once"
     );
 }

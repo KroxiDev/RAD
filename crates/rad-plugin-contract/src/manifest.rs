@@ -31,6 +31,11 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "PluginLifecycle::is_on_demand")]
     pub lifecycle: PluginLifecycle,
     pub contract: u32,
+    pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<Resource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<Schema>,
     pub id: String,
     pub version: Version,
     pub host_min: u32,
@@ -42,6 +47,8 @@ pub struct Manifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
+    #[serde(default = "default_gestures")]
+    pub gestures: Vec<Gesture>,
     pub id: String,
     pub label: String,
     pub schema: Schema,
@@ -69,7 +76,7 @@ pub struct Field {
     pub required: bool,
     pub kind: FieldKind,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FieldKind {
     Boolean,
@@ -98,6 +105,15 @@ impl Manifest {
         if self.contract != 1 {
             return Err(Error::UnsupportedVersion);
         }
+        if self.resources.len() > 5
+            || self
+                .resources
+                .iter()
+                .enumerate()
+                .any(|(i, r)| self.resources[..i].contains(r))
+        {
+            return Err(Error::InvalidManifest);
+        }
         if !identifier(&self.id)
             || self.host_min == 0
             || self.host_min > self.host_max
@@ -118,19 +134,51 @@ impl Manifest {
             for definition in definitions {
                 definition.validate()?;
                 // Dynamic options exist only from API 2: older hosts must never load them.
-                if definition.has_dynamic_choice() && self.host_min < 2 {
+                if definition.has_dynamic_choice()
+                    && !crate::supports(&self.capabilities, crate::DYNAMIC_OPTIONS)
+                {
                     return Err(Error::InvalidManifest);
                 }
             }
         }
         if self.visuals.iter().any(|d| d.response_timeout.is_some())
-            || (self.host_min < 3 && self.actions.iter().any(|d| d.response_timeout.is_some()))
+            || (!crate::supports(&self.capabilities, crate::RESPONSE_TIMEOUT)
+                && self.actions.iter().any(|d| d.response_timeout.is_some()))
         {
             return Err(Error::InvalidManifest);
         }
         let slots = self.credential_slots();
-        if slots.len() > 32 || (!slots.is_empty() && self.host_min < 3) {
+        if slots.len() > 32
+            || (!slots.is_empty() && !crate::supports(&self.capabilities, crate::CREDENTIALS))
+        {
             return Err(Error::InvalidManifest);
+        }
+        crate::validate_capabilities(&self.capabilities).map_err(|_| Error::InvalidManifest)?;
+        if !self.visuals.is_empty() && !crate::supports(&self.capabilities, crate::VISUAL_FRESHNESS)
+        {
+            return Err(Error::InvalidManifest);
+        }
+        if self
+            .actions
+            .iter()
+            .any(|d| d.gestures != default_gestures())
+            && !crate::supports(&self.capabilities, crate::CONTROLS)
+        {
+            return Err(Error::InvalidManifest);
+        }
+        if let Some(schema) = &self.settings {
+            if !crate::supports(&self.capabilities, crate::SETTINGS) {
+                return Err(Error::InvalidManifest);
+            }
+            Definition {
+                id: "settings".into(),
+                label: "Settings".into(),
+                schema: schema.clone(),
+                gestures: default_gestures(),
+                credential_slots: vec![],
+                response_timeout: None,
+            }
+            .validate()?;
         }
         crate::bounded::json(self, 65536)?;
         if self.host_min.max(HOST_API_MIN) > self.host_max.min(host_api) {
@@ -214,6 +262,16 @@ impl Definition {
         Ok(())
     }
     pub fn validate(&self) -> Result<(), Error> {
+        if self.gestures.is_empty()
+            || self.gestures.len() > 3
+            || self
+                .gestures
+                .iter()
+                .enumerate()
+                .any(|(i, g)| self.gestures[..i].contains(g))
+        {
+            return Err(Error::InvalidManifest);
+        }
         if !identifier(&self.id)
             || !label(&self.label)
             || self.schema.version == 0
@@ -272,5 +330,47 @@ impl Definition {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Gesture {
+    Press,
+    Hold,
+    LongPress,
+}
+pub fn default_gestures() -> Vec<Gesture> {
+    vec![Gesture::Press]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Resource {
+    Internet,
+    SystemPrograms,
+    ExternalFiles,
+    Devices,
+    DesktopServices,
+}
+
+impl<'de> Deserialize<'de> for FieldKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+        enum Strict {
+            Boolean {},
+            Integer { min: i64, max: i64 },
+            Text { max_bytes: usize },
+            Choice { options: Vec<String> },
+            DynamicChoice { depends_on: Vec<String> },
+        }
+        Ok(match Strict::deserialize(deserializer)? {
+            Strict::Boolean {} => Self::Boolean,
+            Strict::Integer { min, max } => Self::Integer { min, max },
+            Strict::Text { max_bytes } => Self::Text { max_bytes },
+            Strict::Choice { options } => Self::Choice { options },
+            Strict::DynamicChoice { depends_on } => Self::DynamicChoice { depends_on },
+        })
     }
 }

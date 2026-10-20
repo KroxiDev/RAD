@@ -1,4 +1,4 @@
-//! Contract 1 additive extension: API 2 negotiation, dynamic options, JPEG visuals.
+//! Contract major 1 range compatibility and capability-gated options/JPEG.
 use rad_plugin_contract::*;
 use serde_json::{Value, json};
 
@@ -8,7 +8,7 @@ fn field(id: &str, kind: Value) -> Value {
     json!({"id":id,"label":id,"required":false,"kind":kind})
 }
 fn manifest(host_min: u32, host_max: u32, fields: Vec<Value>) -> Value {
-    json!({"contract":1,"id":"org.rad.test.options","version":{"major":1,"minor":0,"patch":0},
+    json!({"contract":1,"capabilities":["credentials","dynamic_options","jpeg","response_timeout","visual_freshness"],"id":"org.rad.test.options","version":{"major":1,"minor":0,"patch":0},
         "host_min":host_min,"host_max":host_max,"targets":[TARGET],
         "actions":[{"id":"pick","label":"Pick","schema":{"version":1,"fields":fields},"credential_slots":[]}],
         "visuals":[]})
@@ -26,17 +26,17 @@ fn choice() -> Value {
 }
 
 #[test]
-fn api_two_keeps_one_compatible_and_negotiates_the_highest_shared_version() {
-    assert_eq!((HOST_API, HOST_API_MIN), (3, 1));
+fn major_one_accepts_matching_ranges_and_rejects_future_only_ranges() {
+    assert_eq!((HOST_API, HOST_API_MIN), (1, 1));
     // (host_min, host_max, host_api) -> negotiated API, or the compatibility error.
     for (min, max, host_api, expected) in [
-        (1, 1, 2, Ok(1)),
-        (1, 2, 2, Ok(2)),
-        (2, 2, 2, Ok(2)),
-        (1, 9, 2, Ok(2)),
+        (1, 1, 1, Ok(1)),
+        (1, 2, 1, Ok(1)),
+        (1, 3, 1, Ok(1)),
+        (1, 99, 1, Ok(1)),
         (1, 9, 1, Ok(1)),
         (2, 2, 1, Err(Error::IncompatibleHost)),
-        (3, 3, 2, Err(Error::IncompatibleHost)),
+        (3, 3, 1, Err(Error::IncompatibleHost)),
         (1, 1, 0, Err(Error::IncompatibleHost)),
     ] {
         let m = parse(&manifest(min, max, vec![]), host_api);
@@ -63,8 +63,8 @@ fn public_fixture_manifest_stays_valid_and_negotiates_api_one() {
 fn dynamic_choice_has_a_closed_json_shape_and_ordered_acyclic_dependencies() {
     let m = parse(
         &manifest(
-            2,
-            2,
+            1,
+            1,
             vec![
                 field("scenario", choice()),
                 field("group", dynamic(&["scenario"])),
@@ -88,7 +88,7 @@ fn dynamic_choice_has_a_closed_json_shape_and_ordered_acyclic_dependencies() {
     let four = vec!["a", "b", "c", "d"];
     let mut fields: Vec<_> = four.iter().map(|id| field(id, choice())).collect();
     fields.push(field("last", dynamic(&four)));
-    assert!(parse(&manifest(2, 2, fields.clone()), HOST_API).is_ok());
+    assert!(parse(&manifest(1, 1, fields.clone()), HOST_API).is_ok());
     fields.insert(0, field("e", choice()));
     fields.last_mut().unwrap()["kind"] = dynamic(&["a", "b", "c", "d", "e"]);
     let five = fields;
@@ -144,7 +144,7 @@ fn dynamic_choice_has_a_closed_json_shape_and_ordered_acyclic_dependencies() {
         ),
     ] {
         assert_eq!(
-            parse(&manifest(2, 2, fields), HOST_API).unwrap_err(),
+            parse(&manifest(1, 1, fields), HOST_API).unwrap_err(),
             Error::InvalidManifest,
             "{case}"
         );
@@ -152,23 +152,29 @@ fn dynamic_choice_has_a_closed_json_shape_and_ordered_acyclic_dependencies() {
 }
 
 #[test]
-fn dynamic_choice_requires_a_manifest_that_needs_api_two() {
+fn dynamic_choice_requires_its_declared_capability() {
     let fields = vec![field("group", dynamic(&[]))];
-    for (min, max, valid) in [(1, 1, false), (1, 2, false), (2, 2, true), (2, 3, true)] {
-        let result = parse(&manifest(min, max, fields.clone()), HOST_API);
-        assert_eq!(result.is_ok(), valid, "range {min}..={max}");
+    for (capabilities, valid) in [
+        (json!([]), false),
+        (json!(["jpeg"]), false),
+        (json!(["dynamic_options"]), true),
+    ] {
+        let mut value = manifest(1, 1, fields.clone());
+        value["capabilities"] = capabilities;
+        let result = parse(&value, HOST_API);
+        assert_eq!(result.is_ok(), valid);
         if !valid {
             assert_eq!(result.unwrap_err(), Error::InvalidManifest);
         }
     }
-    // Visual definitions follow the same rule.
-    let mut visual = manifest(1, 2, vec![]);
+    let mut visual = manifest(1, 1, vec![]);
     visual["visuals"] = json!([{"id":"probe","label":"Probe","schema":{"version":1,"fields":fields},"credential_slots":[]}]);
+    visual["capabilities"] = json!(["visual_freshness"]);
     assert_eq!(
         parse(&visual, HOST_API).unwrap_err(),
         Error::InvalidManifest
     );
-    visual["host_min"] = json!(2);
+    visual["capabilities"] = json!(["visual_freshness", "dynamic_options"]);
     assert!(parse(&visual, HOST_API).is_ok());
 }
 
@@ -177,8 +183,8 @@ fn picker() -> Definition {
     group["required"] = json!(true);
     parse(
         &manifest(
-            2,
-            2,
+            1,
+            1,
             vec![
                 field("scenario", choice()),
                 group,
@@ -338,6 +344,7 @@ fn options_and_choices_messages_have_their_documented_json_and_roundtrip() {
             json!({"kind":"options","scope":"action","definition":"pick","field":"member",
                 "context":{"schema_version":1,"values":{"scenario":"normal","group":"a"}}}),
             Message::Options {
+                settings: None,
                 credential_revision: None,
                 scope: OptionsScope::Action,
                 definition: "pick".into(),
@@ -349,6 +356,7 @@ fn options_and_choices_messages_have_their_documented_json_and_roundtrip() {
             json!({"kind":"options","scope":"visual","definition":"probe","field":"group",
                 "context":{"schema_version":1,"values":{}}}),
             Message::Options {
+                settings: None,
                 credential_revision: None,
                 scope: OptionsScope::Visual,
                 definition: "probe".into(),
@@ -497,17 +505,20 @@ fn options_queries_are_validated_like_every_other_host_message() {
 }
 
 #[test]
-fn visual_content_accepts_jpeg_with_the_png_rules_and_old_frames_still_decode() {
+fn visual_content_accepts_jpeg_with_the_png_rules_and_png_only_frames_still_decode() {
     let visual = |content: Value| {
-        envelope(json!({"kind":"visual","state":{"availability":"current","content":content}}))
+        envelope(
+            json!({"kind":"visual","valid_for_ms":1000,"state":{"availability":"current","content":content}}),
+        )
     };
     let content_of = |message: Value| match decode(&framed(&message)).unwrap().unwrap().0.message {
         Message::Visual {
+            valid_for_ms: 1000,
             state: VisualState::Current { content },
         } => content,
         other => panic!("unexpected {other:?}"),
     };
-    // A frame written before JPEG existed has no jpeg_hex at all.
+    // A non-JPEG frame has no jpeg_hex at all.
     let old = content_of(visual(json!({"text":"x","png_hex":null,"color":null})));
     assert_eq!(old.jpeg_hex, None);
     let jpeg = content_of(visual(
@@ -558,11 +569,12 @@ fn visual_content_accepts_jpeg_with_the_png_rules_and_old_frames_still_decode() 
     // Past 16384 characters the wire layer refuses the string before the contract sees it.
     let huge = json!({"text":null,"png_hex":null,"color":null,"jpeg_hex":"ab".repeat(8193)});
     assert_eq!(decode(&framed(&visual(huge))), Err(Error::InvalidDocument));
-    // Absent images stay absent on the wire, so API 1 consumers see the same frames as before.
+    // Absent images stay absent on the wire even when JPEG is supported.
     let text_only = Envelope {
         protocol: 1,
         correlation: key(),
         message: Message::Visual {
+            valid_for_ms: 1000,
             state: VisualState::Current { content: old },
         },
     };
@@ -571,6 +583,7 @@ fn visual_content_accepts_jpeg_with_the_png_rules_and_old_frames_still_decode() 
     let mut with_jpeg = text_only.clone();
     if let Message::Visual {
         state: VisualState::Current { content },
+        ..
     } = &mut with_jpeg.message
     {
         content.jpeg_hex = Some("ffd8ffd9".into());

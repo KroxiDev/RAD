@@ -1,7 +1,7 @@
 use rad_plugin_contract::{Document, Error};
 use serde_json::{Value, json};
 fn manifest() -> Value {
-    json!({"contract":1,"id":"org.rad.fixture","version":{"major":1,"minor":0,"patch":0},
+    json!({"contract":1,"capabilities":["credentials","dynamic_options","jpeg","response_timeout","visual_freshness"],"id":"org.rad.fixture","version":{"major":1,"minor":0,"patch":0},
         "host_min":1,"host_max":1,"targets":["x86_64-unknown-linux-gnu"],
         "actions":[],"visuals":[{"id":"status","label":"Status","schema":{"version":1,"fields":[]},"credential_slots":[]}]})
 }
@@ -10,7 +10,7 @@ fn manifest_compatibility_preserves_unknown_and_incompatible_bytes() {
     let bytes = serde_json::to_vec(&manifest()).unwrap();
     let doc = Document::new(&bytes).unwrap();
     assert!(doc.manifest(1, "x86_64-unknown-linux-gnu").is_ok());
-    // API 2 still accepts a 1..=1 manifest (see tests/options.rs); API 0 shares nothing with it.
+    // A future host may include major 1 in its range; major 0 shares nothing with it.
     assert!(doc.manifest(2, "x86_64-unknown-linux-gnu").is_ok());
     assert_eq!(
         doc.manifest(0, "x86_64-unknown-linux-gnu").unwrap_err(),
@@ -100,16 +100,20 @@ fn framed_protocol_roundtrips_and_rejects_wrong_generation() {
     };
     let messages = [
         Message::Hello {
+            capabilities: vec![],
             host_api: 1,
             target: "x86_64-unknown-linux-gnu".into(),
             plugin_id: "org.rad.fixture".into(),
             plugin_version: version,
         },
         Message::Ready {
+            capabilities: vec![],
             plugin_id: "org.rad.fixture".into(),
             plugin_version: version,
         },
         Message::Invoke {
+            settings: None,
+            control: None,
             credential_revision: None,
             action: "run".into(),
             parameters: parameters.clone(),
@@ -123,19 +127,23 @@ fn framed_protocol_roundtrips_and_rejects_wrong_generation() {
             },
         },
         Message::Subscribe {
+            settings: None,
             credential_revision: None,
             source: "status".into(),
             parameters,
         },
         Message::Visual {
+            valid_for_ms: 1000,
             state: VisualState::Current {
                 content: content.clone(),
             },
         },
         Message::Visual {
+            valid_for_ms: 1000,
             state: VisualState::Stale { content },
         },
         Message::Visual {
+            valid_for_ms: 1000,
             state: VisualState::Unavailable,
         },
         Message::Unsubscribe { subscription: key },
@@ -180,6 +188,7 @@ fn framed_protocol_roundtrips_and_rejects_wrong_generation() {
 fn public_dtos_cannot_bypass_resource_and_schema_limits() {
     use rad_plugin_contract::*;
     let mut definition = Definition {
+        gestures: vec![Gesture::Press],
         response_timeout: None,
         id: "run".into(),
         label: "Run".into(),
@@ -224,7 +233,7 @@ fn public_dtos_cannot_bypass_resource_and_schema_limits() {
         Error::LimitExceeded
     );
     for raw in [
-        br#"{"contract":1,"contract":1}"#.as_slice(),
+        br#"{"contract":1,"capabilities":["credentials","dynamic_options","jpeg","response_timeout","visual_freshness"],"contract":1}"#.as_slice(),
         br#"{"schema_version":1,"values":{"secret":"a","secret":"b"}}"#.as_slice(),
     ] {
         let d = Document::new(raw).unwrap();
@@ -299,7 +308,7 @@ fn malformed_messages_and_sensitive_diagnostics_fail_closed() {
         );
     }
     let mut v = good.clone();
-    v["message"] = json!({"kind":"visual","state":{"availability":"current","content":{"text":null,"png_hex":null,"color":null}}});
+    v["message"] = json!({"kind":"visual","valid_for_ms":1000,"state":{"availability":"current","content":{"text":null,"png_hex":null,"color":null}}});
     assert_eq!(decode(&framed(&v)), Err(Error::InvalidMessage));
     v["message"]["state"]["content"]["text"] = json!("x".repeat(257));
     assert_eq!(decode(&framed(&v)), Err(Error::InvalidMessage));

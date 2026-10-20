@@ -3,6 +3,12 @@ use rad_core::{configuration::*, execution::*, identity::*};
 use rad_plugin_contract::{Definition, Manifest, Schema, Version};
 fn manifest(major: u32) -> Manifest {
     Manifest {
+        resources: vec![],
+        capabilities: rad_plugin_contract::SUPPORTED_CAPABILITIES
+            .iter()
+            .map(|s| (*s).into())
+            .collect(),
+        settings: None,
         lifecycle: Default::default(),
         contract: 1,
         id: "fixture".into(),
@@ -15,6 +21,7 @@ fn manifest(major: u32) -> Manifest {
         host_max: 1,
         targets: vec!["x86_64-unknown-linux-gnu".into()],
         actions: vec![Definition {
+            gestures: vec![rad_plugin_contract::Gesture::Press],
             response_timeout: None,
             id: "run".into(),
             label: "Run".into(),
@@ -429,8 +436,8 @@ fn admission_captures_declared_response_budget_before_wait_and_parameter_edit() 
         .identity();
     let mut a = Authority::new(c, 1, std::num::NonZeroU128::new(771).unwrap());
     let mut m = manifest(1);
-    m.host_min = 3;
-    m.host_max = 3;
+    m.host_min = 1;
+    m.host_max = 1;
     m.actions[0].schema.fields.push(rad_plugin_contract::Field {
         id: "timeout_seconds".into(),
         label: "Timeout".into(),
@@ -525,8 +532,8 @@ fn credential_values(value: &str) -> std::sync::Arc<rad_plugin_contract::Credent
 }
 fn credential_manifest() -> Manifest {
     let mut m = manifest(1);
-    m.host_min = 3;
-    m.host_max = 3;
+    m.host_min = 1;
+    m.host_max = 1;
     m.actions[0].credential_slots.push("password".into());
     m
 }

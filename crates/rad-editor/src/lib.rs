@@ -1,18 +1,5 @@
 //! Editor presentation and bounded client worker; no authoritative domain state.
-use serde_json::{Value, json};
-#[derive(Debug, Clone, PartialEq)]
-pub struct Request {
-    pub operation: String,
-    pub arguments: Value,
-}
-impl Request {
-    pub fn new(operation: &str, arguments: Value) -> Self {
-        Self {
-            operation: operation.into(),
-            arguments,
-        }
-    }
-}
+pub use rad_api::Request;
 #[derive(Default)]
 pub struct Controller {
     selected: Option<String>,
@@ -28,25 +15,7 @@ impl Controller {
     pub fn try_selected(&self) -> Option<Request> {
         self.selected
             .as_ref()
-            .map(|id| Request::new("run", json!({"id":id})))
-    }
-}
-
-#[derive(Default)]
-pub struct PollSchedule {
-    last: Option<u64>,
-}
-impl PollSchedule {
-    pub fn due(&mut self, now_ms: u64, visible: bool, busy: bool) -> bool {
-        if busy
-            || self
-                .last
-                .is_some_and(|last| now_ms.saturating_sub(last) < if visible { 250 } else { 1000 })
-        {
-            return false;
-        }
-        self.last = Some(now_ms);
-        true
+            .map(|id| Request::Run { id: id.into() })
     }
 }
 
@@ -68,9 +37,9 @@ impl Controller {
         self.execution = Some(id);
     }
     pub fn result_request(&self) -> Option<Request> {
-        self.execution
-            .as_ref()
-            .map(|id| Request::new("result", json!({"execution_id":id})))
+        self.execution.as_ref().map(|id| Request::Result {
+            execution_id: id.into(),
+        })
     }
     pub fn terminal(&mut self) {
         self.execution = None;
@@ -84,3 +53,7 @@ pub mod plugins;
 pub mod preferences;
 
 pub mod dependencies;
+
+pub mod notices;
+pub mod schedule;
+pub mod texts;

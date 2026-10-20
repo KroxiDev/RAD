@@ -180,6 +180,14 @@ impl Appearance {
 pub const MAX_ACTIONS: usize = 20;
 /// Fixed live-entity ceiling measured against the 1 MiB document budget.
 pub const MAX_LIVE_IDENTITIES: usize = 7000;
+/// The physical gesture selected for the whole button plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Gesture {
+    #[default]
+    Press,
+    Hold,
+    LongPress,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ButtonData {
     pub binding: Binding,
@@ -188,6 +196,7 @@ pub struct ButtonData {
     pub visual: VisualSource,
     pub permissions: LocalPermissions,
     pub mode: Mode,
+    pub gesture: Gesture,
     pub actions: Vec<ActionData>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,6 +221,14 @@ pub enum ActionKind {
 /// Typed edits: no generic setter, raw-document patch, or client-supplied bypass.
 pub enum Edit {
     SetSettings(SettingsData),
+    SetPluginSettings {
+        plugin: String,
+        settings: Option<PluginSettings>,
+    },
+    SetGesture {
+        button: EntityIdentity,
+        gesture: Gesture,
+    },
     RemoveAction {
         action: EntityIdentity,
     },

@@ -188,8 +188,6 @@ pub fn parse_json(bytes: &[u8]) -> Result<serde_json::Value, JsonError> {
     json::parse(bytes).map_err(|_| JsonError)
 }
 
-pub mod response;
-
 impl std::fmt::Debug for Frame<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Frame([redacted])")

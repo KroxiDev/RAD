@@ -1,14 +1,15 @@
 //! The sole runtime owner. Clients never own publication, history or execution.
+mod client_api;
 mod credentials;
 mod options;
 mod transfers;
 use crate::{bootstrap, persistence::Persistence};
+use rad_api::response::{Error, Outcome, Response, Status};
 use rad_authority::{Authority, Effect, RequestId};
 use rad_core::configuration::Origin;
 use rad_launcher::monotonic_ms;
 use rad_protocol::{Capabilities, External, IncomingContext, Protocol, Resolution};
 use rad_transport::{RequestKey, Transport};
-use rad_wire::response::{Error, Outcome, Response, Status};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -57,6 +58,8 @@ pub struct Server {
     reconciliation_attempted: bool,
     deck: Option<Box<dyn crate::display::DeckPort>>,
     deck_connected: bool,
+    deck_inaccessible: bool,
+    notices: client_api::Notices,
     images: BTreeMap<String, Arc<rad_media::NormalizedImage>>,
     asleep: bool,
     brightness: u8,
@@ -125,6 +128,8 @@ impl Server {
             shutting_down: false,
             deck: None,
             deck_connected: false,
+            deck_inaccessible: false,
+            notices: client_api::Notices::default(),
             images: BTreeMap::new(),
             asleep: false,
             brightness,
@@ -152,9 +157,9 @@ impl Server {
             id: Some(context.request_id.to_string()),
             session_id: Some(format!("{:032x}", self.session)),
             status: Status::Error,
-            data: Value::Null,
+            data: rad_api::ResponseData::None,
             error: Some(Error {
-                code: code.into(),
+                code: rad_api::ErrorCode::parse(code).expect("defined response code"),
                 message: "Request rejected".into(),
                 details: json!({}),
                 outcome: mutation.then_some(Outcome::NotApplied),
@@ -210,6 +215,7 @@ impl Server {
                 Effect::SelectionChanged { .. }
                 | Effect::Wake
                 | Effect::HardwareAccepted { .. } => self.display_dirty = true,
+                Effect::ReleaseHold { execution } => self.actor.hold_released(*execution),
                 Effect::Dispatch(intent) => {
                     // No native port attached in this cut: fail explicitly, never pretend to launch.
                     let effects = self
@@ -272,11 +278,17 @@ impl Server {
             let effects = match event {
                 rad_deck::Event::Connected => {
                     self.deck_connected = true;
+                    self.deck_inaccessible = false;
                     self.display_dirty = true;
                     self.actor.input_disconnect(now)
                 }
                 rad_deck::Event::Report(keys) => self.actor.input_report(now, keys),
-                rad_deck::Event::Disconnected(_) | rad_deck::Event::Stopped { .. } => {
+                rad_deck::Event::Disconnected(error) => {
+                    self.deck_connected = false;
+                    self.deck_inaccessible = error != rad_deck::DeckError::Absent;
+                    self.actor.input_disconnect(now)
+                }
+                rad_deck::Event::Stopped { .. } => {
                     self.deck_connected = false;
                     self.actor.input_disconnect(now)
                 }
@@ -389,10 +401,24 @@ impl Server {
             operation,
             External::PluginAdmin(_)
                 | External::PluginStatus
+                | External::PluginRetry { .. }
+                | External::PluginLog { .. }
                 | External::PluginVisual { .. }
                 | External::PluginVisualRead { .. }
         ) {
-            let mutation = matches!(operation, External::PluginAdmin(_));
+            let response_operation = match &operation {
+                External::PluginAdmin(_) => rad_api::Operation::PluginAdmin,
+                External::PluginStatus => rad_api::Operation::PluginStatus,
+                External::PluginRetry { .. } => rad_api::Operation::PluginRetry,
+                External::PluginLog { .. } => rad_api::Operation::PluginLog,
+                External::PluginVisual { .. } => rad_api::Operation::PluginVisual,
+                External::PluginVisualRead { .. } => rad_api::Operation::PluginVisualRead,
+                _ => unreachable!("plugin external operation"),
+            };
+            let mutation = matches!(
+                operation,
+                External::PluginAdmin(_) | External::PluginRetry { .. }
+            );
             let result = self.plugin_external(context, operation);
             let response = match result {
                 Ok(data) => Response {
@@ -400,7 +426,8 @@ impl Server {
                     id: Some(context.request_id.to_string()),
                     session_id: Some(format!("{:032x}", self.session)),
                     status: Status::Ok,
-                    data,
+                    data: rad_api::ResponseData::decode(response_operation, Status::Ok, data)
+                        .map_err(|_| RuntimeError::Protocol)?,
                     error: None,
                 },
                 Err(code) => self.error(context, code, mutation),
@@ -428,7 +455,9 @@ impl Server {
                 id: Some(context.request_id.to_string()),
                 session_id: Some(format!("{:032x}", self.session)),
                 status: Status::Ok,
-                data,
+                data: rad_api::ResponseData::Launcher(
+                    serde_json::from_value(data).map_err(|_| RuntimeError::Protocol)?,
+                ),
                 error: None,
             },
             Err(code) => self.error(context, code, false),
@@ -452,6 +481,17 @@ impl Server {
                 self.plugin_admin.as_mut().ok_or("executor_unavailable")?
                     .submit(context.origin, request, &self.actor)
             }
+            External::PluginLog { plugin_id } => {
+                if context.origin != Origin::Editor { return Err("permission_denied"); }
+                let host = self.native.as_ref().ok_or("executor_unavailable")?.plugin_host();
+                if !self.actor.plugin_manifests().any(|(manifest, _, _)| manifest.id == plugin_id) { return Err("not_found"); }
+                serde_json::to_value(bounded_plugin_log(plugin_id.clone(), host.stderr(&plugin_id))?).map_err(|_| "invalid_configuration")
+            }
+            External::PluginRetry { plugin_id } => {
+                let (admin, native) = self.plugin_admin.as_mut().zip(self.native.as_mut()).ok_or("executor_unavailable")?;
+                admin.retry(context.origin, &plugin_id, &self.actor, native.plugin_host_mut())?;
+                Ok(json!({}))
+            }
             External::PluginStatus => {
                 if context.origin != Origin::Editor { return Err("permission_denied"); }
                 let (admin, native) = self.plugin_admin.as_ref().zip(self.native.as_ref())
@@ -460,8 +500,12 @@ impl Server {
                 if let Some(items)=status["items"].as_array_mut() {
                     for item in items {
                         let id=item["id"].as_str().unwrap_or_default();
+                        let can_retry = admin.can_retry(id, &self.actor, native.plugin_host());
+                        let has_settings = self.actor.plugin_manifests().any(|(manifest, _, _)| manifest.id == id && manifest.settings.is_some());
                         let needs=self.actor.plugin_credential_status(id).iter().any(|(_,present)|!present);
                         item["needs_credentials"]=json!(needs);
+                        item["can_retry"]=json!(can_retry);
+                        item["has_settings"]=json!(has_settings);
                     }
                 }
                 Ok(status)
@@ -568,6 +612,9 @@ impl Server {
                 )?;
                 continue;
             }
+            if self.client_api(incoming.key, context, &incoming.request)? {
+                continue;
+            }
             match self
                 .protocol
                 .handle(&mut self.actor, context, &incoming.request)
@@ -579,18 +626,19 @@ impl Server {
                     if context.origin == Origin::Editor
                         && incoming.request.operation() == "status"
                         && response.error.is_none()
+                        && let rad_api::ResponseData::Status(status) = &mut response.data
                     {
-                        response.data["deck_state"] = json!(if self.deck.is_none() {
-                            "disabled"
+                        status.deck_state = Some(if self.deck.is_none() {
+                            rad_api::DeckState::Disabled
                         } else if self.deck_connected {
-                            "connected"
+                            rad_api::DeckState::Connected
                         } else {
-                            "disconnected"
+                            rad_api::DeckState::Disconnected
                         });
-                        response.data["recovered_previous"] = json!(self.recovered_previous);
+                        status.recovered_previous = Some(self.recovered_previous);
                     }
                     self.effects(effects)?;
-                    self.respond(incoming.key, response)?;
+                    self.respond(incoming.key, *response)?;
                 }
                 Resolution::Command(command) => {
                     let media = self.prepared_image(context, &incoming.request);
@@ -640,6 +688,7 @@ impl Server {
         self.respond_credentials()?;
         let effects = self.reconcile_once();
         self.effects(effects)?;
+        self.publish_notices()?;
         if !self.shutting_down {
             self.paint();
             self.maintain_transfers()?;
@@ -728,5 +777,50 @@ impl Server {
         self.transport
             .wait_readiness(timeout)
             .map_err(|_| RuntimeError::Transport)
+    }
+}
+
+/// Keep newest sanitized lines, reserving room for the response envelope.
+fn bounded_plugin_log(
+    plugin_id: String,
+    mut lines: Vec<String>,
+) -> Result<rad_api::PluginLogView, &'static str> {
+    while serde_json::to_vec(&lines)
+        .map_err(|_| "invalid_configuration")?
+        .len()
+        > 48 * 1024 - 1024
+    {
+        lines.remove(0);
+    }
+    Ok(rad_api::PluginLogView { plugin_id, lines })
+}
+#[cfg(test)]
+mod recent_log_tests {
+    #[test]
+    fn recent_log_bounds_encoded_escaped_bytes_and_keeps_newest_lines() {
+        let mut lines = vec!["\"\\\n".repeat(1024); 64];
+        lines.push("newest message".into());
+        let view = super::bounded_plugin_log("org.rad.fixture".into(), lines).unwrap();
+        assert_eq!(
+            view.lines.last().map(String::as_str),
+            Some("newest message")
+        );
+        let response = rad_api::Response {
+            v: 1,
+            id: Some(u64::MAX.to_string()),
+            session_id: Some("f".repeat(32)),
+            status: rad_api::Status::Ok,
+            data: rad_api::ResponseData::PluginLog(view),
+            error: None,
+        };
+        let bytes = serde_json::to_vec(&response).unwrap();
+        assert!(bytes.len() < 48 * 1024);
+        rad_api::Response::decode_value(
+            serde_json::from_slice(&bytes).unwrap(),
+            u64::MAX,
+            Some(&"f".repeat(32)),
+            rad_api::Operation::PluginLog,
+        )
+        .unwrap();
     }
 }

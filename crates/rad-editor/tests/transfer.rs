@@ -6,13 +6,15 @@ use rad_editor::{
     session::{Port, Session},
     transfer::{Progress, Upload},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 struct UploadServer {
     offset: usize,
     finished: bool,
 }
 impl Port for UploadServer {
-    fn request(&mut self, op: &str, args: Value) -> Result<Response, Failure> {
+    fn call(&mut self, request: rad_api::Request) -> Result<Response, Failure> {
+        let op = request.operation().as_str();
+        let args = request.arguments();
         let data = match op {
             "transfer_write" => {
                 assert_eq!(args["offset"], self.offset.to_string());
@@ -39,7 +41,17 @@ impl Port for UploadServer {
             id: Some("1".into()),
             session_id: None,
             status: Status::Ok,
-            data,
+            data: rad_api::ResponseData::decode(
+                rad_api::Operation::parse(op).unwrap(),
+                rad_api::Status::Ok,
+                data,
+            )
+            .map_err(|_| Failure {
+                code: "invalid_request",
+                id: None,
+                session_id: None,
+                outcome: None,
+            })?,
             error: None,
         })
     }
@@ -66,7 +78,9 @@ fn image_upload_yields_between_bounded_chunks_then_prepares_not_publishes() {
 }
 struct ExportServer;
 impl Port for ExportServer {
-    fn request(&mut self, op: &str, args: Value) -> Result<Response, Failure> {
+    fn call(&mut self, request: rad_api::Request) -> Result<Response, Failure> {
+        let op = request.operation().as_str();
+        let args = request.arguments();
         assert_eq!(op, "transfer_read");
         assert_eq!(args["offset"], "0");
         Ok(Response {
@@ -74,7 +88,10 @@ impl Port for ExportServer {
             id: Some("1".into()),
             session_id: None,
             status: Status::Ok,
-            data: json!({"base64":"AAEC/w==","eof":true}),
+            data: rad_api::ResponseData::TransferChunk(rad_api::TransferChunk {
+                base64: "AAEC/w==".into(),
+                eof: true,
+            }),
             error: None,
         })
     }

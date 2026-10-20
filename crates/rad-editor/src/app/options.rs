@@ -51,6 +51,9 @@ impl PluginUi {
         let Some(form) = loaded.form.as_mut().filter(|form| form.compatible()) else {
             return;
         };
+        if form.settings {
+            return;
+        }
         let ticket = self.tickets + 1;
         let Some(query) = form.next_query(target, ticket) else {
             return;
@@ -80,7 +83,7 @@ pub(super) fn dynamic_choice(
     form: &mut FormDraft,
     index: usize,
     value: &mut String,
-    es: bool,
+    es: impl Into<crate::preferences::Language> + Copy,
 ) -> bool {
     let state = form.list(index).cloned();
     let options = match &state {
@@ -88,9 +91,9 @@ pub(super) fn dynamic_choice(
         _ => &[],
     };
     let unlisted = form.is_unavailable(index);
-    let mark = |value: &str| format!("{value} — {}", tr(es, "unavailable", "no disponible"));
+    let mark = |value: &str| format!("{value} — {}", tr(es, "unavailable"));
     let shown = match options.iter().find(|option| option.value == *value) {
-        _ if value.is_empty() => tr(es, "Choose…", "Elige…").to_owned(),
+        _ if value.is_empty() => tr(es, "Choose…").to_owned(),
         Some(option) => option.label.clone(),
         None if unlisted => mark(value),
         None => value.clone(),
@@ -116,7 +119,7 @@ pub(super) fn dynamic_choice(
             ui,
             look,
             Icon::Refresh,
-            tr(es, "Ask again", "Volver a consultar"),
+            tr(es, "Ask again"),
             Some(ask_again_id(index)),
         )
         .clicked()
@@ -133,7 +136,7 @@ pub(super) fn list_status(
     look: &Look,
     form: &FormDraft,
     index: usize,
-    es: bool,
+    es: impl Into<crate::preferences::Language> + Copy,
     indent: f32,
 ) {
     let line = |ui: &mut egui::Ui, text: egui::RichText| {
@@ -147,53 +150,39 @@ pub(super) fn list_status(
         return;
     };
     let kept = !value.is_empty();
-    let with_kept = |en: &'static str, es_text: &'static str| {
-        let text = tr(es, en, es_text);
+    let with_kept = |en: &'static str| {
+        let text = tr(es, en);
         if kept {
-            format!("{text} — {}", tr(es, "value kept", "se conserva el valor"))
+            format!("{text} — {}", tr(es, "value kept"))
         } else {
             text.to_owned()
         }
     };
     // Before anything is asked, say what the list is waiting for: not a state to worry about.
     if let Some(dependency) = form.waiting_for(index) {
-        let text = if es {
-            format!("Elige primero {dependency}")
-        } else {
-            format!("Choose {dependency} first")
-        };
+        let text = tr(es, "Choose {field} first").replace("{field}", dependency);
         line(ui, egui::RichText::new(text).size(12.).color(look.muted));
         return;
     }
     let (text, alert) = match form.list(index) {
         None => return,
-        Some(ListState::Due | ListState::Asking(_)) => {
-            (tr(es, "Loading…", "Cargando…").to_owned(), false)
-        }
+        Some(ListState::Due | ListState::Asking(_)) => (tr(es, "Loading…").to_owned(), false),
         Some(ListState::Answered(ChoiceList::Available { options })) if options.is_empty() => {
-            (tr(es, "No options", "Sin opciones").to_owned(), false)
+            (tr(es, "No options").to_owned(), false)
         }
         Some(ListState::Answered(ChoiceList::Available { .. })) => return,
-        Some(ListState::Answered(ChoiceList::Unavailable)) => (
-            with_kept("Source unavailable", "Fuente no disponible"),
-            true,
-        ),
+        Some(ListState::Answered(ChoiceList::Unavailable)) => {
+            (with_kept("Source unavailable"), true)
+        }
         Some(ListState::Failed(Failure::NoAnswer)) => {
             (describe_error("options_timeout", es).to_owned(), true)
         }
-        Some(ListState::Failed(Failure::PluginUnavailable)) => (
-            with_kept("Plugin not available", "Plugin no disponible"),
-            true,
-        ),
-        Some(ListState::Failed(Failure::Busy)) => (
-            tr(
-                es,
-                "Plugin busy or list too large",
-                "Plugin ocupado o lista demasiado grande",
-            )
-            .to_owned(),
-            true,
-        ),
+        Some(ListState::Failed(Failure::PluginUnavailable)) => {
+            (with_kept("Plugin not available"), true)
+        }
+        Some(ListState::Failed(Failure::Busy)) => {
+            (tr(es, "Plugin busy or list too large").to_owned(), true)
+        }
         Some(ListState::Failed(Failure::Other(code))) => {
             (describe_error(code, es).to_owned(), true)
         }
@@ -231,6 +220,7 @@ mod tests {
             depends_on: depends_on.iter().map(|d| d.to_string()).collect(),
         };
         Definition {
+            gestures: rad_plugin_contract::default_gestures(),
             response_timeout: None,
             id: "pick".into(),
             label: "pick".into(),
@@ -459,8 +449,8 @@ mod tests {
             ),
             (
                 Err("some_future_code"),
-                "some_future_code",
-                "some_future_code",
+                "Something went wrong",
+                "Algo salió mal",
                 "a",
             ),
         ];
@@ -627,6 +617,7 @@ mod conversation_tests {
             },
         };
         Definition {
+            gestures: rad_plugin_contract::default_gestures(),
             response_timeout: None,
             id: "pick".into(),
             label: "pick".into(),
@@ -666,7 +657,7 @@ mod conversation_tests {
             let (release, released) = channel::<()>();
             let released = Arc::new(Mutex::new(released));
             let worker = Worker::spawn(move |job: OptionsJob| {
-                let field = job.request.arguments["field"].clone();
+                let field = job.request.arguments()["field"].clone();
                 asked_tx.send(job.request).unwrap();
                 released.lock().unwrap().recv().unwrap();
                 OptionsEvent {
@@ -725,8 +716,8 @@ mod conversation_tests {
         }
     }
 
-    fn field_of(request: &Request) -> &str {
-        request.arguments["field"].as_str().unwrap()
+    fn field_of(request: &Request) -> String {
+        request.arguments()["field"].as_str().unwrap().to_owned()
     }
 
     #[test]
@@ -736,7 +727,8 @@ mod conversation_tests {
         let first = talk.question();
         assert_eq!(field_of(&first), "group");
         assert_eq!(
-            first.arguments["id"], "action-1",
+            first.arguments()["id"],
+            "action-1",
             "asked by entity while editing"
         );
         for _ in 0..20 {
@@ -766,13 +758,13 @@ mod conversation_tests {
         talk.release.send(()).unwrap();
         let again = talk.pumped_question();
         assert_eq!(field_of(&again), "group");
-        assert_eq!(again.arguments["context"], json!({"scenario":"empty"}));
+        assert_eq!(again.arguments()["context"], json!({"scenario":"empty"}));
         talk.release.send(()).unwrap();
         talk.until_answered(1);
         let second = talk.question();
         assert_eq!(field_of(&second), "member");
         assert_eq!(
-            second.arguments["context"],
+            second.arguments()["context"],
             json!({"scenario":"empty","group":"a"})
         );
         talk.release.send(()).unwrap();
@@ -796,7 +788,7 @@ mod conversation_tests {
         let again = talk.pumped_question();
         assert_eq!(field_of(&again), "group");
         assert_eq!(
-            again.arguments["context"],
+            again.arguments()["context"],
             json!({"scenario":"empty"}),
             "the new context"
         );

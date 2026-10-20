@@ -347,3 +347,104 @@ fn malformed_layout_is_rejected_atomically_without_disarming_valid_pending_input
         vec![candidate(0, 1)]
     );
 }
+
+#[test]
+fn hold_ignores_press_threshold_and_ends_original_binding_on_layout_change() {
+    use rad_core::{configuration::Gesture, input::ControlGesture};
+    let mut input = Input::default();
+    input.handle(0, layout(1, &[(0, button(1))])).unwrap();
+    input.handle(0, Change::Threshold(9999)).unwrap();
+    input
+        .handle(
+            0,
+            Change::Gestures {
+                selected: [Gesture::Hold; KEY_COUNT],
+                long_press_ms: 500,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        input.handle(1, report(&[0])).unwrap(),
+        vec![Output::Gesture {
+            key: 0,
+            button: button(1),
+            gesture: ControlGesture::HoldStart
+        }]
+    );
+    assert_eq!(
+        input.handle(2, layout(2, &[(0, button(2))])).unwrap(),
+        vec![Output::Gesture {
+            key: 0,
+            button: button(1),
+            gesture: ControlGesture::HoldEnd
+        }]
+    );
+    assert!(input.handle(3, report(&[])).unwrap().is_empty());
+}
+
+#[test]
+fn long_press_uses_its_captured_threshold_once_and_never_emits_press() {
+    use rad_core::{configuration::Gesture, input::ControlGesture};
+    let mut input = Input::default();
+    input.handle(0, layout(1, &[(0, button(1))])).unwrap();
+    input.handle(0, Change::Threshold(1)).unwrap();
+    input
+        .handle(
+            0,
+            Change::Gestures {
+                selected: [Gesture::LongPress; KEY_COUNT],
+                long_press_ms: 500,
+            },
+        )
+        .unwrap();
+    assert!(input.handle(1, report(&[0])).unwrap().is_empty());
+    input
+        .handle(
+            2,
+            Change::Gestures {
+                selected: [Gesture::Press; KEY_COUNT],
+                long_press_ms: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(input.next_deadline_ms(), Some(501));
+    assert!(input.handle(500, Change::Tick).unwrap().is_empty());
+    assert_eq!(
+        input.handle(501, Change::Tick).unwrap(),
+        vec![Output::Gesture {
+            key: 0,
+            button: button(1),
+            gesture: ControlGesture::LongPress
+        }]
+    );
+    assert!(input.handle(600, Change::Tick).unwrap().is_empty());
+    assert!(input.handle(700, report(&[])).unwrap().is_empty());
+}
+
+#[test]
+fn hold_cancellation_sends_one_end_and_wake_or_reconnect_never_replays_start() {
+    use rad_core::{configuration::Gesture, input::ControlGesture};
+    for cancel in [Change::Disconnect, Change::Sleep] {
+        let mut input = Input::default();
+        input.handle(0, layout(1, &[(0, button(1))])).unwrap();
+        input
+            .handle(
+                0,
+                Change::Gestures {
+                    selected: [Gesture::Hold; KEY_COUNT],
+                    long_press_ms: 500,
+                },
+            )
+            .unwrap();
+        input.handle(1, report(&[0])).unwrap();
+        assert_eq!(
+            input.handle(2, cancel).unwrap(),
+            vec![Output::Gesture {
+                key: 0,
+                button: button(1),
+                gesture: ControlGesture::HoldEnd
+            }]
+        );
+        assert!(input.handle(3, report(&[])).unwrap().is_empty());
+    }
+}

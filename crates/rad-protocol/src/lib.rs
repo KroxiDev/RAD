@@ -7,13 +7,14 @@ mod admin;
 mod edits;
 mod execution;
 mod queries;
+mod views;
+use rad_api::response::{Error, Outcome, Response, Status};
 use rad_authority::{Authority, Command, Effect, StorageState};
 use rad_core::{
     configuration::Origin,
     identity::{EntityKind, ShortId},
     permissions::Permissions,
 };
-use rad_wire::response::{Error, Outcome, Response, Status};
 use serde_json::{Map, Value, json};
 use std::num::NonZeroU128;
 #[derive(Debug, Clone, Copy)]
@@ -26,7 +27,7 @@ pub struct IncomingContext {
 /// Runtime must process every Immediate effect through its normal effect sink.
 pub enum Resolution {
     Immediate {
-        response: Response,
+        response: Box<Response>,
         effects: Vec<Effect>,
     },
     Command(Command),
@@ -56,7 +57,8 @@ impl Protocol {
         c: IncomingContext,
         r: &rad_wire::Request,
     ) -> Resolution {
-        let mutation = is_mutation(r.operation());
+        let mutation =
+            rad_api::Operation::parse(r.operation()).is_some_and(rad_api::Operation::is_mutation);
         if c.request_id != r.id() {
             return self.error(c, "invalid_request", mutation);
         }
@@ -67,202 +69,273 @@ impl Protocol {
         }) {
             return self.error(c, "invalid_request", mutation);
         }
-        if matches!(
-            r.operation(),
-            "credential_status" | "credential_replace" | "credential_remove"
-        ) {
-            return match credentials::parse(c, r.operation(), r.args()) {
-                Ok(operation) => Resolution::External(External::Credential(operation)),
-                Err(code) => self.error(c, code, mutation),
-            };
-        }
-        if r.operation() == "options" {
-            if r.args().contains_key("type") {
-                return match plugins::type_options(a, c.origin, r.args()) {
-                    Ok(query) => Resolution::External(External::PluginOptions(Box::new(query))),
-                    Err(e) => self.error(c, e, false),
-                };
-            }
-            let target = id(r.args(), "id").ok().and_then(|id| a.get(c.origin, id));
-            if target.is_none() {
-                return self.error(c, "not_found", false);
-            }
-            if id(r.args(), "id")
-                .ok()
-                .and_then(|id| a.plugin_configuration(c.origin, id))
-                .is_some()
-            {
-                return match plugins::options(a, c, r.args()) {
-                    Ok(plugins::Listing::Fixed(data)) => self.immediate(c, data, vec![]),
-                    Ok(plugins::Listing::Dynamic(query)) => {
-                        Resolution::External(External::PluginOptions(query))
-                    }
-                    Err(e) => self.error(c, e, false),
-                };
-            }
-        }
-        if matches!(r.operation(), "plugin_visual" | "plugin_visual_read") {
-            let result = (|| {
-                let id = id(r.args(), "id")?;
-                if !matches!(
-                    a.get(c.origin, id),
-                    Some(rad_authority::EntityView::Button(_))
-                ) {
-                    return Err("not_found");
+        let request = match rad_api::Request::parse(r.operation(), Value::Object(r.args().clone()))
+        {
+            Ok(request) => request,
+            Err(_) => return self.error(c, "invalid_request", mutation),
+        };
+        self.handle_request(a, c, &request)
+    }
+    /// Structural decoding is performed once by rad-api. This layer only validates
+    /// domain identifiers, capabilities, permissions and bounded domain values.
+    pub fn handle_request(
+        &self,
+        a: &mut Authority,
+        c: IncomingContext,
+        request: &rad_api::Request,
+    ) -> Resolution {
+        use rad_api::Request as R;
+        let mutation = request.operation().is_mutation();
+        let result = (|| -> Checked<Resolution> {
+            match request {
+                R::Board { folder_id } => {
+                    return Ok(self.immediate(
+                        c,
+                        rad_api::ResponseData::Board(views::board(a, c, folder_id.as_deref())?),
+                        vec![],
+                    ));
                 }
-                if r.operation() == "plugin_visual" {
-                    closed(r.args(), &["id"])?;
-                    Ok(External::PluginVisual { id })
-                } else {
-                    closed(r.args(), &["id", "revision", "offset"])?;
-                    let offset = decimal(string(r.args(), "offset")?)?;
-                    if offset > 256 * 1024 {
+                R::Inspector { id } => {
+                    return Ok(self.immediate(
+                        c,
+                        rad_api::ResponseData::Inspector(views::inspector(a, c, id)?),
+                        vec![],
+                    ));
+                }
+                R::CredentialStatus { .. }
+                | R::CredentialReplace { .. }
+                | R::CredentialRemove { .. } => {
+                    return Ok(Resolution::External(External::Credential(
+                        credentials::convert(c, request)?,
+                    )));
+                }
+                R::Options {
+                    id,
+                    type_key,
+                    field,
+                    cursor,
+                    context,
+                } => {
+                    if let Some(type_key) = type_key {
+                        if id.is_some() {
+                            return Err("invalid_request");
+                        }
+                        return Ok(Resolution::External(External::PluginOptions(Box::new(
+                            plugins::type_options(
+                                a,
+                                c.origin,
+                                type_key,
+                                field,
+                                cursor.as_deref(),
+                                context.as_ref(),
+                            )?,
+                        ))));
+                    }
+                    let target = id.as_deref().ok_or("invalid_request")?;
+                    let entity = parse_id(target)?;
+                    if a.get(c.origin, entity).is_none() {
+                        return Err("not_found");
+                    }
+                    if a.plugin_configuration(c.origin, entity).is_some() {
+                        return Ok(
+                            match plugins::options(
+                                a,
+                                c,
+                                target,
+                                field,
+                                cursor.as_deref(),
+                                context.as_ref(),
+                            )? {
+                                plugins::Listing::Fixed(data) => self.immediate(
+                                    c,
+                                    rad_api::ResponseData::StaticOptions(
+                                        serde_json::from_value(data)
+                                            .map_err(|_| "invalid_configuration")?,
+                                    ),
+                                    vec![],
+                                ),
+                                plugins::Listing::Dynamic(query) => {
+                                    Resolution::External(External::PluginOptions(query))
+                                }
+                            },
+                        );
+                    }
+                    return Ok(Resolution::External(external::parse(
+                        a,
+                        c,
+                        request,
+                        self.capabilities,
+                    )?));
+                }
+                R::PluginVisual { id } | R::PluginVisualRead { id, .. } => {
+                    let id = parse_id(id)?;
+                    if !matches!(
+                        a.get(c.origin, id),
+                        Some(rad_authority::EntityView::Button(_))
+                    ) {
+                        return Err("not_found");
+                    }
+                    return Ok(Resolution::External(match request {
+                        R::PluginVisualRead {
+                            revision, offset, ..
+                        } => {
+                            let offset = decimal(offset)?;
+                            if offset > 256 * 1024 {
+                                return Err("invalid_request");
+                            }
+                            External::PluginVisualRead {
+                                id,
+                                revision: decimal(revision)?,
+                                offset: offset as usize,
+                            }
+                        }
+                        _ => External::PluginVisual { id },
+                    }));
+                }
+                R::PluginAdmin { .. } => {
+                    return Ok(Resolution::External(External::PluginAdmin(plugins::admin(
+                        c, request,
+                    )?)));
+                }
+                R::PluginLog { plugin_id } => {
+                    if c.origin != Origin::Editor {
+                        return Err("permission_denied");
+                    }
+                    return Ok(Resolution::External(External::PluginLog {
+                        plugin_id: plugin_id.clone(),
+                    }));
+                }
+                R::PluginRetry { plugin_id } => {
+                    if c.origin != Origin::Editor {
+                        return Err("permission_denied");
+                    }
+                    return Ok(Resolution::External(External::PluginRetry {
+                        plugin_id: plugin_id.clone(),
+                    }));
+                }
+                R::PluginStatus {} => {
+                    if c.origin != Origin::Editor {
+                        return Err("permission_denied");
+                    }
+                    return Ok(Resolution::External(External::PluginStatus));
+                }
+                R::TransferBegin { .. }
+                | R::TransferWrite { .. }
+                | R::TransferFinish { .. }
+                | R::TransferRead { .. }
+                | R::TransferDrop { .. }
+                | R::RestoreCommit { .. }
+                | R::LauncherCatalog { .. }
+                | R::MediaRead { .. } => {
+                    return Ok(Resolution::External(external::parse(
+                        a,
+                        c,
+                        request,
+                        self.capabilities,
+                    )?));
+                }
+                R::Run { id } => {
+                    let id = parse_id(id)?;
+                    if id.kind() == EntityKind::Folder {
                         return Err("invalid_request");
                     }
-                    Ok(External::PluginVisualRead {
-                        id,
-                        revision: decimal(string(r.args(), "revision")?)?,
-                        offset: offset as usize,
-                    })
+                    return Ok(Resolution::Command(Command::RunId { id }));
                 }
-            })();
-            return match result {
-                Ok(op) => Resolution::External(op),
-                Err(e) => self.error(c, e, false),
-            };
-        }
-        if r.operation() == "plugin_admin" {
-            return match plugins::admin(c, r.args()) {
-                Ok(request) => Resolution::External(External::PluginAdmin(request)),
-                Err(e) => self.error(c, e, true),
-            };
-        }
-        if r.operation() == "plugin_status" {
-            return if c.origin != Origin::Editor {
-                self.error(c, "permission_denied", false)
-            } else if closed(r.args(), &[]).is_err() {
-                self.error(c, "invalid_request", false)
-            } else {
-                Resolution::External(External::PluginStatus)
-            };
-        }
-        if matches!(
-            r.operation(),
-            "transfer_begin"
-                | "transfer_write"
-                | "transfer_finish"
-                | "transfer_read"
-                | "transfer_drop"
-                | "restore_commit"
-                | "launcher_catalog"
-                | "options"
-                | "media_read"
-        ) {
-            return match external::parse(a, c, r.operation(), r.args(), self.capabilities) {
-                Ok(x) => Resolution::External(x),
-                Err(e) => self.error(
-                    c,
-                    e,
-                    r.operation().starts_with("transfer_") || r.operation() == "restore_commit",
-                ),
-            };
-        }
-        if r.operation() == "run" {
-            let parsed = (|| {
-                closed(r.args(), &["id"])?;
-                let id = id(r.args(), "id")?;
-                if id.kind() == EntityKind::Folder {
-                    return Err("invalid_request");
-                };
-                Ok(Command::RunId { id })
-            })();
-            return match parsed {
-                Ok(cmd) => Resolution::Command(cmd),
-                Err(e) => self.error(c, e, true),
-            };
-        }
-        if r.operation() == "navigate" {
-            if c.origin != Origin::Editor {
-                return self.error(c, "permission_denied", true);
+                R::Navigate { folder_id } => {
+                    if c.origin != Origin::Editor {
+                        return Err("permission_denied");
+                    }
+                    let effects = a
+                        .navigate_id(c.origin, parse_id(folder_id)?)
+                        .map_err(|_| "not_found")?;
+                    return Ok(self.immediate(
+                        c,
+                        rad_api::ResponseData::Empty(rad_api::Empty {}),
+                        effects,
+                    ));
+                }
+                R::SetPluginSettings { .. }
+                | R::CreateButton { .. }
+                | R::CreateFolder { .. }
+                | R::AddAction { .. }
+                | R::Edit { .. }
+                | R::Duplicate { .. }
+                | R::Delete { .. }
+                | R::MoveFolder { .. }
+                | R::SetPermissions { .. }
+                | R::SetSettings { .. }
+                | R::Undo {}
+                | R::Redo {} => {
+                    if c.origin != Origin::Editor && !matches!(request, R::Edit { .. }) {
+                        return Err("permission_denied");
+                    }
+                    return Ok(Resolution::Command(edits::command(request)?));
+                }
+                _ => {}
             }
-            let parsed = (|| {
-                closed(r.args(), &["folder_id"])?;
-                let id = id(r.args(), "folder_id")?;
-                a.navigate_id(c.origin, id).map_err(|_| "not_found")
-            })();
-            return match parsed {
-                Ok(effects) => self.immediate(c, json!({}), effects),
-                Err(e) => self.error(c, e, true),
-            };
-        }
-        if matches!(
-            r.operation(),
-            "create_button"
-                | "create_folder"
-                | "add_action"
-                | "edit"
-                | "duplicate"
-                | "delete"
-                | "move_folder"
-                | "set_permissions"
-                | "set_settings"
-                | "undo"
-                | "redo"
-        ) {
-            if c.origin != Origin::Editor && r.operation() != "edit" {
-                return self.error(c, "permission_denied", true);
-            }
-            return match edits::command(r.operation(), r.args()) {
-                Ok(cmd) => Resolution::Command(cmd),
-                Err(e) => self.error(c, e, true),
-            };
-        }
-        match self.query(a, c, r.operation(), r.args()) {
-            Ok(data) => self.immediate(c, data, vec![]),
-            Err(code) => self.error(c, code, false),
-        }
+            Ok(self.immediate(
+                c,
+                rad_api::ResponseData::decode(
+                    request.operation(),
+                    Status::Ok,
+                    self.query(a, c, request)?,
+                )
+                .map_err(|_| "invalid_configuration")?,
+                vec![],
+            ))
+        })();
+        result.unwrap_or_else(|code| self.error(c, code, mutation))
     }
     fn query(
         &self,
         a: &Authority,
         c: IncomingContext,
-        op: &str,
-        args: &Map<String, Value>,
+        request: &rad_api::Request,
     ) -> Checked<Value> {
-        if op == "plugin_dependencies" {
-            return plugins::dependencies(a, c, args);
-        }
-        if op == "plugin_configuration" {
-            return plugins::configuration(a, c, args);
-        }
-        if op == "plugin_catalog" {
-            return plugins::catalog(a, c, args);
-        }
-        if op == "schema" {
-            closed(args, &["type", "cursor"])?;
-            let items = match string(args, "type")? {
-                "launcher" => {
-                    json!([{"name":"desktop_entry","type":"string","required":true,"options":self.capabilities.launcher}])
+        use rad_api::Request as R;
+        match request {
+            R::PluginManifest { plugin_id } => {
+                if c.origin != Origin::Editor {
+                    return Err("permission_denied");
                 }
-                "wait" => {
-                    json!([{"name":"milliseconds","type":"integer","required":true,"minimum":0,"maximum":rad_core::configuration::MAX_WAIT_MS}])
-                }
-                _ => return plugins::schema(a, c, args),
-            };
-            if args.get("cursor") != Some(&Value::Null) {
-                return Err("cursor_expired");
+                let manifest = a
+                    .plugin_manifests()
+                    .find(|(m, _, _)| m.id == *plugin_id)
+                    .ok_or("not_found")?
+                    .0;
+                Ok(json!({"plugin_id":plugin_id,"document":manifest}))
             }
-            return Ok(json!({"type":args["type"],"items":items,"next_cursor":null}));
-        }
-        if op == "result" {
-            return execution::result(a, c, args);
-        }
-        if matches!(op, "get" | "list" | "get_section") {
-            return queries::read(a, c, op, args);
-        }
-        closed(args, &[])?;
-        match op {
-            "hello" => Ok(
+            R::PluginSettings { plugin_id } => {
+                if c.origin != Origin::Editor {
+                    return Err("permission_denied");
+                }
+                Ok(
+                    json!({"plugin_id":plugin_id,"encoding":"hex","hex":a.plugin_settings(c.origin,plugin_id).map(|bytes|bytes.iter().map(|b|format!("{b:02x}")).collect::<String>())}),
+                )
+            }
+            R::PluginDependencies { cursor } => plugins::dependencies(a, c, cursor.as_deref()),
+            R::PluginConfiguration { id, cursor } => {
+                plugins::configuration(a, c, id, cursor.as_deref())
+            }
+            R::PluginCatalog { cursor } => plugins::catalog(a, c, cursor.as_deref()),
+            R::Schema { type_key, cursor } => {
+                let items = match type_key.as_str() {
+                    "launcher" => {
+                        json!([{"name":"desktop_entry","type":"string","required":true,"options":self.capabilities.launcher}])
+                    }
+                    "wait" => {
+                        json!([{"name":"milliseconds","type":"integer","required":true,"minimum":0,"maximum":rad_core::configuration::MAX_WAIT_MS}])
+                    }
+                    _ => return plugins::schema(a, c, type_key, cursor.as_deref()),
+                };
+                if cursor.is_some() {
+                    return Err("cursor_expired");
+                }
+                Ok(json!({"type":type_key,"items":items,"next_cursor":null}))
+            }
+            R::Result { execution_id } => execution::result(a, c, execution_id),
+            R::Get { .. } | R::List { .. } | R::GetSection { .. } => queries::read(a, c, request),
+            R::Hello {} => Ok(
                 json!({"protocol":1,"session_id":format!("{:032x}",self.session),"capabilities":self.operations(c.origin),"limits":{"frame_bytes":65536,"page_items":32,"page_bytes":49152,"value_bytes":8192,
                 "json_depth":16,"string_bytes":16384,"array_items":256,
                 "connections":8,"automation_connections":6,"requests_per_connection":4,"requests_global":32,
@@ -272,12 +345,12 @@ impl Protocol {
                 "terminal_results":256,"terminal_bytes":4194304,"terminal_ttl_ms":600000,
                 "result_bytes":12288,"error_message_bytes":256}}),
             ),
-            "status" => {
+            R::Status {} => {
                 let s = a.status(c.origin);
                 let mut v = json!({"storage_state":match a.storage_state(){StorageState::Ready=>"ready",StorageState::Uncertain=>"uncertain",StorageState::RecoveryRequired=>"recovery_required"},"view_revision":s.revision.map(|r|r.value().to_string()),"active_folder_id":s.active.map(|b|short(b.short()))});
                 v["grid"] = json!({"columns":s.grid.columns(),"rows":s.grid.rows()});
                 if let Some(settings) = a.settings(c.origin) {
-                    v["settings"] = json!({"brightness_percent":settings.brightness_percent,"sleep_ms":settings.sleep_ms.to_string(),"press_threshold_ms":settings.press_threshold_ms.to_string()});
+                    v["settings"] = json!({"brightness_percent":settings.brightness_percent,"sleep_ms":settings.sleep_ms.to_string(),"press_threshold_ms":settings.press_threshold_ms.to_string(),"long_press_threshold_ms":settings.long_press_threshold_ms.to_string()});
                     v["global_permissions"] =
                         permissions(a.global_permissions(c.origin).expect("Editor settings"));
                     v["history_operations"] = json!(
@@ -295,7 +368,7 @@ impl Protocol {
         &self,
         c: IncomingContext,
         status: Status,
-        data: Value,
+        data: rad_api::ResponseData,
         error: Option<Error>,
     ) -> Response {
         Response {
@@ -307,16 +380,24 @@ impl Protocol {
             error,
         }
     }
-    fn immediate(&self, c: IncomingContext, data: Value, effects: Vec<Effect>) -> Resolution {
+    fn immediate(
+        &self,
+        c: IncomingContext,
+        data: rad_api::ResponseData,
+        effects: Vec<Effect>,
+    ) -> Resolution {
         let response = self.envelope(c, Status::Ok, data, None);
         if self.encode_response(&response).is_err() {
             return self.error(c, "resource_exhausted", false);
         }
-        Resolution::Immediate { response, effects }
+        Resolution::Immediate {
+            response: Box::new(response),
+            effects,
+        }
     }
     fn error(&self, c: IncomingContext, code: &str, mutation: bool) -> Resolution {
         Resolution::Immediate {
-            response: self.rejection(c, code, mutation),
+            response: Box::new(self.rejection(c, code, mutation)),
             effects: vec![],
         }
     }
@@ -324,21 +405,14 @@ impl Protocol {
         self.envelope(
             c,
             Status::Error,
-            Value::Null,
+            rad_api::ResponseData::None,
             Some(Error {
-                code: code.into(),
+                code: rad_api::ErrorCode::parse(code).expect("defined response code"),
                 message: "Request rejected".into(),
                 details: json!({}),
                 outcome: mutation.then_some(Outcome::NotApplied),
             }),
         )
-    }
-}
-fn closed(m: &Map<String, Value>, keys: &[&str]) -> Checked<()> {
-    if m.keys().all(|k| keys.contains(&k.as_str())) {
-        Ok(())
-    } else {
-        Err("invalid_request")
     }
 }
 fn short(id: ShortId) -> String {
@@ -356,9 +430,6 @@ fn permissions(p: Permissions) -> Value {
     json!({"consult":p.consult(),"modify":p.modify(),"execute":p.execute()})
 }
 
-fn string<'a>(m: &'a Map<String, Value>, key: &str) -> Checked<&'a str> {
-    m.get(key).and_then(Value::as_str).ok_or("invalid_request")
-}
 fn parse_id(s: &str) -> Checked<ShortId> {
     let kind = match s.as_bytes().first() {
         Some(b'f') => EntityKind::Folder,
@@ -368,9 +439,6 @@ fn parse_id(s: &str) -> Checked<ShortId> {
     };
     let n = decimal(&s[1..])?;
     ShortId::new(kind, n).map_err(|_| "invalid_request")
-}
-fn id(m: &Map<String, Value>, key: &str) -> Checked<ShortId> {
-    parse_id(string(m, key)?)
 }
 fn decimal(s: &str) -> Checked<u64> {
     if s.is_empty() || (s.len() > 1 && s.starts_with('0')) || !s.bytes().all(|b| b.is_ascii_digit())
@@ -399,20 +467,25 @@ impl Protocol {
                 (
                     *request,
                     Status::Applied,
-                    json!({"changed":changed,"revision":revision}),
+                    rad_api::ResponseData::Applied(rad_api::Applied {
+                        changed: *changed,
+                        revision,
+                    }),
                     None,
                 )
             }
             Effect::Accepted { request, execution } => (
                 *request,
                 Status::Admitted,
-                json!({"execution_id":format!("{:032x}:{}",execution.session(),execution.counter())}),
+                rad_api::ResponseData::Admitted(rad_api::Admitted {
+                    execution_id: format!("{:032x}:{}", execution.session(), execution.counter()),
+                }),
                 None,
             ),
             Effect::Unknown { request } => (
                 *request,
                 Status::Error,
-                Value::Null,
+                rad_api::ResponseData::None,
                 Some(("storage_uncertain", Outcome::Unknown)),
             ),
             Effect::Rejected { request, reason } => {
@@ -430,7 +503,7 @@ impl Protocol {
                 (
                     *request,
                     Status::Error,
-                    Value::Null,
+                    rad_api::ResponseData::None,
                     Some((code, Outcome::NotApplied)),
                 )
             }
@@ -444,7 +517,7 @@ impl Protocol {
             status,
             data,
             error.map(|(code, outcome)| Error {
-                code: code.into(),
+                code: rad_api::ErrorCode::parse(code).expect("defined response code"),
                 message: "Request rejected".into(),
                 details: rejection_details(e),
                 outcome: Some(outcome),
@@ -472,9 +545,18 @@ impl Protocol {
         ];
         if origin == Origin::Editor {
             ops.extend([
+                "board",
+                "inspector",
+                "overview",
+                "subscribe",
                 "plugin_admin",
                 "plugin_status",
+                "plugin_retry",
+                "plugin_log",
                 "plugin_dependencies",
+                "plugin_manifest",
+                "plugin_settings",
+                "set_plugin_settings",
                 "credential_status",
                 "credential_replace",
                 "credential_remove",
@@ -536,29 +618,6 @@ fn scalars_fit(value: &Value) -> bool {
         _ => true,
     }
 }
-fn is_mutation(op: &str) -> bool {
-    matches!(
-        op,
-        "credential_replace"
-            | "credential_remove"
-            | "plugin_admin"
-            | "run"
-            | "edit"
-            | "create_folder"
-            | "create_button"
-            | "add_action"
-            | "duplicate"
-            | "delete"
-            | "move_folder"
-            | "set_permissions"
-            | "navigate"
-            | "undo"
-            | "redo"
-            | "set_settings"
-            | "restore_commit"
-    ) || op.starts_with("transfer_")
-}
-
 fn configuration_error(e: &rad_core::configuration::ConfigurationError) -> &'static str {
     use rad_core::{configuration::ConfigurationError as E, identity::IdentityError as I};
     match e {

@@ -1,8 +1,10 @@
 //! Plugin presentation only; publication/activation belong to the runtime.
-use super::{App, Job, Request, look::Look, string, tr};
+use super::{App, Job, look::Look, string, tr};
 use crate::plugins::{CatalogEntry, FormDraft, FormTarget, LoadedForm, Visual};
 use eframe::egui;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use std::collections::BTreeMap;
 #[derive(Default)]
 pub(super) struct PluginUi {
@@ -12,15 +14,27 @@ pub(super) struct PluginUi {
     dependency_page: usize,
     pub dependency_credentials: Option<String>,
     pub dependency_status_due: bool,
-    pub due: u64,
     pub section_open: bool,
     pub catalog_loaded: bool,
-    pub visual_due: u64,
+    pub visual_due: bool,
     pub form: Option<(FormTarget, LoadedForm)>,
     pub visuals: BTreeMap<String, Face>,
     pub admin_pending: bool,
     pub form_pending: bool,
     pub form_loading: bool,
+    pub settings_reload: Option<String>,
+    pub log_selected: String,
+    pub log: Option<rad_api::PluginLogView>,
+    pub resources: BTreeMap<
+        String,
+        (
+            rad_plugin_contract::Version,
+            Vec<rad_plugin_contract::Resource>,
+        ),
+    >,
+    pub manifest_pending: Option<String>,
+    pub manifest_invalidated: bool,
+    manifest_request: Option<String>,
     /// Last ticket given to a question about a list, so no answer is taken for another's.
     pub tickets: u64,
     source: String,
@@ -28,6 +42,10 @@ pub(super) struct PluginUi {
     source_edited: bool,
     selected: String,
     status_page: usize,
+    password_request: Option<(String, Vec<String>)>,
+    update_request: bool,
+    retry_request: Option<String>,
+    schedule: crate::schedule::Schedule,
 }
 impl PluginUi {
     pub fn reconnect(&mut self) {
@@ -40,6 +58,44 @@ impl PluginUi {
         self.selected.clear();
         self.source_edited = true;
         self.dependency_credentials = None;
+        self.log = None;
+        self.resources.clear();
+        self.manifest_pending = None;
+        self.manifest_invalidated = false;
+    }
+    pub fn accept_manifest(
+        &mut self,
+        view: rad_api::PluginManifestView,
+    ) -> Result<(), crate::session::Error> {
+        self.manifest_pending = None;
+        if std::mem::take(&mut self.manifest_invalidated) {
+            return Ok(());
+        }
+        let manifest: rad_plugin_contract::Manifest = serde_json::from_value(
+            serde_json::to_value(view.document).map_err(|_| crate::session::Error::protocol())?,
+        )
+        .map_err(|_| crate::session::Error::protocol())?;
+        if manifest.id != view.plugin_id
+            || manifest.resources.len() > 5
+            || manifest
+                .resources
+                .iter()
+                .enumerate()
+                .any(|(index, resource)| manifest.resources[..index].contains(resource))
+        {
+            return Err(crate::session::Error::protocol());
+        }
+        let current = self.status["items"].as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item["id"] == manifest.id
+                    && item["selected"] == serde_json::to_value(manifest.version).expect("version")
+            })
+        });
+        if current {
+            self.resources
+                .insert(manifest.id, (manifest.version, manifest.resources));
+        }
+        Ok(())
     }
     pub fn restore_result(&mut self, status: rad_client::response::Status) -> bool {
         if status != rad_client::response::Status::Applied {
@@ -48,13 +104,12 @@ impl PluginUi {
         self.reconnect();
         true
     }
-    pub fn wants_status(&self, settings_open: bool) -> bool {
-        (settings_open && self.section_open)
-            || self.admin_pending
-            || matches!(
-                self.status["state"].as_str(),
-                Some("preparing" | "committing" | "activating")
-            )
+    pub fn has_work(&self) -> bool {
+        self.settings_reload.is_some()
+            || self.dependency_status_due
+            || self.dependencies.request().is_some()
+            || !self.catalog_loaded
+            || self.visual_due
     }
 
     fn can_administer(&self, connected: bool) -> bool {
@@ -95,33 +150,52 @@ pub(super) struct Face {
     pub color: Option<[u8; 4]>,
     pub texture: Option<egui::TextureHandle>,
 }
-fn label(code: &str, es: bool) -> &str {
+fn label(code: &str, es: impl Into<crate::preferences::Language> + Copy) -> &str {
     match code {
-        "starting" => tr(es, "Starting", "Iniciando"),
-        "idle" => tr(es, "Idle", "Sin operación"),
-        "preparing" => tr(es, "Preparing", "Preparando"),
-        "committing" => tr(es, "Saving selection", "Guardando selección"),
-        "activating" => tr(es, "Activating", "Activando"),
-        "failed" => tr(es, "Failed", "Fallido"),
-        "uncertain" => tr(es, "Outcome uncertain", "Resultado incierto"),
-        "ready" => tr(es, "Ready", "Listo"),
-        "residual" => tr(es, "Residual resources", "Recursos residuales"),
-        "absent" => tr(es, "Not running", "No iniciado"),
-        "plugin_in_use" => tr(
-            es,
-            "Plugin in use — retry manually later",
-            "Plugin en uso — vuelve a intentarlo manualmente",
-        ),
-        "plugin_residual" => tr(
-            es,
-            "Waiting for real termination",
-            "Esperando terminación real",
-        ),
-        "current" => tr(es, "Current", "Actual"),
-        "stale" => tr(es, "Stale", "Desactualizado"),
-        "unavailable" => tr(es, "Unavailable", "No disponible"),
+        "starting" => tr(es, "Starting"),
+        "idle" => tr(es, "Idle"),
+        "preparing" => tr(es, "Preparing"),
+        "committing" => tr(es, "Saving selection"),
+        "activating" => tr(es, "Activating"),
+        "failed" => tr(es, "Failed"),
+        "uncertain" => tr(es, "Outcome uncertain"),
+        "ready" => tr(es, "Ready"),
+        "residual" => tr(es, "Residual resources"),
+        "absent" => tr(es, "Not running"),
+        "plugin_in_use" => tr(es, "Plugin in use — retry manually later"),
+        "plugin_residual" => tr(es, "Waiting for real termination"),
+        "current" => tr(es, "Current"),
+        "stale" => tr(es, "Stale"),
+        "unavailable" => tr(es, "Unavailable"),
         _ => crate::status::describe_error(code, es),
     }
+}
+fn resource_details(
+    ui: &mut egui::Ui,
+    resources: &[rad_plugin_contract::Resource],
+    language: impl Into<crate::preferences::Language> + Copy,
+) {
+    use rad_plugin_contract::Resource;
+    ui.label(tr(language, "Declared resources"));
+    if resources.is_empty() {
+        ui.label(tr(language, "No resources declared"));
+    }
+    for resource in resources {
+        ui.label(tr(
+            language,
+            match resource {
+                Resource::Internet => "Internet",
+                Resource::SystemPrograms => "System programs",
+                Resource::ExternalFiles => "Files outside the plugin folder",
+                Resource::Devices => "Devices",
+                Resource::DesktopServices => "Desktop services",
+            },
+        ));
+    }
+    ui.label(tr(
+        language,
+        "Declared by the author; informational, not enforced permissions",
+    ));
 }
 fn version(v: &Value) -> String {
     if v.is_null() {
@@ -130,7 +204,12 @@ fn version(v: &Value) -> String {
     format!("{}.{}.{}", v["major"], v["minor"], v["patch"])
 }
 /// The manager admits at most 32 installed plugins. Page controls never hide a tail.
-fn plugin_status_list(ui: &mut egui::Ui, plugins: &mut PluginUi, idle: bool, es: bool) -> bool {
+fn plugin_status_list(
+    ui: &mut egui::Ui,
+    plugins: &mut PluginUi,
+    idle: bool,
+    es: impl Into<crate::preferences::Language> + Copy,
+) -> bool {
     const PAGE_SIZE: usize = 8;
     const MAX_PLUGINS: usize = 32;
     let items = plugins.status["items"]
@@ -138,11 +217,7 @@ fn plugin_status_list(ui: &mut egui::Ui, plugins: &mut PluginUi, idle: bool, es:
         .map(Vec::as_slice)
         .unwrap_or(&[]);
     if items.len() > MAX_PLUGINS {
-        ui.label(tr(
-            es,
-            "Invalid plugin status: more than 32 entries",
-            "Estado de plugins inválido: más de 32 entradas",
-        ));
+        ui.label(tr(es, "Invalid plugin status: more than 32 entries"));
         return false;
     }
     let pages = items.len().div_ceil(PAGE_SIZE).max(1);
@@ -154,43 +229,94 @@ fn plugin_status_list(ui: &mut egui::Ui, plugins: &mut PluginUi, idle: bool, es:
         .take(PAGE_SIZE)
     {
         let id = string(&item["id"]);
+        let name = item["name"]
+            .as_str()
+            .or_else(|| id.rsplit('.').next())
+            .unwrap_or(&id);
         if idle {
-            if ui.selectable_label(plugins.selected == id, &id).clicked() {
+            if ui.selectable_label(plugins.selected == id, name).clicked() {
                 selected_id = Some(id.clone());
             }
         } else {
-            ui.label(&id);
+            ui.label(name);
         }
-        let selected = tr(es, "Selected", "Seleccionada");
-        let previous = tr(es, "Previous", "Anterior");
-        let host = label(item["host"].as_str().unwrap_or("absent"), es);
-        ui.label(format!(
-            "{selected} {} · {previous} {} · {host}",
-            version(&item["selected"]),
-            version(&item["previous"])
-        ));
-        if let Some(code) = item["diagnostic"].as_str().filter(|code| {
-            matches!(
-                *code,
-                "protocol" | "pipe" | "deadline" | "exited" | "backpressure"
-            )
-        }) {
-            ui.label(label(code, es));
+        let state = crate::status::PluginState::of(item);
+        ui.label(state.label(es));
+        if idle {
+            match state {
+                crate::status::PluginState::NotWorking if item["can_retry"] == true => {
+                    if ui.button(tr(es, "Retry")).clicked() {
+                        plugins.retry_request = Some(id.clone());
+                    }
+                }
+                crate::status::PluginState::NeedsPassword => {
+                    let slots: Vec<String> = plugins
+                        .dependencies
+                        .items()
+                        .into_iter()
+                        .flatten()
+                        .find(|dependency| dependency["id"] == id)
+                        .into_iter()
+                        .flat_map(|dependency| {
+                            dependency["credential_slots"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                        })
+                        .filter_map(|slot| slot.as_str().map(str::to_owned))
+                        .collect();
+                    if !slots.is_empty() && ui.button(tr(es, "Enter password")).clicked() {
+                        plugins.password_request = Some((id.clone(), slots));
+                    }
+                }
+                crate::status::PluginState::NeedsUpdate
+                    if item["source_trusted"] == true
+                        && item["source"]
+                            .as_str()
+                            .and_then(installation_source)
+                            .is_some()
+                        && ui.button(tr(es, "Update")).clicked() =>
+                {
+                    selected_id = Some(id.clone());
+                    plugins.update_request = true;
+                }
+                _ => {}
+            }
         }
+        ui.collapsing(tr(es, "View details"), |ui| {
+            ui.label(format!(
+                "{} {} · {} {} · {}",
+                tr(es, "Selected"),
+                version(&item["selected"]),
+                tr(es, "Previous"),
+                version(&item["previous"]),
+                item["host"].as_str().unwrap_or("absent")
+            ));
+            if let Some(code) = item["diagnostic"].as_str() {
+                ui.label(code);
+            }
+            if let Some((_, resources)) = plugins.resources.get(&id) {
+                resource_details(ui, resources, es);
+            } else if idle
+                && plugins.manifest_pending.is_none()
+                && ui.button(tr(es, "Declared resources")).clicked()
+            {
+                plugins.manifest_request = Some(id.clone());
+            }
+        });
     }
     if pages > 1 {
         ui.horizontal(|ui| {
-            ui.label(format!(
-                "{} {}/{} · {} plugins",
-                tr(es, "Page", "Página"),
-                plugins.status_page + 1,
-                pages,
-                items.len()
-            ));
-            if plugins.status_page > 0 && ui.button(tr(es, "Previous", "Anterior")).clicked() {
+            ui.label(
+                tr(es, "Page {page}/{pages} · {count} plugins")
+                    .replace("{page}", &(plugins.status_page + 1).to_string())
+                    .replace("{pages}", &pages.to_string())
+                    .replace("{count}", &items.len().to_string()),
+            );
+            if plugins.status_page > 0 && ui.button(tr(es, "Previous")).clicked() {
                 plugins.status_page -= 1;
             }
-            if plugins.status_page + 1 < pages && ui.button(tr(es, "Next", "Siguiente")).clicked() {
+            if plugins.status_page + 1 < pages && ui.button(tr(es, "Next")).clicked() {
                 plugins.status_page += 1;
             }
         });
@@ -243,24 +369,16 @@ fn dependency_list(
     ui: &mut egui::Ui,
     plugins: &mut PluginUi,
     idle: bool,
-    es: bool,
+    es: impl Into<crate::preferences::Language> + Copy,
 ) -> Option<(String, Vec<String>)> {
     let Some(items) = plugins.dependencies.items() else {
         if plugins.dependencies.failed() {
-            ui.label(tr(
-                es,
-                "Could not read required plugins — retry",
-                "No se pudieron leer los plugins necesarios — reintenta",
-            ));
-            if ui.button(tr(es, "Retry", "Reintentar")).clicked() {
+            ui.label(tr(es, "Could not read required plugins — retry"));
+            if ui.button(tr(es, "Retry")).clicked() {
                 plugins.dependencies.reset();
             }
         } else {
-            ui.label(tr(
-                es,
-                "Checking required plugins…",
-                "Consultando los plugins necesarios…",
-            ));
+            ui.label(tr(es, "Checking required plugins…"));
         }
         return None;
     };
@@ -271,18 +389,10 @@ fn dependency_list(
         .as_array()
         .filter(|items| items.len() <= 32)
     else {
-        ui.label(tr(
-            es,
-            "Checking installed plugins…",
-            "Consultando los plugins instalados…",
-        ));
+        ui.label(tr(es, "Checking installed plugins…"));
         return None;
     };
-    ui.heading(tr(
-        es,
-        "Plugins used by this configuration",
-        "Plugins que usa esta configuración",
-    ));
+    ui.heading(tr(es, "Plugins used by this configuration"));
     let pages = items.len().div_ceil(8);
     plugins.dependency_page = plugins.dependency_page.min(pages - 1);
     let mut source = None;
@@ -292,26 +402,35 @@ fn dependency_list(
         ui.push_id(("dependency", id), |ui| {
             ui.label(id);
             ui.label(if item["version"].is_null() {
-                tr(es,"Version unknown","Versión desconocida").to_owned()
-            } else { version(&item["version"]) });
+                tr(es, "Version unknown").to_owned()
+            } else {
+                version(&item["version"])
+            });
             if let Some(local) = installed.iter().find(|local| local["id"] == id) {
                 if local["needs_credentials"] == true {
-                    ui.label(tr(es,"Needs password","Necesita la contraseña"));
-                    let slots: Vec<String> = item["credential_slots"].as_array().into_iter().flatten()
-                        .filter_map(|v|v.as_str().map(str::to_owned)).collect();
-                    if idle && !slots.is_empty() && ui.button(tr(es,"Enter password","Escribir la contraseña")).clicked() {
-                        credentials = Some((id.to_owned(),slots));
+                    ui.label(tr(es, "Needs password"));
+                    let slots: Vec<String> = item["credential_slots"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect();
+                    if idle && !slots.is_empty() && ui.button(tr(es, "Enter password")).clicked() {
+                        credentials = Some((id.to_owned(), slots));
                     }
                 }
             } else {
-                ui.label(tr(es,"Not installed","No instalado"));
+                ui.label(tr(es, "Not installed"));
                 if let Some(origin) = item["origin"].as_str().and_then(installation_source) {
                     ui.label(&origin);
-                    if idle && ui.button(tr(es,"Prepare installation","Preparar instalación")).clicked() {
+                    if idle && ui.button(tr(es, "Prepare installation")).clicked() {
                         source = Some(origin);
                     }
                 } else {
-                    ui.label(tr(es,"Source unknown or unsupported — obtain a trusted public GitHub link","Origen desconocido o no admitido — consigue un enlace público GitHub de confianza"));
+                    ui.label(tr(
+                        es,
+                        "Source unknown or unsupported — obtain a trusted public GitHub link",
+                    ));
                 }
             }
         });
@@ -319,19 +438,16 @@ fn dependency_list(
     }
     if pages > 1 {
         ui.horizontal(|ui| {
-            ui.label(format!(
-                "{} {}/{} · {} plugins",
-                tr(es, "Page", "Página"),
-                plugins.dependency_page + 1,
-                pages,
-                items.len()
-            ));
-            if plugins.dependency_page > 0 && ui.button(tr(es, "Previous", "Anterior")).clicked() {
+            ui.label(
+                tr(es, "Page {page}/{pages} · {count} plugins")
+                    .replace("{page}", &(plugins.dependency_page + 1).to_string())
+                    .replace("{pages}", &pages.to_string())
+                    .replace("{count}", &items.len().to_string()),
+            );
+            if plugins.dependency_page > 0 && ui.button(tr(es, "Previous")).clicked() {
                 plugins.dependency_page -= 1;
             }
-            if plugins.dependency_page + 1 < pages
-                && ui.button(tr(es, "Next", "Siguiente")).clicked()
-            {
+            if plugins.dependency_page + 1 < pages && ui.button(tr(es, "Next")).clicked() {
                 plugins.dependency_page += 1;
             }
         });
@@ -346,31 +462,41 @@ fn dependency_list(
     credentials
 }
 impl App {
-    pub(super) fn poll_plugins(&mut self, now: u64, visible: bool) -> bool {
-        // Establish installed state first: its initial arrival must not discard a fully loaded list.
-        if self.plugins.dependency_status_due {
-            if self.worker.submit(Job::Plugins).is_ok() {
+    pub(super) fn poll_plugins(&mut self) -> bool {
+        match self.plugins.schedule.choose([
+            self.plugins.dependency_status_due,
+            self.plugins.dependencies.request().is_some(),
+            !self.plugins.catalog_loaded,
+            self.plugins.visual_due,
+            self.plugins.settings_reload.is_some(),
+        ]) {
+            Some(0) => {
                 self.plugins.dependency_status_due = false;
+                let _ = self.worker.submit(Job::Plugins);
+                return true;
             }
-            return true;
-        }
-        if let Some(request) = self.plugins.dependencies.request() {
-            let _ = self.worker.submit(Job::Request(request));
-            return true;
-        }
-        if !self.plugins.catalog_loaded {
-            if self.worker.submit(Job::PluginCatalog).is_ok() {
+            Some(1) => {
+                if let Some(request) = self.plugins.dependencies.request() {
+                    let _ = self.worker.submit(Job::Request(request));
+                }
+                return true;
+            }
+            Some(2) => {
                 self.plugins.catalog_loaded = true;
+                let _ = self.worker.submit(Job::PluginCatalog);
+                return true;
             }
-            return true;
-        }
-        if self.plugins.wants_status(self.settings_open) && now >= self.plugins.due {
-            let _ = self.worker.submit(Job::Plugins);
-            self.plugins.due = now + 1000;
-            return true;
-        }
-        if now < self.plugins.visual_due {
-            return false;
+            Some(4) => {
+                let id = self
+                    .plugins
+                    .settings_reload
+                    .take()
+                    .expect("pending settings read");
+                self.open_plugin_form(&id, None, FormTarget::Settings(id.clone()));
+                return true;
+            }
+            Some(3) => self.plugins.visual_due = false,
+            _ => return false,
         }
         let ids: Vec<_> = self
             .board
@@ -384,9 +510,12 @@ impl App {
         }
         let _ = self.worker.submit(Job::PluginVisuals {
             ids,
-            revision: string(&self.status["view_revision"]),
+            revision: self
+                .board
+                .as_ref()
+                .map(|board| string(&board.folder["view_revision"]))
+                .unwrap_or_default(),
         });
-        self.plugins.visual_due = now + if visible { 250 } else { 1000 };
         true
     }
 
@@ -415,7 +544,7 @@ impl App {
         // Nothing happening is not worth a line; an operation under way is.
         let state = string(&self.plugins.status["state"]);
         if !state.is_empty() && state != "idle" {
-            ui.label(label(&state, self.es));
+            ui.label(tr(self.es, "Working…"));
         }
         let idle = self.plugins.can_administer(self.connected);
         if let Some((id, slots)) = dependency_list(ui, &mut self.plugins, idle, self.es) {
@@ -443,38 +572,58 @@ impl App {
         if self.plugins.dependency_credentials.is_some() {
             self.credentials
                 .show(ui, &mut self.credential_worker, self.connected, self.es);
-            if ui
-                .button(tr(self.es, "Close credentials", "Cerrar contraseñas"))
-                .clicked()
-            {
+            if ui.button(tr(self.es, "Close credentials")).clicked() {
                 self.credentials.clear();
                 self.plugins.dependency_credentials = None;
             }
         }
         if self.plugins.status["locked"] == true {
-            ui.label(tr(
-                self.es,
-                "Restart RAD to recover plugin administration",
-                "Reinicia RAD para recuperar la administración de plugins",
-            ));
+            ui.label(tr(self.es, "Restart RAD to recover plugin administration"));
         }
         if let Some(code) = self.plugins.status["error"].as_str() {
-            ui.label(label(code, self.es));
+            ui.label(crate::status::describe_error(code, self.es));
+            ui.collapsing(tr(self.es, "View details"), |ui| {
+                ui.label(code);
+            });
         }
         // Known only once the status has arrived; until then nothing is claimed.
         let installed = self.plugins.status["items"].as_array().map(Vec::len);
         if installed == Some(0) {
-            ui.label(
-                egui::RichText::new(tr(
-                    self.es,
-                    "No plugins installed yet",
-                    "Aún no hay plugins instalados",
-                ))
-                .weak(),
-            );
+            ui.label(egui::RichText::new(tr(self.es, "No plugins installed yet")).weak());
         }
         if !plugin_status_list(ui, &mut self.plugins, idle, self.es) {
             return;
+        }
+        if let Some(plugin_id) = self.plugins.manifest_request.take()
+            && self.command(Job::Request(crate::Request::PluginManifest {
+                plugin_id: plugin_id.clone(),
+            }))
+        {
+            self.plugins.manifest_pending = Some(plugin_id);
+        }
+        if let Some(plugin_id) = self.plugins.retry_request.take() {
+            self.send(crate::Request::PluginRetry { plugin_id });
+        }
+        if idle
+            && self
+                .plugins
+                .selected_item()
+                .is_some_and(|item| item["has_settings"] == true)
+            && ui.button(tr(self.es, "Plugin settings")).clicked()
+        {
+            let id = self.plugins.selected.clone();
+            self.open_plugin_form(&id, None, FormTarget::Settings(id.clone()));
+        }
+        if let Some((id, slots)) = self.plugins.password_request.take() {
+            self.credentials.bind(
+                &format!("dependency:{id}"),
+                &format!("{id}:credentials"),
+                &slots,
+            );
+            self.plugins.dependency_credentials = Some(id);
+        }
+        if std::mem::take(&mut self.plugins.update_request) {
+            self.submit_plugin_operation("update");
         }
         if !idle {
             return;
@@ -487,11 +636,7 @@ impl App {
         self.plugin_admin_controls(ui);
     }
     fn plugin_admin_controls(&mut self, ui: &mut egui::Ui) {
-        ui.label(tr(
-            self.es,
-            "Public GitHub repository / release URL",
-            "URL de repositorio / release público GitHub",
-        ));
+        ui.label(tr(self.es, "Public GitHub repository / release URL"));
         if ui
             .add(egui::TextEdit::singleline(&mut self.plugins.source).char_limit(2048))
             .changed()
@@ -501,43 +646,32 @@ impl App {
         }
         ui.checkbox(
             &mut self.plugins.trusted,
-            tr(
-                self.es,
-                "I trust this native code (not sandboxed)",
-                "Confío en este código nativo (sin sandbox)",
-            ),
+            tr(self.es, "I trust this native code (not sandboxed)"),
         );
         let selected = self.plugins.selected_item();
         let source_ok =
             self.plugins.trusted && installation_source(self.plugins.source.trim()).is_some();
         let operations = [
-            ("install", "Install", "Instalar", source_ok),
+            ("install", "Install", source_ok),
             (
                 "update",
                 "Update",
-                "Actualizar",
                 selected.is_some()
                     && self.plugins.trusted_update()
                     && installation_source(self.plugins.source.trim()).is_some(),
             ),
-            (
-                "reinstall",
-                "Reinstall",
-                "Reinstalar",
-                selected.is_some() && source_ok,
-            ),
-            ("uninstall", "Uninstall", "Desinstalar", selected.is_some()),
+            ("reinstall", "Reinstall", selected.is_some() && source_ok),
+            ("uninstall", "Uninstall", selected.is_some()),
             (
                 "rollback",
                 "Rollback",
-                "Volver a anterior",
                 selected.is_some_and(|item| !item["previous"].is_null()),
             ),
         ];
         let mut chosen = None;
         ui.horizontal_wrapped(|ui| {
-            for (operation, en, es, allowed) in operations {
-                if allowed && ui.button(tr(self.es, en, es)).clicked() {
+            for (operation, en, allowed) in operations {
+                if allowed && ui.button(tr(self.es, en)).clicked() {
                     chosen = Some(operation);
                 }
             }
@@ -548,15 +682,32 @@ impl App {
     }
     fn submit_plugin_operation(&mut self, operation: &str) {
         let remote = matches!(operation, "install" | "update" | "reinstall");
-        let request = Request::new(
-            "plugin_admin",
-            json!({
-                "operation": operation,
-                "plugin_id": if operation == "install" { None } else { Some(self.plugins.selected.clone()) },
-                "source": if remote { Some(self.plugins.source.trim().to_owned()) } else { None },
-                "trusted": !remote || self.plugins.trusted || (operation == "update" && self.plugins.trusted_update()),
-            }),
-        );
+        let operation_code = match operation {
+            "install" => rad_api::PluginOperation::Install,
+            "update" => rad_api::PluginOperation::Update,
+            "reinstall" => rad_api::PluginOperation::Reinstall,
+            "uninstall" => rad_api::PluginOperation::Uninstall,
+            "rollback" => rad_api::PluginOperation::Rollback,
+            _ => return,
+        };
+        let request = crate::Request::PluginAdmin {
+            operation: operation_code,
+            plugin_id: if operation == "install" {
+                None
+            } else {
+                Some(self.plugins.selected.clone())
+            },
+            source: if remote {
+                Some(self.plugins.source.trim().to_owned())
+            } else {
+                None
+            },
+            trusted: Some(
+                !remote
+                    || self.plugins.trusted
+                    || (operation == "update" && self.plugins.trusted_update()),
+            ),
+        };
         if self.command(Job::Request(request)) {
             self.plugins.admin_pending = true;
             self.plugins.trusted = false;
@@ -597,7 +748,7 @@ impl App {
     /// a plugin's settings open next to it.
     pub(super) fn appearance_control(&mut self, ui: &mut egui::Ui, id: &str) {
         let current = self.current_visual();
-        let manual = tr(self.es, "Manual", "Manual");
+        let manual = tr(self.es, "Manual");
         let shown = current
             .as_deref()
             .map(|key| self.plugin_label(key))
@@ -606,12 +757,15 @@ impl App {
             .selected_text(shown)
             .show_ui(ui, |ui| {
                 if ui.selectable_label(current.is_none(), manual).clicked() && current.is_some() {
-                    self.send(Request::new(
-                        "edit",
-                        json!({"changes": [{
-                            "kind": "set", "id": id, "field": "visual", "value": {"type": "manual"}
-                        }]}),
-                    ));
+                    self.send(crate::Request::Edit {
+                        changes: vec![rad_api::Change::Set {
+                            id: id.into(),
+                            edit: rad_api::FieldEdit::Visual(rad_api::VisualSource {
+                                type_key: "manual".into(),
+                                parameters: None,
+                            }),
+                        }],
+                    });
                 }
                 for entry in self
                     .plugins
@@ -626,11 +780,7 @@ impl App {
                     }
                 }
             });
-        if current.is_some()
-            && ui
-                .button(tr(self.es, "Configure…", "Configurar…"))
-                .clicked()
-        {
+        if current.is_some() && ui.button(tr(self.es, "Configure…")).clicked() {
             self.open_plugin_form("", Some(id.into()), FormTarget::Visual(id.into()));
         }
     }
@@ -654,7 +804,11 @@ impl App {
         let mut open = true;
         let mut request = None;
         // Named after what is being set up, as the list of actions calls it.
-        let title = self.plugin_label(&loaded.type_key);
+        let title = if matches!(target, FormTarget::Settings(_)) {
+            tr(self.es, "Plugin settings").to_owned()
+        } else {
+            self.plugin_label(&loaded.type_key)
+        };
         egui::Window::new(title)
             .id(egui::Id::new("plugin-form"))
             .open(&mut open)
@@ -665,50 +819,44 @@ impl App {
             .pivot(egui::Align2::CENTER_CENTER)
             .default_pos(ctx.content_rect().center())
             .show(ctx, |ui| {
-                ui.label(look.muted_text(&loaded.type_key).small());
+                ui.collapsing(tr(self.es,"View details"), |ui| { ui.label(look.muted_text(&loaded.type_key).small()); });
                 ui.add_space(4.);
                 if !self.plugins.form_pending && self.connected {
                     if let Some(form) = loaded.form.as_mut() {
                         if form.compatible() {
                             form_ui(ui, &look, form, self.es);
                         } else {
-                            ui.colored_label(look.warn, tr(self.es,
-                                "Incompatible parameters preserved; no migration. Remove explicitly if needed.",
-                                "Parámetros incompatibles conservados; sin migración. Elimina explícitamente si hace falta."));
+                            ui.colored_label(look.warn, tr(self.es, "Incompatible parameters preserved; no migration. Remove explicitly if needed."));
                         }
                         ui.add_space(4.);
                         match form.publish() {
                             Ok(Some(value)) => {
-                                if ui.add(look.primary(tr(self.es, "Apply", "Aplicar"))).clicked() {
+                                if ui.add(look.primary(tr(self.es, "Apply"))).clicked() {
                                     request = Some(target.request(&loaded.type_key, value));
                                 }
                             }
                             Ok(None) => {
-                                ui.label(look.muted_text(tr(self.es, "Unchanged — nothing to publish", "Sin cambios — nada que publicar")));
+                                ui.label(look.muted_text(tr(self.es, "Unchanged — nothing to publish")));
                             }
                             Err(_) => {
-                                ui.colored_label(look.warn, tr(self.es, "Not saved: check required fields, types and limits",
-                                    "No guardado: revisa campos requeridos, tipos y límites"));
+                                ui.colored_label(look.warn, tr(self.es, "Not saved: check required fields, types and limits"));
                             }
                         }
                     } else {
-                        ui.colored_label(look.warn, tr(self.es, "Plugin unavailable. Original configuration retained.",
-                            "Plugin no disponible. Configuración original conservada."));
+                        ui.colored_label(look.warn, tr(self.es, "Plugin unavailable. Original configuration retained."));
                     }
                 }
                 self.credentials.show(ui, &mut self.credential_worker, self.connected, self.es);
                 if self.plugins.form_pending {
-                    ui.label(look.muted_text(tr(self.es, "Saving — awaiting durable confirmation",
-                        "Guardando — esperando confirmación durable")));
+                    ui.label(look.muted_text(tr(self.es, "Saving — awaiting durable confirmation")));
                 }
                 // What was kept untouched only matters when the form cannot show it.
                 if loaded.form.as_ref().is_none_or(|form| !form.compatible()) {
-                    egui::CollapsingHeader::new(tr(self.es,
-                        "Preserved configuration (read only)", "Configuración conservada (solo lectura)"))
+                    egui::CollapsingHeader::new(tr(self.es, "Preserved configuration (read only)"))
                         .show(ui, |ui| {
                             let mut raw = String::from_utf8_lossy(&loaded.original).into_owned();
                             ui.add(egui::TextEdit::multiline(&mut raw).interactive(false).desired_rows(5));
-                            ui.label(look.muted_text(format!("{}: {}", tr(self.es, "Preserved bytes", "Bytes conservados"), loaded.original.len())));
+                            ui.label(look.muted_text(format!("{}: {}", tr(self.es, "Preserved bytes"), loaded.original.len())));
                         });
                 }
             });
@@ -729,7 +877,12 @@ impl App {
         revision: &str,
         visuals: Vec<Visual>,
     ) {
-        if self.status["view_revision"].as_str() != Some(revision) {
+        if self
+            .board
+            .as_ref()
+            .and_then(|board| board.folder["view_revision"].as_str())
+            != Some(revision)
+        {
             return;
         }
         let ids: std::collections::BTreeSet<_> = self
@@ -834,11 +987,24 @@ impl App {
         true
     }
 }
-pub(super) fn form_ui(ui: &mut egui::Ui, look: &Look, form: &mut FormDraft, es: bool) {
+pub(super) fn form_ui(
+    ui: &mut egui::Ui,
+    look: &Look,
+    form: &mut FormDraft,
+    es: impl Into<crate::preferences::Language> + Copy,
+) {
     use rad_plugin_contract::FieldKind;
     // Labels share one column so the controls line up.
     const LABEL: f32 = 120.;
     for (index, field) in form.definition.schema.fields.clone().iter().enumerate() {
+        if form.settings && matches!(field.kind, FieldKind::DynamicChoice { .. }) {
+            ui.label(format!(
+                "{} — {}",
+                field.label,
+                tr(es, "This field is unavailable; its value is preserved")
+            ));
+            continue;
+        }
         ui.push_id(index, |ui| {
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(
@@ -854,11 +1020,7 @@ pub(super) fn form_ui(ui: &mut egui::Ui, look: &Look, form: &mut FormDraft, es: 
                     },
                 );
                 let mut present = form.fields[index].is_some();
-                if !field.required
-                    && ui
-                        .checkbox(&mut present, tr(es, "Set", "Definir"))
-                        .changed()
-                {
+                if !field.required && ui.checkbox(&mut present, tr(es, "Set")).changed() {
                     form.set(
                         index,
                         present.then(|| {
@@ -874,7 +1036,7 @@ pub(super) fn form_ui(ui: &mut egui::Ui, look: &Look, form: &mut FormDraft, es: 
                     let changed = match &field.kind {
                         FieldKind::Boolean => {
                             let mut v = value == "true";
-                            let r = ui.checkbox(&mut v, tr(es, "Enabled", "Activado"));
+                            let r = ui.checkbox(&mut v, tr(es, "Enabled"));
                             if r.changed() {
                                 value = v.to_string();
                             }
@@ -884,7 +1046,7 @@ pub(super) fn form_ui(ui: &mut egui::Ui, look: &Look, form: &mut FormDraft, es: 
                             let old = value.clone();
                             egui::ComboBox::from_id_salt("choice")
                                 .selected_text(if value.is_empty() {
-                                    tr(es, "Choose…", "Elige…")
+                                    tr(es, "Choose…")
                                 } else {
                                     &value
                                 })
@@ -907,7 +1069,10 @@ pub(super) fn form_ui(ui: &mut egui::Ui, look: &Look, form: &mut FormDraft, es: 
                         FieldKind::Text { max_bytes } => {
                             let r = ui
                                 .add(egui::TextEdit::singleline(&mut value).char_limit(*max_bytes))
-                                .on_hover_text(format!("≤{max_bytes} bytes"));
+                                .on_hover_text(
+                                    tr(es, "≤{count} bytes")
+                                        .replace("{count}", &max_bytes.to_string()),
+                                );
                             r.changed()
                         }
                         FieldKind::DynamicChoice { .. } => {
@@ -977,6 +1142,111 @@ mod administration_tests {
             .collect()
     }
     #[test]
+    fn resource_metadata_is_requested_only_from_details() {
+        let ctx = egui::Context::default();
+        ctx.style_mut_of(egui::Theme::Dark, |style| style.animation_time = 0.0);
+        ctx.style_mut_of(egui::Theme::Light, |style| style.animation_time = 0.0);
+        let mut plugins = PluginUi {
+            status: json!({"items":[{"id":"fixture","host":"ready"}]}),
+            ..Default::default()
+        };
+        let text = frame(&ctx, &mut plugins, None);
+        assert!(!text.iter().any(|(text, _)| text == "Declared resources"));
+        let at = text
+            .iter()
+            .find(|(text, _)| text == "View details")
+            .unwrap()
+            .1
+            .center();
+        frame(&ctx, &mut plugins, Some(at));
+        let text = frame(&ctx, &mut plugins, None);
+        assert!(text.iter().any(|(text, _)| text == "Declared resources"));
+    }
+    #[test]
+    fn resource_details_are_bounded_read_only_and_exclude_other_manifest_fields() {
+        use rad_plugin_contract::Resource;
+        let mut manifest: rad_plugin_contract::Manifest = serde_json::from_str(include_str!(
+            "../../../rad-plugin-host/fixture/manifest-v1.json"
+        ))
+        .unwrap();
+        manifest.resources = vec![
+            Resource::Internet,
+            Resource::SystemPrograms,
+            Resource::ExternalFiles,
+            Resource::Devices,
+            Resource::DesktopServices,
+        ];
+        manifest.actions[0].credential_slots = vec!["PRIVATE_SENTINEL".into()];
+        let mut plugins = PluginUi {
+            status: json!({"items":[{"id":manifest.id,"selected":manifest.version,"host":"ready"}]}),
+            ..Default::default()
+        };
+        let view = |manifest: &rad_plugin_contract::Manifest| rad_api::PluginManifestView {
+            plugin_id: manifest.id.clone(),
+            document: serde_json::from_value(serde_json::to_value(manifest).unwrap()).unwrap(),
+        };
+        plugins.accept_manifest(view(&manifest)).unwrap();
+        let ctx = egui::Context::default();
+        ctx.style_mut_of(egui::Theme::Dark, |style| style.animation_time = 0.0);
+        ctx.style_mut_of(egui::Theme::Light, |style| style.animation_time = 0.0);
+        let text = frame(&ctx, &mut plugins, None);
+        let at = text
+            .iter()
+            .find(|(text, _)| text == "View details")
+            .unwrap()
+            .1
+            .center();
+        frame(&ctx, &mut plugins, Some(at));
+        let text = frame(&ctx, &mut plugins, None);
+        assert!(text.iter().any(|(text, _)| text == "Internet"));
+        assert!(
+            text.iter().any(|(text, _)| text
+                == "Declared by the author; informational, not enforced permissions")
+        );
+        assert!(
+            !text
+                .iter()
+                .any(|(text, _)| text.contains("PRIVATE_SENTINEL"))
+        );
+        assert!(plugins.manifest_request.is_none());
+        manifest.resources.push(Resource::Internet);
+        assert!(plugins.accept_manifest(view(&manifest)).is_err());
+        plugins.resources.clear();
+        manifest.resources.pop();
+        manifest.version.patch += 1;
+        plugins.accept_manifest(view(&manifest)).unwrap();
+        assert!(
+            plugins.resources.is_empty(),
+            "a stale selection cannot populate the cache"
+        );
+    }
+    #[test]
+    fn retry_is_shown_only_after_runtime_allows_it_and_click_is_explicit() {
+        let ctx = egui::Context::default();
+        let mut plugins = PluginUi {
+            status: json!({"items":[{"id":"fixture","host":"failed","can_retry":false}]}),
+            ..Default::default()
+        };
+        assert!(
+            !frame(&ctx, &mut plugins, None)
+                .iter()
+                .any(|(text, _)| text == "Retry")
+        );
+        plugins.status["items"][0]["can_retry"] = json!(true);
+        let text = frame(&ctx, &mut plugins, None);
+        assert!(plugins.retry_request.is_none());
+        let at = text
+            .iter()
+            .find(|(text, _)| text == "Retry")
+            .unwrap()
+            .1
+            .center();
+        frame(&ctx, &mut plugins, Some(at));
+        assert_eq!(plugins.retry_request.as_deref(), Some("fixture"));
+        assert!(!plugins.update_request);
+        assert!(!plugins.admin_pending);
+    }
+    #[test]
     fn locked_admin_hides_mutations_and_reuses_only_selected_source_trust() {
         let mut p = PluginUi {
             status: json!({"state":"failed","locked":true,"items":[{"id":"p","source":"https://github.com/o/r","source_trusted":true}]}),
@@ -1009,10 +1279,9 @@ mod administration_tests {
                     text.iter().any(|(s, _)| s == &format!("plugin{id}")),
                     "missing plugin{id}"
                 );
-                assert!(text.iter().any(|(s, _)| {
-                    s.contains(&format!("Selected {id}.0.0 · Previous 0.0.1 · Failed"))
-                }));
+                assert!(text.iter().any(|(s, _)| { s == "Not working" }));
             }
+            assert!(!text.iter().any(|(s, _)| s.starts_with("Selected ")));
             assert_eq!(
                 text.iter().filter(|(s, _)| s.starts_with("plugin")).count(),
                 8
@@ -1056,6 +1325,7 @@ mod credential_tests {
     #[test]
     fn declared_credentials_are_visible_separately_from_ordinary_fields() {
         let definition = rad_plugin_contract::Definition {
+            gestures: rad_plugin_contract::default_gestures(),
             id: "authenticate".into(),
             label: "Authenticate".into(),
             schema: rad_plugin_contract::Schema {
@@ -1230,7 +1500,7 @@ mod restored_tests {
         assert!(p.dependencies.request().is_none());
         assert!(p.restore_result(rad_client::response::Status::Applied));
         assert_eq!(
-            p.dependencies.request().unwrap().operation,
+            p.dependencies.request().unwrap().operation().as_str(),
             "plugin_dependencies"
         );
         assert!(!p.trusted);
@@ -1240,7 +1510,7 @@ mod restored_tests {
             .unwrap();
         p.reconnect();
         assert_eq!(
-            p.dependencies.request().unwrap().arguments,
+            p.dependencies.request().unwrap().arguments(),
             json!({"cursor":null})
         );
         assert!(p.dependency_status_due);

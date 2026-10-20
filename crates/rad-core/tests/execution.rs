@@ -1255,3 +1255,41 @@ fn sequential_middle_failure_keeps_prior_success_and_new_admission_uses_new_para
         }
     );
 }
+
+#[test]
+fn cleanup_pin_survives_result_capacity_and_gets_ttl_after_release() {
+    let c = empty_button();
+    let mut engine = Engine::new(7, 1).unwrap();
+    let held = engine
+        .admit(
+            c.configuration(),
+            Target::Button(button(&c)),
+            Trigger::Editor,
+            &[],
+        )
+        .unwrap()
+        .id;
+    engine.pin_result(held).unwrap();
+    for _ in 0..MAX_RESULTS + 1 {
+        engine
+            .admit(
+                c.configuration(),
+                Target::Button(button(&c)),
+                Trigger::Editor,
+                &[],
+            )
+            .unwrap();
+    }
+    engine.advance(RESULT_TTL_MS + 1).unwrap();
+    assert_eq!(
+        engine.result(held).unwrap().status,
+        ExecutionStatus::Running
+    );
+    engine.report_cleanup_failure(held);
+    engine.release_result(held);
+    assert_eq!(engine.result(held).unwrap().status, ExecutionStatus::Failed);
+    engine.advance(2 * RESULT_TTL_MS).unwrap();
+    assert!(engine.result(held).is_some());
+    engine.advance(2 * RESULT_TTL_MS + 1).unwrap();
+    assert!(engine.result(held).is_none());
+}

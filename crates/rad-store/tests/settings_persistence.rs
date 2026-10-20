@@ -48,6 +48,7 @@ fn changed(base: &Candidate) -> Candidate {
                     brightness_percent: 33,
                     sleep_ms: 0,
                     press_threshold_ms: u64::MAX,
+                    long_press_threshold_ms: 500,
                 }),
             ],
         )

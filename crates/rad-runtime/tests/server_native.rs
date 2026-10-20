@@ -74,14 +74,22 @@ fn launcher_catalog_configuration_and_run_survive_editor_close() {
                 .request("launcher_catalog", json!({"cursor":null,"query":"Private"}))
                 .unwrap();
             if response.error.is_none() {
-                assert_eq!(response.data["items"][0]["desktop_entry"], "test.desktop");
-                assert_eq!(response.data["items"][0]["name"], "Private fixture");
+                assert_eq!(
+                    serde_json::to_value(&response.data).unwrap()["items"][0]["desktop_entry"],
+                    "test.desktop"
+                );
+                assert_eq!(
+                    serde_json::to_value(&response.data).unwrap()["items"][0]["name"],
+                    "Private fixture"
+                );
                 break;
             }
             assert!(Instant::now() < deadline, "catalog must become ready");
             std::thread::sleep(Duration::from_millis(5));
         }
-        let folder = editor.request("status", json!({})).unwrap().data["active_folder_id"].clone();
+        let folder = serde_json::to_value(editor.request("status", json!({})).unwrap().data)
+            .unwrap()["active_folder_id"]
+            .clone();
         assert!(
             editor
                 .request(
@@ -95,14 +103,14 @@ fn launcher_catalog_configuration_and_run_survive_editor_close() {
         assert!(editor.request("add_action",json!({"button_id":"b1","type":"launcher","parameters":{"desktop_entry":"test.desktop"}})).unwrap().error.is_none());
         let response = editor.request("run", json!({"id":"b1"})).unwrap();
         assert_eq!(response.status, rad_client::response::Status::Admitted);
-        let id = response.data["execution_id"].clone();
+        let id = serde_json::to_value(&response.data).unwrap()["execution_id"].clone();
         drop(editor);
         let mut cli = Client::connect(&root, Endpoint::Automation).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             let result = cli.request("result", json!({"execution_id":id})).unwrap();
             assert!(result.error.is_none(), "{result:?}");
-            match result.data["state"].as_str() {
+            match serde_json::to_value(&result.data).unwrap()["state"].as_str() {
                 Some("running") => {}
                 Some("succeeded") => break,
                 other => panic!("native execution failed: {other:?}"),

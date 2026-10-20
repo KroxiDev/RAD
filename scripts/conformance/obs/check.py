@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Private D4 integration; only own processes, ephemeral TCP and temporary AF_UNIX."""
-import json, os, queue, signal, socket, struct, subprocess, sys, threading, time
+import json, os, queue, select, signal, subprocess, sys, threading, time
 from pathlib import Path
 
 def equal(label, actual, expected):
@@ -16,25 +16,29 @@ def until(read, predicate, timeout=12):
         time.sleep(.025) # observations only; never retries effects
 
 class Peer:
+    """Scenario vectors only; Rust owns canonical validation, framing and response decode."""
     def __init__(self, root, endpoint='editor'):
-        self.sock=socket.socket(socket.AF_UNIX); self.sock.settimeout(12)
-        self.sock.connect(str(root/'runtime/rad'/f'{endpoint}.sock')); self.serial=0; self.call('hello')
-    def read(self,n):
-        out=b''
-        while len(out)<n:
-            chunk=self.sock.recv(n-len(out)); assert chunk; out+=chunk
-        return out
-    def request(self,op,**args):
-        self.serial+=1
-        payload=json.dumps(dict(v=1,id=str(self.serial),op=op,args=args)).encode()
-        self.sock.sendall(struct.pack('>I',len(payload))+payload)
-        size,=struct.unpack('>I',self.read(4)); assert 0<size<=65536
-        response=json.loads(self.read(size)); assert response['id']==str(self.serial)
+        repo = Path(__file__).resolve().parents[3]
+        self.child = subprocess.Popen(
+            [str(repo/'target/release/examples/conformance_client'), str(root/'runtime'), endpoint],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+    def request(self, op, **args):
+        self.child.stdin.write(json.dumps([op, args])+'\n')
+        self.child.stdin.flush()
+        assert select.select([self.child.stdout], [], [], 12)[0], 'typed client deadline'
+        response = json.loads(self.child.stdout.readline())
+        assert response['cli_version'] == 1
         return response
-    def call(self,op,**args):
-        result=self.request(op,**args); assert not result.get('error'), (op,result)
+    def call(self, op, **args):
+        result = self.request(op, **args)
+        assert not result.get('error'), (op, result)
         return result['data']
-    def close(self): self.sock.close()
+    def close(self):
+        self.child.stdin.close()
+        try:
+            self.child.wait(timeout=12)
+        except subprocess.TimeoutExpired:
+            self.child.kill(); self.child.wait(timeout=3)
 
 class World:
     def __init__(self,root,repo):

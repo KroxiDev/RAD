@@ -1,4 +1,4 @@
-//! Synthetic plugin for the dynamic-options tests: `org.rad.test.options` 1.0.0, host API 2.
+//! Synthetic plugin for the dynamic-options tests: `org.rad.test.options` 1.0.0, major 1 with dynamic_options.
 //! Lists come from a fixed table keyed by the `scenario` dependency, which also injects
 //! faults (slow, late, crash, invalid). No apps, audio, hardware, network or files.
 use rad_plugin_contract::*;
@@ -24,6 +24,7 @@ const JPEG_HEX: &str = "ffd8ffe000104a46494600010100000100010000ffdb0043000d090a
 #[derive(Default)]
 struct Shared {
     invocations: AtomicU64,
+    settings_text: Mutex<Option<String>>,
     subscription: Mutex<Option<Correlation>>,
 }
 
@@ -47,12 +48,19 @@ fn send(correlation: Correlation, message: Message) {
 }
 fn probe_state(shared: &Shared) -> Message {
     Message::Visual {
+        valid_for_ms: 1000,
         state: VisualState::Current {
             content: VisualContent {
-                text: Some(format!(
-                    "invocations:{}",
-                    shared.invocations.load(Ordering::SeqCst)
-                )),
+                text: Some(
+                    shared
+                        .settings_text
+                        .lock()
+                        .expect("settings")
+                        .clone()
+                        .unwrap_or_else(|| {
+                            format!("invocations:{}", shared.invocations.load(Ordering::SeqCst))
+                        }),
+                ),
                 png_hex: None,
                 jpeg_hex: Some(JPEG_HEX.into()),
                 color: None,
@@ -116,9 +124,10 @@ fn answer_options(correlation: Correlation, field: &str, context: &Parameters) {
 fn handle(envelope: Envelope, shared: &Arc<Shared>) {
     let correlation = envelope.correlation;
     match envelope.message {
-        Message::Hello { .. } => send(
+        Message::Hello { capabilities, .. } => send(
             correlation,
             Message::Ready {
+                capabilities,
                 plugin_id: ID.into(),
                 plugin_version: VERSION,
             },
@@ -132,7 +141,9 @@ fn handle(envelope: Envelope, shared: &Arc<Shared>) {
                 },
             );
         }
-        Message::Subscribe { .. } => {
+        Message::Subscribe { settings, .. } => {
+            *shared.settings_text.lock().expect("settings") =
+                settings.and_then(|s| s.values.get("port").map(|v| format!("port{v}")));
             *shared.subscription.lock().expect("subscription") = Some(correlation);
             send(correlation, probe_state(shared));
         }
@@ -142,7 +153,31 @@ fn handle(envelope: Envelope, shared: &Arc<Shared>) {
                 *current = None;
             }
         }
-        Message::Options { field, context, .. } => answer_options(correlation, &field, &context),
+        Message::Options {
+            field,
+            context,
+            settings,
+            ..
+        } => {
+            if let Some(port) = settings.and_then(|s| s.values.get("port").cloned()) {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(500));
+                    send(
+                        correlation,
+                        Message::Choices {
+                            list: ChoiceList::Available {
+                                options: vec![option(
+                                    &format!("port{port}"),
+                                    &format!("Port {port}"),
+                                )],
+                            },
+                        },
+                    );
+                });
+            } else {
+                answer_options(correlation, &field, &context);
+            }
+        }
         _ => std::process::exit(2),
     }
 }

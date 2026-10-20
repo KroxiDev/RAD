@@ -200,6 +200,12 @@ fn installed_type_is_admission_gate_but_visual_and_dynamic_service_are_not() {
     assert!(matches!(e.as_slice(), [Effect::Rejected { .. }]));
     a.install_plugin(
         rad_plugin_contract::Manifest {
+            resources: vec![],
+            capabilities: rad_plugin_contract::SUPPORTED_CAPABILITIES
+                .iter()
+                .map(|s| (*s).into())
+                .collect(),
+            settings: None,
             lifecycle: Default::default(),
             contract: 1,
             id: "p".into(),
@@ -212,6 +218,7 @@ fn installed_type_is_admission_gate_but_visual_and_dynamic_service_are_not() {
             host_max: 1,
             targets: vec!["x86_64-unknown-linux-gnu".into()],
             actions: vec![rad_plugin_contract::Definition {
+                gestures: vec![rad_plugin_contract::Gesture::Press],
                 response_timeout: None,
                 id: "act".into(),
                 label: "Action".into(),

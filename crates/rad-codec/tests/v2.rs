@@ -5,7 +5,7 @@ fn canonical_document_is_v2_and_keeps_only_deck_settings() {
     let c = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
     let bytes = encode(c.configuration()).unwrap();
     let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(doc["version"], 2);
+    assert_eq!(doc["version"], 3);
     assert_eq!(doc["grid"], serde_json::json!([8, 4]));
     assert!(doc.get("plugin_settings").is_none());
     assert!(doc["settings"].get("gui_language").is_none());
@@ -26,7 +26,7 @@ fn original_v1_fixture_imports_and_reencodes_without_legacy_fields() {
     let c = Configuration::from_data(data, &registry).unwrap();
     let bytes = encode(&c).unwrap();
     let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(doc["version"], 2);
+    assert_eq!(doc["version"], 3);
     assert!(doc["settings"].get("gui_language").is_none());
     assert_eq!(doc["buttons"][0]["name"], "Fixture launch");
 }
@@ -77,7 +77,10 @@ fn v2_golden_preserves_plugin_hints_settings_and_exact_canonical_bytes() {
     let registry = IdentityRegistry::from_records(77, records).unwrap();
     assert_eq!(
         encode(&Configuration::from_data(data, &registry).unwrap()).unwrap(),
-        bytes
+        std::str::from_utf8(bytes)
+            .unwrap()
+            .replacen("\"version\":2", "\"version\":3", 1)
+            .into_bytes()
     );
 }
 #[test]

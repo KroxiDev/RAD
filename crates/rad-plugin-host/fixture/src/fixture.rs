@@ -35,7 +35,7 @@ pub fn run(major: u32) {
         let c = &v["correlation"];
         match v["message"]["kind"].as_str() {
             Some("hello") => send(
-                json!({"protocol":1,"correlation":c,"message":{"kind":"ready","plugin_id":"org.rad.fixture","plugin_version":{"major":major,"minor":0,"patch":0}}}),
+                json!({"protocol":1,"correlation":c,"message":{"kind":"ready","capabilities":v["message"]["capabilities"],"plugin_id":"org.rad.fixture","plugin_version":{"major":major,"minor":0,"patch":0}}}),
             ),
             Some("invoke") => {
                 let mode = v["message"]["parameters"]["values"]["mode"]
@@ -47,7 +47,7 @@ pub fn run(major: u32) {
                 if mode == "slow" {
                     if let Some(key) = &subscription {
                         send(
-                            json!({"protocol":1,"correlation":key,"message":{"kind":"visual","state":{"availability":"current","content":{"text":"running","png_hex":null,"color":null}}}}),
+                            json!({"protocol":1,"correlation":key,"message":{"kind":"visual","valid_for_ms":1000,"state":{"availability":"current","content":{"text":"running","png_hex":null,"color":null}}}}),
                         );
                     }
                     std::thread::sleep(std::time::Duration::from_millis(250));
@@ -65,7 +65,10 @@ pub fn run(major: u32) {
                     && std::env::var("DBUS_SESSION_BUS_ADDRESS").as_deref()
                         == Ok("unix:path=/synthetic-bus")
                     && std::env::vars_os().count() == 2;
-                let outcome = if mode == "fail" || (mode == "environment" && !environment_valid) {
+                let outcome = if mode == "fail"
+                    || (mode == "end_fail" && v["message"]["control"]["gesture"] == "hold_end")
+                    || (mode == "environment" && !environment_valid)
+                {
                     json!({"status":"failure","code":"unavailable"})
                 } else {
                     json!({"status":"success"})
@@ -78,7 +81,7 @@ pub fn run(major: u32) {
             Some("subscribe") => {
                 subscription = Some(c.clone());
                 send(
-                    json!({"protocol":1,"correlation":c,"message":{"kind":"visual","state":{"availability":"current","content":{"text":format!("v{major}"),"png_hex":null,"color":null}}}}),
+                    json!({"protocol":1,"correlation":c,"message":{"kind":"visual","valid_for_ms":1000,"state":{"availability":"current","content":{"text":format!("v{major}"),"png_hex":null,"color":null}}}}),
                 );
             }
             Some("unsubscribe") => {

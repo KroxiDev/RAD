@@ -48,7 +48,9 @@ fn unconfirmed_and_uncertain_keep_barrier_credit_but_confirmed_not_applied_relea
         let mut actor = Authority::new(config, 1, std::num::NonZeroU128::new(705).unwrap());
         let before = actor.editor_view(Origin::Editor).unwrap();
         let mut host = Host::default();
-        replies.send(Reply::Prepared(Ok(prepared), true)).unwrap();
+        replies
+            .send(Reply::Prepared(Ok(Box::new(prepared)), true))
+            .unwrap();
         admin.poll(&mut actor, &mut host, 0);
         let Job::Commit(ticket) = jobs.try_recv().unwrap() else {
             panic!("one commit continuation");

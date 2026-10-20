@@ -1,4 +1,5 @@
 // Dynamic options at the IPC boundary: what a request resolves to, and what it may not.
+use rad_api::response::{Response, Status};
 use rad_authority::Authority;
 use rad_core::{
     configuration::{Configuration, Origin},
@@ -8,7 +9,6 @@ use rad_plugin_contract::{ChoiceList, ChoiceOption, Manifest, OptionsScope};
 use rad_protocol::{
     External, IncomingContext, OptionsSubject, PluginOptions, Protocol, Resolution,
 };
-use rad_wire::response::{Response, Status};
 use serde_json::{Value, json};
 use std::num::NonZeroU128;
 
@@ -118,7 +118,9 @@ fn query(r: Resolution) -> PluginOptions {
 
 fn code(r: Resolution) -> String {
     match r {
-        Resolution::Immediate { response, .. } => response.error.expect("rejection").code,
+        Resolution::Immediate { response, .. } => {
+            response.error.expect("rejection").code.to_string()
+        }
         _ => panic!("expected a rejection"),
     }
 }
@@ -401,7 +403,10 @@ fn fixed_choices_and_the_consultation_filter_keep_their_behavior() {
         panic!("fixed choices answer immediately")
     };
     assert_eq!(response.status, Status::Ok);
-    assert_eq!(response.data["items"][0], "normal");
+    assert_eq!(
+        serde_json::to_value(&response.data).unwrap()["items"][0],
+        "normal"
+    );
     apply(
         &mut a,
         "set_permissions",
@@ -544,7 +549,13 @@ fn listed(values: &[(&str, &str)]) -> ChoiceList {
 }
 
 fn decoded(response: &Response) -> Response {
-    Response::decode(&serde_json::to_vec(response).unwrap(), 2, None).unwrap()
+    Response::decode_value(
+        serde_json::to_value(response).unwrap(),
+        2,
+        None,
+        rad_api::Operation::Options,
+    )
+    .unwrap()
 }
 
 #[test]
@@ -553,7 +564,7 @@ fn an_answer_reports_the_list_and_whether_the_saved_value_is_still_on_it() {
     let response = protocol().options_response(context(), &entity_query(Some("a2")), Some(&list));
     assert_eq!(decoded(&response).status, Status::Ok);
     assert_eq!(
-        response.data,
+        serde_json::to_value(&response.data).unwrap(),
         json!({"type":format!("{PLUGIN}:pick"),"field":"member","availability":"available",
                "items":[{"value":"a1","label":"Member A1"},{"value":"a2","label":"Member A2"}],
                "next_cursor":null,"saved":"a2","saved_listed":true})
@@ -561,25 +572,43 @@ fn an_answer_reports_the_list_and_whether_the_saved_value_is_still_on_it() {
     // The saved value left the list: reported, flagged, never substituted.
     let list = listed(&[("b1", "Member B1")]);
     let response = protocol().options_response(context(), &entity_query(Some("a2")), Some(&list));
-    assert_eq!(response.data["saved"], "a2");
-    assert_eq!(response.data["saved_listed"], false);
+    assert_eq!(serde_json::to_value(&response.data).unwrap()["saved"], "a2");
     assert_eq!(
-        response.data["items"],
+        serde_json::to_value(&response.data).unwrap()["saved_listed"],
+        false
+    );
+    assert_eq!(
+        serde_json::to_value(&response.data).unwrap()["items"],
         json!([{"value":"b1","label":"Member B1"}])
     );
     // Nothing saved yet.
     let response = protocol().options_response(context(), &entity_query(None), Some(&list));
-    assert_eq!(response.data["saved"], Value::Null);
-    assert_eq!(response.data["saved_listed"], false);
+    assert_eq!(
+        serde_json::to_value(&response.data).unwrap()["saved"],
+        Value::Null
+    );
+    assert_eq!(
+        serde_json::to_value(&response.data).unwrap()["saved_listed"],
+        false
+    );
 }
 
 #[test]
 fn empty_unavailable_and_late_are_three_different_answers() {
     let empty =
         protocol().options_response(context(), &entity_query(Some("a2")), Some(&listed(&[])));
-    assert_eq!(empty.data["availability"], "available");
-    assert_eq!(empty.data["items"], json!([]));
-    assert_eq!(empty.data["saved_listed"], false);
+    assert_eq!(
+        serde_json::to_value(&empty.data).unwrap()["availability"],
+        "available"
+    );
+    assert_eq!(
+        serde_json::to_value(&empty.data).unwrap()["items"],
+        json!([])
+    );
+    assert_eq!(
+        serde_json::to_value(&empty.data).unwrap()["saved_listed"],
+        false
+    );
 
     let unavailable = protocol().options_response(
         context(),
@@ -587,9 +616,18 @@ fn empty_unavailable_and_late_are_three_different_answers() {
         Some(&ChoiceList::Unavailable),
     );
     assert_eq!(decoded(&unavailable).status, Status::Ok);
-    assert_eq!(unavailable.data["availability"], "unavailable");
-    assert_eq!(unavailable.data["items"], json!([]));
-    assert_eq!(unavailable.data["saved"], "a2");
+    assert_eq!(
+        serde_json::to_value(&unavailable.data).unwrap()["availability"],
+        "unavailable"
+    );
+    assert_eq!(
+        serde_json::to_value(&unavailable.data).unwrap()["items"],
+        json!([])
+    );
+    assert_eq!(
+        serde_json::to_value(&unavailable.data).unwrap()["saved"],
+        "a2"
+    );
 
     let late = protocol().options_response(context(), &entity_query(Some("a2")), None);
     assert_eq!(decoded(&late).status, Status::Error);
@@ -612,7 +650,7 @@ fn a_type_answer_has_no_saved_value_and_an_oversized_list_is_refused_not_truncat
     let list = listed(&[("a", "Group A")]);
     let response = protocol().options_response(context(), &by_type, Some(&list));
     assert_eq!(
-        response.data,
+        serde_json::to_value(&response.data).unwrap(),
         json!({"type":format!("{PLUGIN}:pick"),"field":"group","availability":"available",
                "items":[{"value":"a","label":"Group A"}],"next_cursor":null})
     );

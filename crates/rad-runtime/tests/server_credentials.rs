@@ -38,8 +38,12 @@ fn credential_ipc_persists_separately_and_never_returns_a_secret() {
             )
             .unwrap();
         assert!(status.error.is_none(), "status: {:?}", status.error);
-        assert_eq!(status.data, json!({"state":"absent"}));
-        let before = editor.request("status", json!({})).unwrap().data;
+        assert_eq!(
+            serde_json::to_value(status.data).unwrap(),
+            json!({"state":"absent"})
+        );
+        let before =
+            serde_json::to_value(editor.request("status", json!({})).unwrap().data).unwrap();
         let saved = editor
             .request(
                 "credential_replace",
@@ -47,17 +51,24 @@ fn credential_ipc_persists_separately_and_never_returns_a_secret() {
             )
             .unwrap();
         assert!(saved.error.is_none(), "save: {:?}", saved.error);
-        assert_eq!(saved.data, json!({"state":"present"}));
+        assert_eq!(
+            serde_json::to_value(saved.data).unwrap(),
+            json!({"state":"present"})
+        );
         let queried = editor
             .request(
                 "credential_status",
                 json!({"plugin_id":"fixture","slot":"password"}),
             )
             .unwrap();
-        assert_eq!(queried.data, json!({"state":"present"}));
+        assert_eq!(
+            serde_json::to_value(queried.data).unwrap(),
+            json!({"state":"present"})
+        );
         let response = editor.request("status", json!({})).unwrap();
         assert!(!format!("{response:?}").contains("private-runtime-canary"));
-        let after = editor.request("status", json!({})).unwrap().data;
+        let after =
+            serde_json::to_value(editor.request("status", json!({})).unwrap().data).unwrap();
         assert!(before["view_revision"].is_string());
         assert_eq!(before["view_revision"], after["view_revision"]);
         assert_eq!(before["history_operations"], after["history_operations"]);
@@ -75,7 +86,10 @@ fn credential_ipc_persists_separately_and_never_returns_a_secret() {
                 json!({"plugin_id":"fixture","slot":"password"}),
             )
             .unwrap();
-        assert_eq!(removed.data, json!({"state":"absent"}));
+        assert_eq!(
+            serde_json::to_value(removed.data).unwrap(),
+            json!({"state":"absent"})
+        );
         tx.send(()).unwrap();
     });
     let end = Instant::now() + Duration::from_secs(10);
@@ -161,7 +175,7 @@ fn known_prewrite_vault_failure_is_not_applied_even_while_vault_is_unknown() {
     assert_eq!(error.code, "storage_error");
     assert_eq!(
         error.outcome,
-        Some(rad_wire::response::Outcome::NotApplied),
+        Some(rad_api::response::Outcome::NotApplied),
         "known pre-write rejection is not an uncertain mutation"
     );
 }

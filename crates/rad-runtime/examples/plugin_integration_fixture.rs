@@ -18,7 +18,7 @@ fn call(c: &mut Client, op: &str, args: Value) -> Value {
         "request {op} failed: {:?}",
         r.error.as_ref().map(|e| &e.code)
     );
-    r.data
+    serde_json::to_value(r.data).expect("typed fixture projection")
 }
 fn ready(c: &mut Client) -> Value {
     let end = Instant::now() + Duration::from_secs(90);

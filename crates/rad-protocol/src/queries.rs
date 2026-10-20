@@ -7,18 +7,17 @@ use rad_core::{
 pub(super) fn read(
     a: &Authority,
     c: IncomingContext,
-    op: &str,
-    args: &Map<String, Value>,
+    request: &rad_api::Request,
 ) -> Checked<Value> {
     let rev = a
         .view_revision(c.origin)
         .ok_or("resource_exhausted")?
         .value()
         .to_string();
-    match op {
-        "get" => {
-            closed(args, &["id"])?;
-            let id = id(args, "id")?;
+    use rad_api::Request as R;
+    match request {
+        R::Get { id } => {
+            let id = parse_id(id)?;
             if id.kind() == EntityKind::Folder {
                 let f = a.folder(c.origin, id).ok_or("not_found")?;
                 return Ok(
@@ -27,12 +26,14 @@ pub(super) fn read(
             }
             Ok(entity(&a.get(c.origin, id).ok_or("not_found")?, &rev))
         }
-        "list" => {
-            closed(args, &["cursor", "limit"])?;
-            if args.get("limit").and_then(Value::as_u64) != Some(32) {
+        R::List {
+            cursor: cursor_value,
+            limit,
+        } => {
+            if *limit != 32 {
                 return Err("invalid_request");
             };
-            let cursor = cursor(args)?;
+            let cursor = cursor(cursor_value.as_deref())?;
             // Reserve envelope/cursor overhead once, not a second unbounded page buffer.
             let mut first = true;
             let page = a
@@ -51,12 +52,15 @@ pub(super) fn read(
                 json!({"items":page.entries.iter().map(|e|entity(e,&rev)).collect::<Vec<_>>(),"next_cursor":page.next.as_ref().map(encode_cursor),"view_revision":rev}),
             )
         }
-        "get_section" => {
-            closed(args, &["id", "section", "cursor"])?;
-            let id = id(args, "id")?;
-            let cursor = cursor(args)?;
-            match string(args, "section")? {
-                "appearance" => {
+        R::GetSection {
+            id,
+            section,
+            cursor: cursor_value,
+        } => {
+            let id = parse_id(id)?;
+            let cursor = cursor(cursor_value.as_deref())?;
+            match section {
+                rad_api::Section::Appearance => {
                     if cursor.is_some() {
                         return Err("cursor_expired");
                     };
@@ -79,7 +83,7 @@ pub(super) fn read(
                         json!({"visual_type":visual_type,"section":"appearance","items":[{"name":"text","value":v.appearance.text},{"name":"image","value":v.appearance.image},{"name":"text_position","value":text_position}],"next_cursor":null,"view_revision":rev}),
                     )
                 }
-                "actions" => {
+                rad_api::Section::Actions => {
                     let mut first = true;
                     let p = a
                         .actions(c.connection, c.origin, id, cursor.as_ref(), |e| {
@@ -97,7 +101,6 @@ pub(super) fn read(
                         json!({"section":"actions","items":p.entries.iter().map(|e|visible_action(e,&rev)).collect::<Vec<_>>(),"next_cursor":p.next.as_ref().map(encode_cursor),"view_revision":rev}),
                     )
                 }
-                _ => Err("invalid_request"),
             }
         }
         _ => Err("invalid_request"),
@@ -119,7 +122,7 @@ fn local(p: LocalPermissions) -> Value {
 fn entity(e: &EntityView, rev: &str) -> Value {
     match e {
         EntityView::Button(b) => {
-            json!({"visibility":"visible","id":short(b.binding.short()),"kind":"button","fields":{"name":b.name,"mode":match b.mode {Mode::Sequential=>"sequential",Mode::Parallel=>"parallel"},"permissions":local(b.local_permissions),"effective_permissions":permissions(b.permissions),"folder_id":b.folder.map(|b|short(b.short())),"position":b.position},"view_revision":rev,"sections":["appearance","actions"]})
+            json!({"visibility":"visible","id":short(b.binding.short()),"kind":"button","fields":{"name":b.name,"gesture":gesture(b.gesture),"mode":match b.mode {Mode::Sequential=>"sequential",Mode::Parallel=>"parallel"},"permissions":local(b.local_permissions),"effective_permissions":permissions(b.permissions),"folder_id":b.folder.map(|b|short(b.short())),"position":b.position},"view_revision":rev,"sections":["appearance","actions"]})
         }
         EntityView::Action(v) => action(v, rev),
     }
@@ -151,10 +154,10 @@ fn visible_action(v: &Visible<ActionView>, rev: &str) -> Value {
 fn encode_cursor(c: &Cursor) -> String {
     c.to_bytes().iter().map(|b| format!("{b:02x}")).collect()
 }
-fn cursor(args: &Map<String, Value>) -> Checked<Option<Cursor>> {
-    match args.get("cursor") {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(s))
+fn cursor(value: Option<&str>) -> Checked<Option<Cursor>> {
+    match value {
+        None => Ok(None),
+        Some(s)
             if s.len() == 102
                 && s.bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) =>
@@ -166,5 +169,13 @@ fn cursor(args: &Map<String, Value>) -> Checked<Option<Cursor>> {
             Cursor::from_bytes(&bytes).map(Some).map_err(query_error)
         }
         _ => Err("invalid_request"),
+    }
+}
+
+fn gesture(value: rad_core::configuration::Gesture) -> rad_api::Gesture {
+    match value {
+        rad_core::configuration::Gesture::Press => rad_api::Gesture::Press,
+        rad_core::configuration::Gesture::Hold => rad_api::Gesture::Hold,
+        rad_core::configuration::Gesture::LongPress => rad_api::Gesture::LongPress,
     }
 }

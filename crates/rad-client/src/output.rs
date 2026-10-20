@@ -2,7 +2,7 @@ use crate::{
     connection::Failure,
     response::{Error, Outcome, Response, Status},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 use std::io::{self, Write};
 pub fn failure(error: Failure) -> Response {
     Response {
@@ -10,9 +10,9 @@ pub fn failure(error: Failure) -> Response {
         id: error.id.map(|id| id.to_string()),
         session_id: error.session_id,
         status: Status::Error,
-        data: Value::Null,
+        data: rad_api::ResponseData::None,
         error: Some(Error {
-            code: error.code.into(),
+            code: rad_api::ErrorCode::parse(error.code).expect("defined client error"),
             message: match error.code {
                 "invalid_request" => "Invalid arguments or protocol",
                 "wait_timeout" => "Wait timed out; execution was not cancelled",
@@ -32,28 +32,9 @@ pub fn exit_code(response: &Response) -> u8 {
         if error.outcome == Some(Outcome::Unknown) {
             return 8;
         }
-        match error.code.as_str() {
-            "invalid_request"
-            | "unsupported_version"
-            | "invalid_configuration"
-            | "identity_collision"
-            | "cursor_expired" => 2,
-            "permission_denied" | "operation_not_allowed" => 3,
-            "not_found" | "result_expired" => 4,
-            "busy"
-            | "resource_exhausted"
-            | "executor_unavailable"
-            | "service_unavailable"
-            | "options_timeout" => 5,
-            "action_failed" | "action_timeout" => 6,
-            "storage_error" | "storage_uncertain" | "recovery_required" => 7,
-            "wait_timeout" => 9,
-            _ => 8,
-        }
-    } else if matches!(
-        response.data["state"].as_str(),
-        Some("failed" | "timed_out")
-    ) {
+        error.code.exit_code() as u8
+    } else if matches!(&response.data, rad_api::ResponseData::Execution(result) if matches!(result.state,rad_api::ExecutionState::Failed | rad_api::ExecutionState::TimedOut))
+    {
         6
     } else {
         0
@@ -61,7 +42,9 @@ pub fn exit_code(response: &Response) -> u8 {
 }
 pub fn write(response: &Response, structured: bool, mut to: impl Write) -> io::Result<()> {
     if structured {
-        serde_json::to_writer(&mut to, response)?;
+        let mut value = serde_json::to_value(response)?;
+        value["cli_version"] = json!(rad_api::CLI_VERSION);
+        serde_json::to_writer(&mut to, &value)?;
         writeln!(to)
     } else if let Some(error) = &response.error {
         writeln!(to, "{}: {}", error.code, error.message)?;
@@ -97,7 +80,7 @@ pub fn write_command(
                     to,
                     "{}: {}",
                     error.code,
-                    options_failure(&error.code, &error.message)
+                    options_failure(error.code.as_str(), &error.message)
                 )
             }
             _ => write(response, structured, to),
@@ -117,13 +100,11 @@ fn options_failure<'a>(code: &str, server_message: &'a str) -> &'a str {
     }
 }
 /// `None` when the data is not a well-formed options answer.
-fn options_text(data: &Value) -> Option<String> {
-    let available = match data["availability"].as_str()? {
-        "available" => true,
-        "unavailable" => false,
-        _ => return None,
+fn options_text(data: &rad_api::ResponseData) -> Option<String> {
+    let rad_api::ResponseData::Options(data) = data else {
+        return None;
     };
-    let items = data["items"].as_array()?;
+    let available = data.availability == rad_api::OptionsAvailability::Available;
     let mut text = format!(
         "availability: {}\n",
         if available {
@@ -132,24 +113,21 @@ fn options_text(data: &Value) -> Option<String> {
             "unavailable"
         }
     );
-    for item in items {
-        text += &format!(
-            "{} — {}\n",
-            printable(item["value"].as_str()?),
-            printable(item["label"].as_str()?)
-        );
+    for item in &data.items {
+        text += &format!("{} — {}\n", printable(&item.value), printable(&item.label));
     }
-    if available && items.is_empty() {
+    if available && data.items.is_empty() {
         text += "(no options)\n";
     }
-    if let Some(saved) = data.get("saved") {
-        let state = match (saved.as_str(), data["saved_listed"].as_bool()?) {
-            (Some(value), listed) => format!(
+    if let Some(saved) = &data.saved {
+        let listed = data.saved_listed?;
+        let state = match saved {
+            Some(value) => format!(
                 "{}{}",
                 printable(value),
                 if listed { "" } else { " (not available)" }
             ),
-            (None, _) => "(none or unreadable)".into(),
+            None => "(none or unreadable)".into(),
         };
         text += &format!("saved: {state}\n");
     }

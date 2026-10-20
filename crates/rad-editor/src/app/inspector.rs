@@ -6,7 +6,7 @@ use super::{
     string, tr,
 };
 use crate::{
-    Request, commands,
+    commands,
     native::{Job, TransferKind},
 };
 use eframe::egui;
@@ -31,7 +31,6 @@ impl App {
                     ui.label(look.muted_text(tr(
                         self.es,
                         "Select a key to edit it, or drag an action onto one",
-                        "Selecciona una tecla para editarla, o arrastra una acción a una",
                     )));
                 });
             }
@@ -39,37 +38,22 @@ impl App {
     }
     fn empty_key(&mut self, ui: &mut egui::Ui, look: &Look, position: usize) {
         ui.label(
-            egui::RichText::new(format!(
-                "{} {}",
-                tr(self.es, "Empty key", "Tecla vacía"),
-                position + 1
-            ))
-            .heading(),
+            egui::RichText::new(format!("{} {}", tr(self.es, "Empty key"), position + 1)).heading(),
         );
         ui.label(look.muted_text(tr(
             self.es,
             "Drag an action here from the list on the right, or create it yourself:",
-            "Arrastra aquí una acción de la lista de la derecha, o créala tú:",
         )));
         ui.add_space(2.);
         ui.horizontal(|ui| {
             ui.add(
-                look.field(
-                    &mut self.new_name,
-                    tr(self.es, "Name (optional)", "Nombre (opcional)"),
-                )
-                .desired_width(FIELD),
+                look.field(&mut self.new_name, tr(self.es, "Name (optional)"))
+                    .desired_width(FIELD),
             );
-            if ui
-                .add(look.primary(tr(self.es, "Create button", "Crear botón")))
-                .clicked()
-            {
+            if ui.add(look.primary(tr(self.es, "Create button"))).clicked() {
                 self.create(position, false);
             }
-            if ui
-                .button(tr(self.es, "Create folder", "Crear carpeta"))
-                .clicked()
-            {
+            if ui.button(tr(self.es, "Create folder")).clicked() {
                 self.create(position, true);
             }
         });
@@ -84,6 +68,7 @@ impl App {
                 || published.image != draft.image
                 || published.text_position != draft.text_position
                 || published.mode != draft.mode
+                || published.gesture != draft.gesture
                 || published.order != draft.order
                 || published.waits != draft.waits
         })
@@ -102,7 +87,6 @@ impl App {
             return self.warn(tr(
                 self.es,
                 "A wait is a number of milliseconds, up to 600000 (10 minutes)",
-                "Una espera es un número de milisegundos, hasta 600000 (10 minutos)",
             ));
         };
         // Sent only when changed here, so an untouched key keeps following its image.
@@ -120,6 +104,7 @@ impl App {
             image: (!self.draft.image.is_empty()).then_some(self.draft.image.as_str()),
             text_position,
             mode: &self.draft.mode,
+            gesture: &self.draft.gesture,
             order: &self.draft.order,
             waits: &waits,
         });
@@ -138,28 +123,24 @@ impl App {
             // Clicking the face opens the image choices, as the image button does.
             let open_image = self.inspection.is_some() && preview_response.clicked();
             if self.inspection.is_some() {
-                preview_response.on_hover_text(tr(
-                    self.es,
-                    "Change the image",
-                    "Cambiar la imagen",
-                ));
+                preview_response.on_hover_text(tr(self.es, "Change the image"));
             }
             ui.add_space(10.);
             if self.inspection.is_none() {
                 ui.spinner();
-                ui.label(look.muted_text(tr(self.es, "Loading…", "Cargando…")));
+                ui.label(look.muted_text(tr(self.es, "Loading…")));
             } else {
                 egui::Grid::new("key-fields")
                     .num_columns(2)
                     .spacing([12., 8.])
                     .show(ui, |ui| {
-                        ui.label(look.muted_text(tr(self.es, "Text on key", "Texto en la tecla")));
+                        ui.label(look.muted_text(tr(self.es, "Text on key")));
                         // The placeholder says what an empty field shows: the name on a key
                         // without image, nothing on one that has an image to speak for it.
                         let placeholder = if self.draft.image.is_empty() {
                             self.draft.name.clone()
                         } else {
-                            tr(self.es, "No text", "Sin texto").to_owned()
+                            tr(self.es, "No text").to_owned()
                         };
                         ui.horizontal(|ui| {
                             ui.add(
@@ -169,15 +150,19 @@ impl App {
                             self.text_placement_menu(ui);
                         });
                         ui.end_row();
-                        ui.label(look.muted_text(tr(self.es, "Image", "Imagen")));
+                        ui.label(look.muted_text(tr(self.es, "Image")));
                         self.image_menu(ui, look, open_image);
                         ui.end_row();
+                        if !actions.is_empty() || self.draft.gesture != "press" {
+                            ui.label(look.muted_text(tr(self.es, "Gesture")));
+                            self.gesture_control(ui, &actions);
+                            ui.end_row();
+                        }
                         if self.appearance_visible() {
-                            ui.label(look.muted_text(tr(self.es, "Appearance", "Apariencia")))
+                            ui.label(look.muted_text(tr(self.es, "Appearance")))
                                 .on_hover_text(tr(
                                     self.es,
                                     "What draws this key: you, or a plugin",
-                                    "Quién dibuja esta tecla: tú o un plugin",
                                 ));
                             ui.horizontal(|ui| self.appearance_control(ui, id));
                             ui.end_row();
@@ -186,39 +171,22 @@ impl App {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 // One click deletes: undo, a keystroke away, is the safety net.
-                if glyph_button(
-                    ui,
-                    look,
-                    "🗑",
-                    tr(
-                        self.es,
-                        "Delete (Ctrl+Z brings it back)",
-                        "Borrar (Ctrl+Z lo recupera)",
-                    ),
-                )
-                .clicked()
+                if glyph_button(ui, look, "🗑", tr(self.es, "Delete (Ctrl+Z brings it back)"))
+                    .clicked()
                 {
                     self.send(commands::delete_selection(id, &actions));
                 }
                 // A key without actions has nothing to run.
                 if !actions.is_empty()
                     && ui
-                        .button(tr(self.es, "⏵ Try", "⏵ Probar"))
-                        .on_hover_text(tr(
-                            self.es,
-                            "Run this key now (or double-click it)",
-                            "Ejecutar esta tecla ahora (o doble clic sobre ella)",
-                        ))
+                        .button(tr(self.es, "⏵ Try"))
+                        .on_hover_text(tr(self.es, "Run this key now (or double-click it)"))
                         .clicked()
                 {
                     self.try_selected();
                 }
                 // Shown only when there is something to save; last, so it moves nothing.
-                if self.unsaved()
-                    && ui
-                        .add(look.primary(tr(self.es, "Save", "Guardar")))
-                        .clicked()
-                {
+                if self.unsaved() && ui.add(look.primary(tr(self.es, "Save"))).clicked() {
                     self.save();
                 }
             });
@@ -227,12 +195,11 @@ impl App {
             return;
         }
         ui.add_space(6.);
-        ui.label(look.section(tr(self.es, "Actions", "Acciones")));
+        ui.label(look.section(tr(self.es, "Actions")));
         if actions.is_empty() {
             ui.label(look.muted_text(tr(
                 self.es,
                 "Nothing yet — drag an action onto this key from the right",
-                "Aún nada: arrastra una acción a esta tecla desde la derecha",
             )));
         }
         ui.spacing_mut().item_spacing.y = 4.;
@@ -242,7 +209,7 @@ impl App {
         }
         ui.spacing_mut().item_spacing.y = 8.;
         ui.add_space(6.);
-        egui::CollapsingHeader::new(look.muted_text(tr(self.es, "Advanced", "Avanzado")))
+        egui::CollapsingHeader::new(look.muted_text(tr(self.es, "Advanced")))
             .id_salt("advanced")
             .show(ui, |ui| self.advanced(ui, look, id, &actions));
     }
@@ -286,11 +253,8 @@ impl App {
     /// Button that opens how the text is placed: at the top, in the middle or at the
     /// bottom, and either over the image or beside it. Applied with Save.
     fn text_placement_menu(&mut self, ui: &mut egui::Ui) {
-        let button = menu_button(ui, tr(self.es, "Position", "Posición")).on_hover_text(tr(
-            self.es,
-            "Where the text goes on the key",
-            "Dónde va el texto en la tecla",
-        ));
+        let button = menu_button(ui, tr(self.es, "Position"))
+            .on_hover_text(tr(self.es, "Where the text goes on the key"));
         egui::Popup::menu(&button)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
@@ -303,40 +267,30 @@ impl App {
                 };
                 let mut choice = (row, beside);
                 ui.horizontal(|ui| {
-                    for (value, en, es) in [
-                        ("top", "Top", "Arriba"),
-                        ("middle", "Middle", "Centro"),
-                        ("bottom", "Bottom", "Abajo"),
-                    ] {
-                        if ui
-                            .selectable_label(row == value, tr(self.es, en, es))
-                            .clicked()
-                        {
+                    for (value, en) in [("top", "Top"), ("middle", "Middle"), ("bottom", "Bottom")]
+                    {
+                        if ui.selectable_label(row == value, tr(self.es, en)).clicked() {
                             choice.0 = value;
                         }
                     }
                 });
                 ui.add_enabled_ui(row != "middle", |ui| {
                     ui.horizontal(|ui| {
-                        for (value, en, es, hint_en, hint_es) in [
+                        for (value, en, hint_en) in [
                             (
                                 false,
                                 "Over the image",
-                                "Encima de la imagen",
                                 "The image fills the key and the text is drawn on it",
-                                "La imagen ocupa la tecla y el texto va sobre ella",
                             ),
                             (
                                 true,
                                 "Moves the image",
-                                "Desplaza la imagen",
                                 "The image shrinks so the text has room of its own",
-                                "La imagen se encoge para dejarle sitio al texto",
                             ),
                         ] {
                             if ui
-                                .selectable_label(beside == value, tr(self.es, en, es))
-                                .on_hover_text(tr(self.es, hint_en, hint_es))
+                                .selectable_label(beside == value, tr(self.es, en))
+                                .on_hover_text(tr(self.es, hint_en))
                                 .clicked()
                             {
                                 choice.1 = value;
@@ -359,9 +313,9 @@ impl App {
     fn image_menu(&mut self, ui: &mut egui::Ui, look: &Look, open_now: bool) {
         let has_image = !self.draft.image.is_empty();
         let label = if has_image {
-            tr(self.es, "Change", "Cambiar")
+            tr(self.es, "Change")
         } else {
-            tr(self.es, "Choose", "Elegir")
+            tr(self.es, "Choose")
         };
         let button = menu_button(ui, label);
         if open_now {
@@ -376,27 +330,19 @@ impl App {
         egui::Popup::menu(&button)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
-                ui.label(look.muted_text(tr(
-                    self.es,
-                    "From a PNG or JPEG file",
-                    "Desde un archivo PNG o JPEG",
-                )));
+                ui.label(look.muted_text(tr(self.es, "From a PNG or JPEG file")));
                 ui.horizontal(|ui| {
                     ui.add(
                         look.field(
                             &mut self.image_path,
-                            tr(
-                                self.es,
-                                "/path/to/image.png or .jpg",
-                                "/ruta/a/imagen.png o .jpg",
-                            ),
+                            tr(self.es, "/path/to/image.png or .jpg"),
                         )
                         .desired_width(FIELD),
                     );
                     if ui
                         .add_enabled(
                             !self.image_path.trim().is_empty(),
-                            egui::Button::new(tr(self.es, "Import", "Importar")),
+                            egui::Button::new(tr(self.es, "Import")),
                         )
                         .clicked()
                         && self.command(Job::Transfer {
@@ -413,11 +359,10 @@ impl App {
                 }
                 if icon_available
                     && ui
-                        .button(tr(self.es, "Use app icon", "Usar icono de la app"))
+                        .button(tr(self.es, "Use app icon"))
                         .on_hover_text(tr(
                             self.es,
                             "Take the installed icon of the application this key opens first",
-                            "Tomar el icono instalado de la aplicación que esta tecla abre primero",
                         ))
                         .clicked()
                     && self.command(Job::AppIcon {
@@ -428,11 +373,7 @@ impl App {
                     self.icon_asked = true;
                     ui.close();
                 }
-                if has_image
-                    && ui
-                        .button(tr(self.es, "Remove image", "Quitar imagen"))
-                        .clicked()
-                {
+                if has_image && ui.button(tr(self.es, "Remove image")).clicked() {
                     self.draft.image.clear();
                     ui.close();
                 }
@@ -460,27 +401,21 @@ impl App {
                     look.muted,
                 );
                 handle
-                    .on_hover_text(tr(self.es, "Drag to reorder", "Arrastra para reordenar"))
+                    .on_hover_text(tr(self.es, "Drag to reorder"))
                     .dnd_set_drag_payload(Drag::Reorder(display_index));
                 self.action_content(ui, look, action, &kind, display_index);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !matches!(kind.as_str(), "enter_folder" | "return")
-                        && icon_button(
-                            ui,
-                            look,
-                            Icon::Close,
-                            tr(self.es, "Remove action", "Quitar acción"),
-                        )
-                        .clicked()
+                        && icon_button(ui, look, Icon::Close, tr(self.es, "Remove action"))
+                            .clicked()
                     {
-                        self.send(Request::new(
-                            "delete",
-                            json!({"id":action["id"],"confirm_contents":false}),
-                        ));
+                        self.send(crate::Request::Delete {
+                            id: string(&action["id"]),
+                            confirm_contents: false,
+                        });
                     }
                     if display_index > 0
-                        && icon_button(ui, look, Icon::Up, tr(self.es, "Move up", "Subir"))
-                            .clicked()
+                        && icon_button(ui, look, Icon::Up, tr(self.es, "Move up")).clicked()
                     {
                         self.draft.order.swap(display_index, display_index - 1);
                     }
@@ -512,36 +447,30 @@ impl App {
                     .find(|e| e.desktop_entry == entry)
                     .map(|e| e.name.clone())
                     .unwrap_or_else(|| entry.trim_end_matches(".desktop").to_owned());
-                ui.label(format!("{} {name}", tr(self.es, "Open", "Abrir")));
+                ui.label(format!("{} {name}", tr(self.es, "Open")));
             }
             "enter_folder" => {
-                ui.label(tr(self.es, "Open this folder", "Abrir esta carpeta"));
+                ui.label(tr(self.es, "Open this folder"));
             }
             "return" => {
-                ui.label(tr(
-                    self.es,
-                    "Go back to the parent folder",
-                    "Volver a la carpeta padre",
-                ));
+                ui.label(tr(self.es, "Go back to the parent folder"));
             }
             "wait" => {
-                ui.label(tr(self.es, "Wait", "Esperar"));
+                ui.label(tr(self.es, "Wait"));
                 let index = self.draft.order[display_index];
                 ui.add(
                     egui::TextEdit::singleline(&mut self.draft.waits[index])
                         .desired_width(64.)
                         .margin(egui::vec2(6., 3.)),
                 );
-                ui.label(look.muted_text("ms"));
+                ui.label(look.muted_text(tr(self.es, "ms")));
             }
             other => {
                 ui.label(self.plugin_label(other)).on_hover_text(other);
                 if self.connected
                     && !self.plugins.form_pending
                     && !self.plugins.form_loading
-                    && ui
-                        .small_button(tr(self.es, "Configure…", "Configurar…"))
-                        .clicked()
+                    && ui.small_button(tr(self.es, "Configure…")).clicked()
                 {
                     self.open_plugin_form(
                         other,
@@ -555,96 +484,86 @@ impl App {
     /// Name, run mode, identifiers, automation permissions and cross-folder moves:
     /// needed rarely.
     fn advanced(&mut self, ui: &mut egui::Ui, look: &Look, id: &str, actions: &[Value]) {
-        let copy = tr(self.es, "Copy", "Copiar");
+        let copy = tr(self.es, "Copy");
         egui::Grid::new("advanced")
             .num_columns(2)
             .spacing([14., 10.])
             .show(ui, |ui| {
-                ui.label(look.muted_text(tr(self.es, "Name", "Nombre")))
+                ui.label(look.muted_text(tr(self.es, "Name")))
                     .on_hover_text(tr(
                         self.es,
                         "Shown on the key while it has no text of its own",
-                        "Se muestra en la tecla mientras no tenga texto propio",
                     ));
                 ui.add(look.field(&mut self.draft.name, "").desired_width(FIELD));
                 ui.end_row();
                 if actions.len() > 1 {
-                    ui.label(look.muted_text(tr(self.es, "Run", "Ejecutar")));
+                    ui.label(look.muted_text(tr(self.es, "Run")));
                     ui.horizontal(|ui| {
                         ui.selectable_value(
                             &mut self.draft.mode,
                             "sequential".into(),
-                            tr(self.es, "Sequential", "Secuencial"),
+                            tr(self.es, "Sequential"),
                         )
-                        .on_hover_text(tr(
-                            self.es,
-                            "Each action waits for the previous one",
-                            "Cada acción espera a la anterior",
-                        ));
+                        .on_hover_text(tr(self.es, "Each action waits for the previous one"));
                         ui.selectable_value(
                             &mut self.draft.mode,
                             "parallel".into(),
-                            tr(self.es, "Parallel", "Paralelo"),
+                            tr(self.es, "Parallel"),
                         )
                         .on_hover_text(tr(
                             self.es,
                             "Actions start without waiting for the previous one",
-                            "Las acciones empiezan sin esperar a la anterior",
                         ));
                     });
                     ui.end_row();
                 }
-                ui.label(look.muted_text(tr(self.es, "Automation may", "La automatización puede")))
-                    .on_hover_text(tr(
-                        self.es,
-                        "What rad-cli and scripts may do with this key",
-                        "Qué pueden hacer rad-cli y los scripts con esta tecla",
-                    ));
+                ui.label(look.muted_text(tr(self.es, "Automation may")))
+                    .on_hover_text(tr(self.es, "What rad-cli and scripts may do with this key"));
                 if permission_ui(ui, &mut self.draft.permissions, self.es, true) {
-                    self.send(Request::new(
-                        "set_permissions",
-                        json!({"target":id,"value":self.draft.permissions}),
-                    ));
+                    self.send(crate::Request::SetPermissions {
+                        target: id.into(),
+                        value: serde_json::from_value(self.draft.permissions.clone())
+                            .expect("permission draft"),
+                    });
                 }
                 ui.end_row();
-                ui.label(look.muted_text(tr(self.es, "Copy or move", "Copiar o mover")));
+                ui.label(look.muted_text(tr(self.es, "Copy or move")));
                 ui.horizontal(|ui| {
-                    ui.label(look.muted_text(tr(self.es, "to folder ID", "a la carpeta con ID")));
+                    ui.label(look.muted_text(tr(self.es, "to folder ID")));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.move_folder)
                             .desired_width(70.)
                             .margin(egui::vec2(6., 3.)),
                     );
-                    ui.label(look.muted_text(tr(self.es, "key", "tecla")));
+                    ui.label(look.muted_text(tr(self.es, "key")));
                     let mut key = self.move_position + 1;
                     ui.add(egui::DragValue::new(&mut key).range(1..=32));
                     self.move_position = key - 1;
-                    if ui.button(tr(self.es, "Duplicate", "Duplicar")).clicked() {
-                        self.send(Request::new(
-                            "duplicate",
-                            json!({"id":id,"folder_id":self.move_folder,"position":self.move_position}),
-                        ));
+                    if ui.button(tr(self.es, "Duplicate")).clicked() {
+                        self.send(crate::Request::Duplicate {
+                            id: id.into(),
+                            folder_id: self.move_folder.clone(),
+                            position: self.move_position,
+                        });
                     }
                     if let Some(request) =
                         commands::move_folder(actions, &self.move_folder, self.move_position)
-                        && ui
-                            .button(tr(self.es, "Move folder", "Mover carpeta"))
-                            .clicked()
+                        && ui.button(tr(self.es, "Move folder")).clicked()
                     {
                         self.send(request);
                     }
                 });
                 ui.end_row();
-                ui.label(look.muted_text(tr(self.es, "Identifiers", "Identificadores")));
+                ui.label(look.muted_text(tr(self.es, "Identifiers")));
                 ui.horizontal(|ui| {
-                    ui.label(look.muted_text(tr(self.es, "Key", "Tecla")));
+                    ui.label(look.muted_text(tr(self.es, "Key")));
                     ui.monospace(id);
                     if ui.small_button(copy).clicked() {
                         ui.ctx().copy_text(id.to_owned());
                     }
                     ui.add_space(12.);
                     let folder = self.folder().unwrap_or_default();
-                    ui.label(look.muted_text(tr(self.es, "Folder", "Carpeta")));
+                    ui.label(look.muted_text(tr(self.es, "Folder")));
                     ui.monospace(&folder);
                     if ui.small_button(copy).clicked() {
                         ui.ctx().copy_text(folder);
@@ -653,7 +572,7 @@ impl App {
                 ui.end_row();
                 for (index, action) in actions.iter().enumerate() {
                     let action_id = string(&action["id"]);
-                    ui.label(look.muted_text(tr(self.es, "Action", "Acción")));
+                    ui.label(look.muted_text(tr(self.es, "Action")));
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
                             ui.monospace(&action_id);
@@ -666,14 +585,15 @@ impl App {
                                         .desired_width(180.)
                                         .margin(egui::vec2(6., 3.)),
                                 );
-                                if ui
-                                    .small_button(tr(self.es, "Apply entry", "Aplicar entrada"))
-                                    .clicked()
-                                {
-                                    self.send(Request::new(
-                                        "edit",
-                                        json!({"changes":[{"kind":"set","id":action["id"],"field":"desktop_entry","value":self.draft.entries[index]}]}),
-                                    ));
+                                if ui.small_button(tr(self.es, "Apply entry")).clicked() {
+                                    self.send(crate::Request::Edit {
+                                        changes: vec![rad_api::Change::Set {
+                                            id: string(&action["id"]),
+                                            edit: rad_api::FieldEdit::DesktopEntry(
+                                                self.draft.entries[index].clone(),
+                                            ),
+                                        }],
+                                    });
                                 }
                             }
                         });
@@ -683,25 +603,25 @@ impl App {
                             self.es,
                             true,
                         ) {
-                            self.send(Request::new(
-                                "set_permissions",
-                                json!({"target":action["id"],"value":self.draft.action_permissions[index]}),
-                            ));
+                            self.send(crate::Request::SetPermissions {
+                                target: string(&action["id"]),
+                                value: serde_json::from_value(
+                                    self.draft.action_permissions[index].clone(),
+                                )
+                                .expect("permission draft"),
+                            });
                         }
                     });
                     ui.end_row();
                 }
-                ui.label(look.muted_text(tr(self.es, "Image reference", "Referencia de imagen")));
+                ui.label(look.muted_text(tr(self.es, "Image reference")));
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.draft.image)
                             .desired_width(FIELD)
                             .margin(egui::vec2(6., 3.)),
                     );
-                    if ui
-                        .button(tr(self.es, "Reload draft", "Recargar borrador"))
-                        .clicked()
-                    {
+                    if ui.button(tr(self.es, "Reload draft")).clicked() {
                         self.inspect_needed = true;
                     }
                 });
@@ -714,7 +634,7 @@ impl App {
 pub(super) fn permission_ui(
     ui: &mut egui::Ui,
     value: &mut Value,
-    es: bool,
+    es: impl Into<crate::preferences::Language> + Copy,
     allow_inherit: bool,
 ) -> bool {
     let mut inherit = allow_inherit && value["inherit"] == true;
@@ -726,38 +646,21 @@ pub(super) fn permission_ui(
     let mut save = false;
     ui.horizontal(|ui| {
         if allow_inherit {
-            ui.checkbox(&mut inherit, tr(es, "Inherit", "Heredar"));
+            ui.checkbox(&mut inherit, tr(es, "Inherit"));
         }
         ui.add_enabled_ui(!inherit, |ui| {
-            for (field, key, en, es_label) in [
-                (
-                    commands::PermissionField::Consult,
-                    "consult",
-                    "Consult",
-                    "Consultar",
-                ),
-                (
-                    commands::PermissionField::Modify,
-                    "modify",
-                    "Modify",
-                    "Modificar",
-                ),
-                (
-                    commands::PermissionField::Execute,
-                    "execute",
-                    "Execute",
-                    "Ejecutar",
-                ),
+            for (field, key, en) in [
+                (commands::PermissionField::Consult, "consult", "Consult"),
+                (commands::PermissionField::Modify, "modify", "Modify"),
+                (commands::PermissionField::Execute, "execute", "Execute"),
             ] {
                 let mut enabled = next["own"][key].as_bool().unwrap_or(false);
-                if ui.checkbox(&mut enabled, tr(es, en, es_label)).changed() {
+                if ui.checkbox(&mut enabled, tr(es, en)).changed() {
                     next = commands::permission_change(&next, field, enabled);
                 }
             }
         });
-        save = ui
-            .small_button(tr(es, "Apply permissions", "Aplicar permisos"))
-            .clicked();
+        save = ui.small_button(tr(es, "Apply permissions")).clicked();
     });
     *value = if inherit {
         json!({"inherit":true})
@@ -765,4 +668,41 @@ pub(super) fn permission_ui(
         next
     };
     save
+}
+
+impl App {
+    fn gesture_control(&mut self, ui: &mut egui::Ui, actions: &[Value]) {
+        let choices = [
+            ("press", "Press", rad_api::Gesture::Press),
+            ("hold", "Hold", rad_api::Gesture::Hold),
+            ("long_press", "Long press", rad_api::Gesture::LongPress),
+        ];
+        let allowed = crate::plugins::plan_gestures(actions, &self.plugins.catalog);
+        let enabled: Vec<_> = choices
+            .iter()
+            .map(|(_, _, g)| allowed.contains(g))
+            .collect();
+        let current_label = choices
+            .iter()
+            .find(|(key, _, _)| *key == self.draft.gesture)
+            .map(|(_, label, _)| *label)
+            .unwrap_or("Press");
+        if allowed.is_empty() {
+            ui.label(tr(self.es, current_label));
+            return;
+        }
+        egui::ComboBox::from_id_salt("button-gesture")
+            .selected_text(tr(self.es, current_label))
+            .show_ui(ui, |ui| {
+                for ((key, label, _), enabled) in choices.iter().zip(enabled) {
+                    if enabled {
+                        ui.selectable_value(
+                            &mut self.draft.gesture,
+                            (*key).into(),
+                            tr(self.es, label),
+                        );
+                    }
+                }
+            });
+    }
 }

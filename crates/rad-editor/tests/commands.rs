@@ -9,16 +9,18 @@ fn save_is_one_atomic_edit_with_current_action_order_and_wait_durations() {
         image: None,
         text_position: None,
         mode: "parallel",
+        gesture: "long_press",
         order: &[1, 0],
         waits: &[("a9".into(), 1500)],
     });
-    assert_eq!(request.operation, "edit");
+    assert_eq!(request.operation().as_str(), "edit");
     assert_eq!(
-        request.arguments,
+        request.arguments(),
         json!({"changes":[
             {"kind":"set","id":"b7","field":"name","value":"Browser"},
             {"kind":"set","id":"b7","field":"appearance","value":{"text":"Go","image":null}},
             {"kind":"set","id":"b7","field":"mode","value":"parallel"},
+            {"kind":"set","id":"b7","field":"gesture","value":"long_press"},
             {"kind":"set","id":"a9","field":"milliseconds","value":1500},
             {"kind":"order","id":"b7","indices":[1,0]}
         ]})
@@ -34,10 +36,11 @@ fn save_names_the_text_position_only_when_one_was_chosen() {
             image: Some("owned-media"),
             text_position,
             mode: "sequential",
+            gesture: "press",
             order: &[],
             waits: &[],
         })
-        .arguments["changes"][1]["value"]
+        .arguments()["changes"][1]["value"]
             .clone()
     };
     assert_eq!(save(None), json!({"text":"Go","image":"owned-media"}));
@@ -49,9 +52,9 @@ fn save_names_the_text_position_only_when_one_was_chosen() {
 #[test]
 fn adding_an_action_names_its_type_and_parameters_for_the_runtime_to_validate() {
     let request = add_action("b7", "wait", json!({"milliseconds":1000}));
-    assert_eq!(request.operation, "add_action");
+    assert_eq!(request.operation().as_str(), "add_action");
     assert_eq!(
-        request.arguments,
+        request.arguments(),
         json!({"button_id":"b7","type":"wait","parameters":{"milliseconds":1000}})
     );
 }
@@ -73,7 +76,7 @@ fn permission_controls_emit_consistent_explicit_own_values() {
 fn deleting_folder_entry_targets_folder_not_protected_navigation_button() {
     let actions = vec![json!({"fields":{"type":"enter_folder","folder_id":"f2"}})];
     assert_eq!(
-        rad_editor::commands::delete_selection("b3", &actions).arguments,
+        rad_editor::commands::delete_selection("b3", &actions).arguments(),
         json!({"id":"f2","confirm_contents":true})
     );
 }
@@ -89,9 +92,9 @@ fn moving_folder_uses_entrance_never_return_destination() {
     );
     let entering = vec![json!({"fields":{"type":"enter_folder","folder_id":"f3"}})];
     let request = move_folder(&entering, "f1", 4).unwrap();
-    assert_eq!(request.operation, "move_folder");
+    assert_eq!(request.operation().as_str(), "move_folder");
     assert_eq!(
-        request.arguments,
+        request.arguments(),
         json!({"id":"f3","parent_id":"f1","position":4})
     );
 }

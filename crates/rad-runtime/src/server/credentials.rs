@@ -43,13 +43,7 @@ fn bindings(actor: &Authority) -> Vec<Binding> {
         })
         .collect()
 }
-fn state_name(status: VaultStatus) -> &'static str {
-    match status {
-        VaultStatus::Absent => "absent",
-        VaultStatus::Present => "present",
-        VaultStatus::Unavailable => "unavailable",
-    }
-}
+
 fn error_code(error: VaultError) -> &'static str {
     match error {
         VaultError::InvalidInput => "invalid_request",
@@ -159,7 +153,13 @@ impl Server {
                         id: Some(context.request_id.to_string()),
                         session_id: Some(format!("{:032x}", self.session)),
                         status: Status::Ok,
-                        data: json!({"state":state_name(state)}),
+                        data: rad_api::ResponseData::Credential(rad_api::CredentialStatus {
+                            state: match state {
+                                VaultStatus::Absent => rad_api::CredentialState::Absent,
+                                VaultStatus::Present => rad_api::CredentialState::Present,
+                                VaultStatus::Unavailable => rad_api::CredentialState::Unavailable,
+                            },
+                        }),
                         error: None,
                     },
                     Err(error) => {
@@ -229,9 +229,9 @@ mod tests {
                 id: Some("2".into()),
                 session_id: Some(format!("{:032x}", 1)),
                 status: Status::Error,
-                data: Value::Null,
+                data: rad_api::ResponseData::None,
                 error: Some(Error {
-                    code: error_code(error).into(),
+                    code: rad_api::ErrorCode::parse(error_code(error)).unwrap(),
                     message: "Request rejected".into(),
                     details: json!({}),
                     outcome: Some(if error == VaultError::Uncertain {
@@ -242,7 +242,13 @@ mod tests {
                 }),
             };
             assert!(
-                Response::decode(&serde_json::to_vec(&response).unwrap(), 2, None).is_ok(),
+                Response::decode_value(
+                    serde_json::to_value(&response).unwrap(),
+                    2,
+                    None,
+                    rad_api::Operation::CredentialReplace
+                )
+                .is_ok(),
                 "{error:?}"
             );
         }

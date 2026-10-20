@@ -15,7 +15,7 @@ fn main() -> Result<(), eframe::Error> {
         ..Default::default()
     };
     eframe::run_native(
-        "RAD",
+        rad_editor::texts::text("en", "RAD"),
         options,
         Box::new(move |_| Ok(Box::new(rad_editor::app::App::new(runtime, theme)))),
     )

@@ -65,6 +65,8 @@ pub(crate) struct Button {
     pub visual: Visual,
     pub permissions: Local,
     pub mode: Mode,
+    #[serde(default, skip_serializing_if = "Gesture::is_press")]
+    pub gesture: Gesture,
     pub actions: Vec<Action>,
 }
 #[derive(Serialize, Deserialize)]
@@ -138,6 +140,11 @@ pub(crate) struct Settings {
     pub brightness_percent: u8,
     pub sleep_ms: String,
     pub press_threshold_ms: String,
+    #[serde(
+        default = "default_long_threshold",
+        skip_serializing_if = "is_default_long_threshold"
+    )]
+    pub long_press_threshold_ms: String,
 }
 
 fn unique_map<'de, D: serde::Deserializer<'de>, V: Deserialize<'de>>(
@@ -177,4 +184,24 @@ pub(crate) struct PluginVersion {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Gesture {
+    #[default]
+    Press,
+    Hold,
+    LongPress,
+}
+impl Gesture {
+    fn is_press(&self) -> bool {
+        matches!(self, Self::Press)
+    }
+}
+fn default_long_threshold() -> String {
+    "500".into()
+}
+fn is_default_long_threshold(value: &str) -> bool {
+    value == "500"
 }

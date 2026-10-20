@@ -10,35 +10,70 @@ pub struct KeySave<'a> {
     /// `top`, `middle` or `bottom` when the user chose one; otherwise it is left as it is.
     pub text_position: Option<&'a str>,
     pub mode: &'a str,
+    pub gesture: &'a str,
     pub order: &'a [usize],
     /// Wait actions of the key, by identifier, with their durations in milliseconds.
     pub waits: &'a [(String, u64)],
 }
 pub fn save_button(save: &KeySave) -> Request {
-    let mut appearance = json!({"text":save.text,"image":save.image});
-    if let Some(text_position) = save.text_position {
-        appearance["text_position"] = json!(text_position);
-    }
+    use rad_api::{Appearance, Change, FieldEdit, Gesture, Mode, TextPosition};
+    let text_position = save.text_position.map(|p| match p {
+        "top" => Some(TextPosition::Top),
+        "middle" => Some(TextPosition::Middle),
+        "bottom" => Some(TextPosition::Bottom),
+        "above_image" => Some(TextPosition::AboveImage),
+        "below_image" => Some(TextPosition::BelowImage),
+        _ => None,
+    });
+    let set = |id: &str, edit| Change::Set {
+        id: id.into(),
+        edit,
+    };
     let mut changes = vec![
-        json!({"kind":"set","id":save.id,"field":"name","value":save.name}),
-        json!({"kind":"set","id":save.id,"field":"appearance","value":appearance}),
-        json!({"kind":"set","id":save.id,"field":"mode","value":save.mode}),
+        set(save.id, FieldEdit::Name(save.name.into())),
+        set(
+            save.id,
+            FieldEdit::Appearance(Appearance {
+                text: save.text.into(),
+                image: save.image.map(str::to_owned),
+                text_position,
+            }),
+        ),
+        set(
+            save.id,
+            FieldEdit::Mode(if save.mode == "parallel" {
+                Mode::Parallel
+            } else {
+                Mode::Sequential
+            }),
+        ),
+        set(
+            save.id,
+            FieldEdit::Gesture(match save.gesture {
+                "hold" => Gesture::Hold,
+                "long_press" => Gesture::LongPress,
+                _ => Gesture::Press,
+            }),
+        ),
     ];
-    changes.extend(save.waits.iter().map(|(action, milliseconds)| {
-        json!({"kind":"set","id":action,"field":"milliseconds","value":milliseconds})
-    }));
-    changes.push(json!({"kind":"order","id":save.id,"indices":save.order}));
-    Request::new("edit", json!({"changes":changes}))
+    changes.extend(
+        save.waits
+            .iter()
+            .map(|(action, milliseconds)| set(action, FieldEdit::Milliseconds(*milliseconds))),
+    );
+    changes.push(Change::Order {
+        id: save.id.into(),
+        indices: save.order.to_vec(),
+    });
+    Request::Edit { changes }
 }
 /// Adds an action of a type the runtime knows to `button`, after the ones it has.
 pub fn add_action(button: &str, kind: &str, parameters: Value) -> Request {
-    Request::new(
-        "add_action",
-        json!({"button_id":button,"type":kind,"parameters":parameters}),
-    )
-}
-pub fn call(op: &str, args: Value) -> Request {
-    Request::new(op, args)
+    Request::AddAction {
+        button_id: button.into(),
+        type_key: kind.into(),
+        parameters: serde_json::from_value(parameters).expect("action draft matches its schema"),
+    }
 }
 #[derive(Clone, Copy)]
 pub enum PermissionField {
@@ -80,17 +115,18 @@ pub fn folder_destination(actions: &[Value]) -> Option<&str> {
         .and_then(|a| a["fields"]["folder_id"].as_str())
 }
 pub fn delete_selection(button: &str, actions: &[Value]) -> Request {
-    Request::new(
-        "delete",
-        json!({"id":folder_destination(actions).unwrap_or(button),"confirm_contents":true}),
-    )
+    Request::Delete {
+        id: folder_destination(actions).unwrap_or(button).into(),
+        confirm_contents: true,
+    }
 }
 
 /// Build a folder move only from a selected folder entrance.
 pub fn move_folder(actions: &[Value], parent: &str, position: usize) -> Option<Request> {
     let folder = folder_destination(actions)?;
-    Some(Request::new(
-        "move_folder",
-        json!({"id":folder,"parent_id":parent,"position":position}),
-    ))
+    Some(Request::MoveFolder {
+        id: folder.into(),
+        parent_id: parent.into(),
+        position,
+    })
 }

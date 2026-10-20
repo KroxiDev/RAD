@@ -1,9 +1,7 @@
 use super::*;
 use rad_authority::Visible;
 use rad_core::execution::{ExecutionError, ExecutionStatus, Failure, StepStatus};
-pub(super) fn result(a: &Authority, c: IncomingContext, m: &Map<String, Value>) -> Checked<Value> {
-    closed(m, &["execution_id"])?;
-    let text = string(m, "execution_id")?;
+pub(super) fn result(a: &Authority, c: IncomingContext, text: &str) -> Checked<Value> {
     let (session, counter) = text.split_once(':').ok_or("invalid_request")?;
     if session.len() != 32
         || !session

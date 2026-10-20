@@ -110,7 +110,7 @@ El usuario ve el funcionamiento, no el mecanismo: principios S1–S5 en [ux.md](
 | 0 | `rad-plugin-contract` | Manifest, esquemas, mensajes, versiones y credenciales del protocolo de plugins | wire |
 | 0 | `rad-plugin-package` | Framing RADP y validación estructural del binario | plugin-contract |
 | 0 | `rad-media` | Normalización y validación de imágenes | ninguna |
-| 0 | `rad-api` (pendiente) | Peticiones, respuestas, vistas, avisos y códigos de error de la API de clientes | ninguna |
+| 0 | `rad-api` | Peticiones, respuestas, vistas, avisos y códigos de error de la API de clientes | ninguna |
 | 1 · Dominio | `rad-core` | Configuración, identidad, permisos, entrada, admisión y ejecución puras | ninguna |
 | 1 | `rad-codec` | Documento JSON de configuración, acotado | core |
 | 2 · Aplicación | `rad-authority` | Publicación, historial, navegación, vistas y bindings de plugins | plugin-contract, core, codec |
@@ -119,7 +119,7 @@ El usuario ve el funcionamiento, no el mecanismo: principios S1–S5 en [ux.md](
 | 3 | `rad-package` | Copias: exportar, restaurar y staging | core, codec, media |
 | 3 | `rad-plugin-manager` | Preparación, descarga, selector durable y journal | plugin-contract, plugin-package |
 | 3 | `rad-plugin-host` | Procesos, handshake, pipes, generaciones y residuales | plugin-contract |
-| 3 | `rad-transport` | Sockets, origen confiable, crédito y readiness | wire |
+| 3 | `rad-transport` | Sockets, origen confiable, crédito y readiness | wire, api |
 | 3 | `rad-deck` | Dueño del dispositivo, descriptor de modelo, entrada y salida | media |
 | 3 | `rad-launcher` | Adapter y helper de aplicaciones de escritorio | core, media |
 | 4 · Traducción y composición | `rad-protocol` | API de clientes ↔ interface de aplicación | plugin-contract, authority, core, wire, api |
@@ -147,6 +147,10 @@ figura en la tabla; las reglas 2 a 4 se comprueban además como invariantes. Una
 dependencia nueva exige editar esta tabla, es decir, registrar una decisión. Se
 prefirió esta lista explícita a dividir las capas en subcapas, que añadirían
 numeración sin información.
+
+Aplicación de ADR 0010: `rad-transport` usa el contrato puro `rad-api` para
+clasificar operaciones y producir rechazos previos a admisión, conservando la
+causa y `NotApplied` sin una segunda tabla de mutaciones.
 
 ## Dónde vive cada cambio
 

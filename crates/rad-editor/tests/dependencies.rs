@@ -13,8 +13,8 @@ fn dependencies_load_every_page_and_survive_editor_restart_without_preview() {
         let first = dependencies
             .request()
             .expect("reconnect must recover dependency offers");
-        assert_eq!(first.operation, "plugin_dependencies");
-        assert_eq!(first.arguments, json!({"cursor":null}));
+        assert_eq!(first.operation().as_str(), "plugin_dependencies");
+        assert_eq!(first.arguments(), json!({"cursor":null}));
         dependencies
             .accept(page("1", (0..32).map(item).collect(), json!("next")))
             .unwrap();
@@ -23,7 +23,7 @@ fn dependencies_load_every_page_and_survive_editor_restart_without_preview() {
             "partial lists must not masquerade as complete"
         );
         assert_eq!(
-            dependencies.request().unwrap().arguments,
+            dependencies.request().unwrap().arguments(),
             json!({"cursor":"next"})
         );
         dependencies
@@ -49,7 +49,7 @@ fn revision_change_discards_staged_pages_and_restarts_without_mixing() {
         "cursor_expired"
     );
     assert!(d.items().is_none());
-    assert_eq!(d.request().unwrap().arguments, json!({"cursor":null}));
+    assert_eq!(d.request().unwrap().arguments(), json!({"cursor":null}));
     d.accept(page("2", vec![item(2)], Value::Null)).unwrap();
     assert_eq!(d.items().unwrap(), &[item(2)]);
     d.reset();
@@ -151,7 +151,10 @@ fn valid_large_plugin_settings_keep_every_dependency_and_tail_offer() {
             } else {
                 Value::Null
             };
-            assert_eq!(d.request().unwrap().operation, "plugin_dependencies");
+            assert_eq!(
+                d.request().unwrap().operation().as_str(),
+                "plugin_dependencies"
+            );
             d.accept(page("1", chunk.to_vec(), cursor)).unwrap();
             if end < count {
                 assert!(d.items().is_none());

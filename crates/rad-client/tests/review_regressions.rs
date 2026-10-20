@@ -66,7 +66,7 @@ fn hello(s: &mut UnixStream) {
     send(
         s,
         "1",
-        json!({"protocol":1,"session_id":SESSION,"limits":{},"capabilities":["status","run","result"]}),
+        json!({"protocol":1,"session_id":SESSION,"limits":serde_json::from_str::<serde_json::Value>(include_str!("../../rad-api/vectors/limits-v1.json")).unwrap(),"capabilities":["status","run","result"]}),
     );
 }
 
@@ -128,7 +128,8 @@ fn wait_server_error_preserves_execution_already_admitted() {
 #[test]
 fn plain_wait_timeout_prints_known_execution_for_manual_query() {
     let v = json!({"v":1,"id":"3","session_id":SESSION,"status":"error","data":null,"error":{"code":"wait_timeout","message":"Wait timed out; execution was not cancelled","details":{"execution_id":format!("{SESSION}:1")},"outcome":null}});
-    let response: rad_client::response::Response = serde_json::from_value(v).unwrap();
+    let response =
+        rad_api::Response::decode_value(v, 3, Some(SESSION), rad_api::Operation::Result).unwrap();
     let mut bytes = Vec::new();
     rad_client::output::write(&response, false, &mut bytes).unwrap();
     assert!(

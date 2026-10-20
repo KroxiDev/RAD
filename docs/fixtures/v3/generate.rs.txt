@@ -1,0 +1,14 @@
+use rad_core::{configuration::*, identity::*};
+#[test]
+fn generate_v3() {
+ let data=rad_codec::decode_data(include_bytes!("../../../docs/fixtures/v2/profile.json")).unwrap();
+ let records=data.folders.iter().map(|f|f.binding).chain(data.buttons.iter().flat_map(|b|std::iter::once(b.binding).chain(b.actions.iter().map(|a|a.binding)))).map(|b|IdentityRecord::new(b,false));
+ let registry=IdentityRegistry::from_records(77,records).unwrap();
+ let c=Configuration::from_data(data,&registry).unwrap();
+ let mut settings=c.data().settings;settings.long_press_threshold_ms=750;
+ let c=c.prepare_edits(&registry,Origin::Editor,&[Edit::SetSettings(settings),Edit::SetGesture{button:c.data().buttons[0].binding.identity(),gesture:Gesture::LongPress}]).unwrap();
+ let bytes=rad_codec::encode(c.configuration()).unwrap();
+ let path=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/fixtures/v3/profile.json");
+ use std::io::Write;
+ std::fs::OpenOptions::new().write(true).create_new(true).open(path).unwrap().write_all(&bytes).unwrap();
+}

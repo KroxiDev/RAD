@@ -6,6 +6,12 @@ use std::{
 };
 fn manifest(major: u32) -> Manifest {
     Manifest {
+        resources: vec![],
+        capabilities: rad_plugin_contract::SUPPORTED_CAPABILITIES
+            .iter()
+            .map(|s| (*s).into())
+            .collect(),
+        settings: None,
         lifecycle: Default::default(),
         contract: 1,
         id: "org.rad.fixture".into(),
@@ -23,6 +29,7 @@ fn manifest(major: u32) -> Manifest {
 }
 fn definition(id: &str) -> Definition {
     Definition {
+        gestures: vec![rad_plugin_contract::Gesture::Press],
         response_timeout: None,
         id: id.into(),
         label: id.into(),
@@ -247,6 +254,14 @@ fn visual_expires_without_affecting_executor_and_unsubscribe_releases_slot() {
         )
     });
     host.pump(10).unwrap();
+    assert!(
+        matches!(
+            host.visual("org.rad.fixture", c),
+            Some(VisualState::Current { .. })
+        ),
+        "the plugin-declared validity overrides the old caller TTL"
+    );
+    host.pump(1000).unwrap();
     assert!(matches!(
         host.visual("org.rad.fixture", c),
         Some(VisualState::Stale { .. })
@@ -258,7 +273,7 @@ fn visual_expires_without_affecting_executor_and_unsubscribe_releases_slot() {
     );
     host.unsubscribe("org.rad.fixture", c).unwrap();
     assert_eq!(host.visual("org.rad.fixture", c), None);
-    stop(&mut host, 10);
+    stop(&mut host, 1000);
 }
 #[test]
 fn setup_ticket_reserves_capacity_before_spawn_and_timeout_cannot_free_it() {

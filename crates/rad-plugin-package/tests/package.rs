@@ -18,7 +18,7 @@ fn rejects_truncated_header() {
 }
 
 const TARGET: &str = "x86_64-unknown-linux-gnu";
-const MANIFEST: &[u8] = br#"{"contract":1,"id":"fixture.package","version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":["x86_64-unknown-linux-gnu"],"actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[]},"credential_slots":[]}],"visuals":[]}"#;
+const MANIFEST: &[u8] = br#"{"contract":1,"capabilities":[],"id":"fixture.package","version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":["x86_64-unknown-linux-gnu"],"actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[]},"credential_slots":[]}],"visuals":[]}"#;
 
 fn container(manifest: &[u8], executable: &[u8]) -> Vec<u8> {
     let mut bytes = b"RADP".to_vec();
@@ -81,7 +81,7 @@ fn enforces_exact_header_and_bounded_payload_before_contract_parsing() {
         Candidate::parse(&extra, 1, TARGET),
         Err(Error::InvalidSize)
     ));
-    // Host API 2 still accepts a 1..=1 manifest; API 0 shares no version with it.
+    // Contract major 0 shares no supported version with this major-1 manifest.
     assert!(matches!(
         Candidate::parse(&valid, 0, TARGET),
         Err(Error::Contract(

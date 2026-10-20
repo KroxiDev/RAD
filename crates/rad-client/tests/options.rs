@@ -13,9 +13,9 @@ fn rejected(code: &str) -> Response {
         id: Some("2".into()),
         session_id: Some(SESSION.into()),
         status: Status::Error,
-        data: Value::Null,
+        data: rad_api::ResponseData::None,
         error: Some(Error {
-            code: code.into(),
+            code: rad_api::ErrorCode::parse(code).unwrap(),
             message: "Request rejected".into(),
             details: json!({}),
             outcome: None::<Outcome>,
@@ -28,19 +28,39 @@ fn options_timeout_is_a_closed_wire_code_and_a_retryable_exit_status() {
     let original = rejected("options_timeout");
     let bytes = serde_json::to_vec(&original).unwrap();
     assert_eq!(
-        Response::decode(&bytes, 2, Some(SESSION)).unwrap(),
+        Response::decode_value(
+            rad_wire::parse_json(&bytes).unwrap(),
+            2,
+            Some(SESSION),
+            rad_api::Operation::Options
+        )
+        .unwrap(),
         original
     );
     // A neighbouring spelling is still rejected: the vocabulary stays closed.
-    let bytes = serde_json::to_vec(&rejected("options_timeouts")).unwrap();
-    assert!(Response::decode(&bytes, 2, Some(SESSION)).is_err());
+    let mut invalid = serde_json::to_value(&original).unwrap();
+    invalid["error"]["code"] = json!("options_timeouts");
+    let bytes = serde_json::to_vec(&invalid).unwrap();
+    assert!(
+        Response::decode_value(
+            rad_wire::parse_json(&bytes).unwrap(),
+            2,
+            Some(SESSION),
+            rad_api::Operation::Options
+        )
+        .is_err()
+    );
     assert_eq!(exit_code(&original), 5);
 }
 
 fn parsed(args: &[&str]) -> Option<(String, Value, bool)> {
     let args: Vec<String> = args.iter().map(|a| (*a).into()).collect();
     match rad_client::cli::parse(&args) {
-        Ok(rad_client::cli::Invocation::Command(c)) => Some((c.operation, c.arguments, c.json)),
+        Ok(rad_client::cli::Invocation::Command(c)) => Some((
+            c.request.operation().as_str().to_owned(),
+            c.request.arguments(),
+            c.json,
+        )),
         _ => None,
     }
 }
@@ -132,7 +152,16 @@ fn answer(data: Value) -> Response {
         id: Some("2".into()),
         session_id: Some(SESSION.into()),
         status: Status::Ok,
-        data,
+        data: rad_api::ResponseData::decode(
+            if data.as_object().is_some_and(|v| v.is_empty()) {
+                rad_api::Operation::Subscribe
+            } else {
+                rad_api::Operation::Options
+            },
+            Status::Ok,
+            data,
+        )
+        .unwrap(),
         error: None,
     }
 }
@@ -205,13 +234,16 @@ fn options_json_is_the_untouched_response_and_other_commands_keep_their_text() {
     let structured: Value = serde_json::from_str(&text("options", &response, true)).unwrap();
     assert_eq!(structured["data"], data);
     // Not an options answer: the generic pretty JSON, as before.
-    assert_eq!(
-        text("status", &answer(json!({"a":1})), false),
-        "{\n  \"a\": 1\n}\n"
+    assert_eq!(text("status", &answer(json!({})), false), "{}\n");
+    // Malformed response payloads are rejected at the typed boundary, before presentation.
+    assert!(
+        rad_api::ResponseData::decode(
+            rad_api::Operation::Options,
+            Status::Ok,
+            json!({"availability":"maybe","items":7})
+        )
+        .is_err()
     );
-    // A malformed options answer falls back to the generic output instead of guessing.
-    let odd = answer(json!({"availability":"maybe","items":7}));
-    assert!(text("options", &odd, false).starts_with("{\n"));
 }
 
 #[test]

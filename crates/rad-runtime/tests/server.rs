@@ -32,10 +32,21 @@ fn editor_can_close_while_runtime_still_serves_the_automation_endpoint() {
             let result = Client::connect(&root, endpoint).map(|mut client| {
                 let status = client.request("status", serde_json::json!({})).unwrap();
                 if endpoint == Endpoint::Editor {
-                    assert_eq!(status.data["deck_state"], "disabled");
-                    assert_eq!(status.data["recovered_previous"], false);
+                    assert_eq!(
+                        serde_json::to_value(&status.data).unwrap()["deck_state"],
+                        "disabled"
+                    );
+                    assert_eq!(
+                        serde_json::to_value(&status.data).unwrap()["recovered_previous"],
+                        false
+                    );
                 } else {
-                    assert!(status.data.get("recovered_previous").is_none());
+                    assert!(
+                        serde_json::to_value(&status.data)
+                            .unwrap()
+                            .get("recovered_previous")
+                            .is_none()
+                    );
                 }
             });
             send.send(result).unwrap();
@@ -75,8 +86,9 @@ fn editor_and_automation_share_durable_configuration_and_history_across_restart(
     let (send, receive) = mpsc::sync_channel(1);
     let client = std::thread::spawn(move || {
         let mut editor = Client::connect(&root, Endpoint::Editor).unwrap();
-        let principal =
-            editor.request("status", json!({})).unwrap().data["active_folder_id"].clone();
+        let principal = serde_json::to_value(editor.request("status", json!({})).unwrap().data)
+            .unwrap()["active_folder_id"]
+            .clone();
         let created = editor
             .request(
                 "create_button",
@@ -86,7 +98,8 @@ fn editor_and_automation_share_durable_configuration_and_history_across_restart(
         assert_eq!(created.status, rad_client::response::Status::Applied);
         let mut cli = Client::connect(&root, Endpoint::Automation).unwrap();
         assert_eq!(
-            cli.request("get", json!({"id":"b1"})).unwrap().data["fields"]["name"],
+            serde_json::to_value(cli.request("get", json!({"id":"b1"})).unwrap().data).unwrap()["fields"]
+                ["name"],
             "Shared"
         );
         assert_eq!(
@@ -99,7 +112,8 @@ fn editor_and_automation_share_durable_configuration_and_history_across_restart(
             rad_client::response::Status::Applied
         );
         assert_eq!(
-            editor.request("get", json!({"id":"b1"})).unwrap().data["fields"]["name"],
+            serde_json::to_value(editor.request("get", json!({"id":"b1"})).unwrap().data).unwrap()
+                ["fields"]["name"],
             "CLI"
         );
         for (op, expected) in [("undo", "Shared"), ("redo", "CLI")] {
@@ -108,7 +122,8 @@ fn editor_and_automation_share_durable_configuration_and_history_across_restart(
                 rad_client::response::Status::Applied
             );
             assert_eq!(
-                cli.request("get", json!({"id":"b1"})).unwrap().data["fields"]["name"],
+                serde_json::to_value(cli.request("get", json!({"id":"b1"})).unwrap().data).unwrap()
+                    ["fields"]["name"],
                 expected
             );
         }
@@ -138,7 +153,10 @@ fn editor_and_automation_share_durable_configuration_and_history_across_restart(
     let client = std::thread::spawn(move || {
         let mut cli = Client::connect(&root, Endpoint::Automation).unwrap();
         let v = cli.request("get", json!({"id":"b1"})).unwrap();
-        assert_eq!(v.data["fields"]["name"], "CLI");
+        assert_eq!(
+            serde_json::to_value(&v.data).unwrap()["fields"]["name"],
+            "CLI"
+        );
         assert_eq!(
             v.session_id.as_deref(),
             Some("0000000000000000000000000000017c")
@@ -150,6 +168,103 @@ fn editor_and_automation_share_durable_configuration_and_history_across_restart(
         restarted.turn().unwrap();
         assert!(Instant::now() < end);
         restarted.wait(Duration::from_millis(10)).unwrap();
+    }
+    client.join().unwrap();
+}
+
+#[test]
+fn subscribed_editor_receives_coalesced_invalidation_then_reads_atomic_views() {
+    use rad_api::{BoardView, InspectorView, NoticeKind, Request};
+    use serde_json::json;
+    let directory =
+        Directory(std::env::temp_dir().join(format!("rad-server-notices-{}", std::process::id())));
+    std::fs::create_dir(&directory.0).unwrap();
+    std::fs::set_permissions(&directory.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut server = Server::new(
+        &directory.0,
+        &directory.0.join("data"),
+        NonZeroU128::new(391).unwrap(),
+    )
+    .unwrap();
+    let root = directory.0.clone();
+    let (send, receive) = mpsc::sync_channel(1);
+    let client = std::thread::spawn(move || {
+        let mut subscription = Client::connect(&root, Endpoint::Editor)
+            .unwrap()
+            .subscribe()
+            .unwrap();
+        let cancel = subscription.cancellation().unwrap();
+        // Initial notices close the subscribe/snapshot race without polling.
+        let mut initial = std::collections::BTreeSet::new();
+        while initial.len() < NoticeKind::ALL.len() {
+            initial.insert(subscription.recv().unwrap().kind);
+        }
+        let mut editor = Client::connect(&root, Endpoint::Editor).unwrap();
+        let rad_api::ResponseData::Overview(overview) =
+            editor.call(Request::Overview {}).unwrap().data
+        else {
+            panic!("overview");
+        };
+        assert_eq!(overview.deck, rad_api::DeckState::Disabled);
+        let id = overview.active_folder_id.unwrap();
+        let created = editor
+            .call(Request::CreateButton {
+                folder_id: id,
+                position: 0,
+                name: "Atomic".into(),
+            })
+            .unwrap();
+        assert!(created.error.is_none());
+        loop {
+            if subscription.recv().unwrap().kind == NoticeKind::Board {
+                break;
+            }
+        }
+        let board: BoardView = serde_json::from_value(
+            serde_json::to_value(
+                editor
+                    .call(Request::Board { folder_id: None })
+                    .unwrap()
+                    .data,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(board.keys.len(), board.grid.columns * board.grid.rows);
+        let key = board.keys[0].as_ref().unwrap();
+        assert_eq!(key.entity.view_revision, board.view_revision);
+        let inspector: InspectorView = serde_json::from_value(
+            serde_json::to_value(
+                editor
+                    .call(Request::Inspector {
+                        id: key.entity.id.clone(),
+                    })
+                    .unwrap()
+                    .data,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(inspector.view_revision, board.view_revision);
+        assert_eq!(
+            serde_json::to_value(&inspector.entity).unwrap()["fields"]["name"],
+            json!("Atomic")
+        );
+        cancel.cancel();
+        assert!(subscription.recv().is_err());
+        send.send(()).unwrap();
+    });
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        server.turn().unwrap();
+        if receive.try_recv().is_ok() {
+            break;
+        }
+        assert!(
+            Instant::now() < end,
+            "subscription must wake on publication without poll"
+        );
+        server.wait(Duration::from_millis(10)).unwrap();
     }
     client.join().unwrap();
 }

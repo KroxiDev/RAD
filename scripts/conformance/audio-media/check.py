@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import queue
 import signal
-import socket
 import struct
 import subprocess
 import sys
@@ -20,41 +19,13 @@ def equal(label, actual, expected):
     print(f'PASS {label}: {actual!r}', flush=True)
 
 
-class Peer:
-    def __init__(self, root, endpoint='editor'):
-        self.sock = socket.socket(socket.AF_UNIX)
-        self.sock.settimeout(10)
-        self.sock.connect(str(root / 'runtime/rad' / f'{endpoint}.sock'))
-        self.serial = 0
-        self.call('hello')
-
-    def close(self):
-        self.sock.close()
-
-    def read(self, size):
-        result = b''
-        while len(result) < size:
-            part = self.sock.recv(size - len(result))
-            if not part:
-                raise EOFError('IPC closed')
-            result += part
-        return result
-
-    def request(self, op, **args):
-        self.serial += 1
-        payload = json.dumps(dict(v=1, id=str(self.serial), op=op, args=args)).encode()
-        self.sock.sendall(struct.pack('>I', len(payload)) + payload)
-        size, = struct.unpack('>I', self.read(4))
-        assert 0 < size <= 65536
-        response = json.loads(self.read(size))
-        assert response['id'] == str(self.serial)
-        return response
-
-    def call(self, op, **args):
-        response = self.request(op, **args)
-        assert not response.get('error'), (op, response)
-        return response['data']
-
+# Reuse the typed Rust client bridge, not a second runtime wire implementation.
+sys.dont_write_bytecode = True
+import importlib.util
+_peer_spec = importlib.util.spec_from_file_location("typed_peer", Path(__file__).resolve().parents[1] / 'obs/check.py')
+_peer_module = importlib.util.module_from_spec(_peer_spec)
+_peer_spec.loader.exec_module(_peer_module)
+Peer = _peer_module.Peer
 
 class World:
     def __init__(self, root, repo):

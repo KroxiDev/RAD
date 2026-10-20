@@ -14,6 +14,11 @@ fn deck_label_uses_fresh_runtime_fact_without_revision_change_in_both_languages(
             "Deck desconectado — editor disponible",
         ),
         ("connected", "Deck connected", "Deck conectado"),
+        (
+            "inaccessible",
+            "Deck inaccessible — editor available",
+            "Deck inaccesible — editor disponible",
+        ),
     ] {
         let status = json!({"deck_state":state,"view_revision":"7"});
         assert_eq!(deck_label(&status, false), en);
@@ -43,7 +48,7 @@ fn recovery_notice_requires_runtime_confirmation_and_names_last_valid_backup() {
     assert_eq!(recovery_notice(&json!({}), true), None);
 }
 #[test]
-fn error_codes_read_as_sentences_and_unknown_codes_are_never_hidden() {
+fn error_codes_read_as_sentences_and_unknown_codes_have_plain_fallback() {
     use rad_editor::status::describe_error;
     assert_eq!(
         describe_error("invalid_configuration", false),
@@ -71,9 +76,9 @@ fn error_codes_read_as_sentences_and_unknown_codes_are_never_hidden() {
     );
     assert_eq!(
         describe_error("some_future_code", false),
-        "some_future_code"
+        "Something went wrong"
     );
-    assert_eq!(describe_error("some_future_code", true), "some_future_code");
+    assert_eq!(describe_error("some_future_code", true), "Algo salió mal");
 }
 
 #[test]

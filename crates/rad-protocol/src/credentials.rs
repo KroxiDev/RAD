@@ -33,37 +33,36 @@ impl CredentialOperation {
         !matches!(self, Self::Status { .. })
     }
 }
-pub(super) fn parse(
+pub(super) fn convert(
     c: IncomingContext,
-    op: &str,
-    args: &Map<String, Value>,
+    request: &rad_api::Request,
 ) -> Checked<CredentialOperation> {
+    use rad_api::Request as R;
     if c.origin != Origin::Editor {
         return Err("permission_denied");
     }
-    closed(
-        args,
-        if op == "credential_replace" {
-            &["plugin_id", "slot", "secret"]
-        } else {
-            &["plugin_id", "slot"]
+    Ok(match request {
+        R::CredentialStatus { plugin_id, slot } => CredentialOperation::Status {
+            plugin_id: identifier(plugin_id)?,
+            slot: identifier(slot)?,
         },
-    )?;
-    let plugin_id = identifier(string(args, "plugin_id")?)?;
-    let slot = identifier(string(args, "slot")?)?;
-    Ok(match op {
-        "credential_status" => CredentialOperation::Status { plugin_id, slot },
-        "credential_remove" => CredentialOperation::Remove { plugin_id, slot },
-        "credential_replace" => {
-            let value = string(args, "secret")?;
-            if value.len() > 4096 {
+        R::CredentialRemove { plugin_id, slot } => CredentialOperation::Remove {
+            plugin_id: identifier(plugin_id)?,
+            slot: identifier(slot)?,
+        },
+        R::CredentialReplace {
+            plugin_id,
+            slot,
+            secret,
+        } => {
+            if secret.len() > 4096 {
                 return Err("invalid_request");
             }
             CredentialOperation::Replace {
-                plugin_id,
+                plugin_id: identifier(plugin_id)?,
                 secret: rad_plugin_contract::CredentialValue {
-                    slot,
-                    value: value.into(),
+                    slot: identifier(slot)?,
+                    value: secret.clone(),
                 },
             }
         }

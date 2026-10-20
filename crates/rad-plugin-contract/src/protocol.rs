@@ -1,7 +1,7 @@
 use crate::{Error, Parameters, Version};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Correlation {
     pub generation: u64,
@@ -23,16 +23,22 @@ pub struct Envelope {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Message {
     Hello {
+        capabilities: Vec<String>,
         host_api: u32,
         target: String,
         plugin_id: String,
         plugin_version: Version,
     },
     Ready {
+        capabilities: Vec<String>,
         plugin_id: String,
         plugin_version: Version,
     },
     Invoke {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        control: Option<ControlEvent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        settings: Option<Parameters>,
         action: String,
         parameters: Parameters,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,6 +48,8 @@ pub enum Message {
         outcome: Outcome,
     },
     Subscribe {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        settings: Option<Parameters>,
         source: String,
         parameters: Parameters,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,10 +58,16 @@ pub enum Message {
     Unsubscribe {
         subscription: Correlation,
     },
+    VisualRenew {
+        valid_for_ms: u64,
+    },
     Visual {
+        valid_for_ms: u64,
         state: VisualState,
     },
     Options {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        settings: Option<Parameters>,
         scope: OptionsScope,
         definition: String,
         field: String,
@@ -86,7 +100,7 @@ pub enum OptionsScope {
     Action,
     Visual,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "availability", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ChoiceList {
     Available { options: Vec<ChoiceOption> },
@@ -103,7 +117,7 @@ impl std::fmt::Debug for ChoiceOption {
         f.write_str("ChoiceOption([redacted])")
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Outcome {
     Success,
@@ -120,14 +134,14 @@ pub enum FailureCode {
     Incompatible,
     CredentialsUnavailable,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "availability", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VisualState {
     Current { content: VisualContent },
     Stale { content: VisualContent },
     Unavailable,
 }
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VisualContent {
     pub text: Option<String>,
@@ -175,25 +189,54 @@ impl Envelope {
         if !self.correlation.matches(self.correlation) {
             return Err(Error::InvalidMessage);
         }
+        match &self.message {
+            Message::Invoke {
+                settings, control, ..
+            } => {
+                if let Some(settings) = settings {
+                    settings.check_shape()?;
+                }
+                if control
+                    .as_ref()
+                    .is_some_and(|e| !identifier(&e.control.kind))
+                {
+                    return Err(Error::InvalidMessage);
+                }
+            }
+            Message::Subscribe { settings, .. } | Message::Options { settings, .. } => {
+                if let Some(settings) = settings {
+                    settings.check_shape()?;
+                }
+            }
+            _ => {}
+        }
         let valid = match &self.message {
             Message::Hello {
+                capabilities,
                 host_api,
                 target,
                 plugin_id,
                 ..
             } => {
+                crate::validate_capabilities(capabilities)?;
                 *host_api > 0
                     && identifier(target)
                     && identifier(plugin_id)
                     && self.correlation.request == 1
             }
-            Message::Ready { plugin_id, .. } => {
+            Message::Ready {
+                plugin_id,
+                capabilities,
+                ..
+            } => {
+                crate::validate_capabilities(capabilities)?;
                 identifier(plugin_id) && self.correlation.request == 1
             }
             Message::Invoke {
                 action,
                 parameters,
                 credential_revision,
+                ..
             } => {
                 parameters.check_shape()?;
                 identifier(action) && credential_revision.is_none_or(|r| r > 0)
@@ -202,6 +245,7 @@ impl Envelope {
                 source,
                 parameters,
                 credential_revision,
+                ..
             } => {
                 parameters.check_shape()?;
                 identifier(source) && credential_revision.is_none_or(|r| r > 0)
@@ -227,18 +271,25 @@ impl Envelope {
             | Message::CredentialsReleased { revision } => {
                 *revision > 0 && self.correlation.request >= 2
             }
-            Message::Choices { list } => list.valid(),
+            Message::Choices { list } => list.is_valid(),
             Message::Result { .. } => true,
             Message::Unsubscribe { subscription } => {
                 subscription.matches(*subscription)
                     && subscription.generation == self.correlation.generation
             }
-            Message::Visual { state } => match state {
-                VisualState::Unavailable => true,
-                VisualState::Current { content } | VisualState::Stale { content } => {
-                    content.valid()
-                }
-            },
+            Message::VisualRenew { valid_for_ms } => (1000..=60000).contains(valid_for_ms),
+            Message::Visual {
+                state,
+                valid_for_ms,
+            } => {
+                (1000..=60000).contains(valid_for_ms)
+                    && match state {
+                        VisualState::Unavailable => true,
+                        VisualState::Current { content } | VisualState::Stale { content } => {
+                            content.is_valid()
+                        }
+                    }
+            }
         };
         if valid {
             Ok(())
@@ -248,7 +299,7 @@ impl Envelope {
     }
 }
 impl ChoiceList {
-    fn valid(&self) -> bool {
+    pub fn is_valid(&self) -> bool {
         use crate::manifest::label;
         match self {
             ChoiceList::Unavailable => true,
@@ -264,7 +315,7 @@ impl ChoiceList {
     }
 }
 impl VisualContent {
-    fn valid(&self) -> bool {
+    pub fn is_valid(&self) -> bool {
         fn hex(s: &str) -> bool {
             !s.is_empty()
                 && s.len() <= 16384
@@ -281,5 +332,138 @@ impl VisualContent {
             && self.text.as_ref().is_none_or(|s| crate::manifest::label(s))
             && self.png_hex.as_deref().is_none_or(hex)
             && self.jpeg_hex.as_deref().is_none_or(hex)
+    }
+}
+
+impl VisualState {
+    pub fn is_valid(&self) -> bool {
+        match self {
+            Self::Unavailable => true,
+            Self::Current { content } | Self::Stale { content } => content.is_valid(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Outcome {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+        enum Strict {
+            Success {},
+            Failure { code: FailureCode },
+        }
+        Ok(match Strict::deserialize(deserializer)? {
+            Strict::Success {} => Self::Success,
+            Strict::Failure { code } => Self::Failure { code },
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Control {
+    pub kind: String,
+    pub index: u32,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlGesture {
+    Press,
+    HoldStart,
+    HoldEnd,
+    LongPress,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlEvent {
+    pub control: Control,
+    pub gesture: ControlGesture,
+}
+
+impl Message {
+    /// Every additive field and message must belong to the negotiated intersection.
+    pub fn permitted(&self, capabilities: &[String]) -> bool {
+        use crate::{
+            CONTROLS, CREDENTIALS, DYNAMIC_OPTIONS, JPEG, SETTINGS, VISUAL_FRESHNESS, supports,
+        };
+        let has = |name| supports(capabilities, name);
+        match self {
+            Self::Invoke {
+                settings,
+                control,
+                credential_revision,
+                ..
+            } => {
+                (settings.is_none() || has(SETTINGS))
+                    && (control.is_none() || has(CONTROLS))
+                    && (credential_revision.is_none() || has(CREDENTIALS))
+            }
+            Self::Subscribe {
+                settings,
+                credential_revision,
+                ..
+            } => {
+                has(VISUAL_FRESHNESS)
+                    && (settings.is_none() || has(SETTINGS))
+                    && (credential_revision.is_none() || has(CREDENTIALS))
+            }
+            Self::Options {
+                settings,
+                credential_revision,
+                ..
+            } => {
+                has(DYNAMIC_OPTIONS)
+                    && (settings.is_none() || has(SETTINGS))
+                    && (credential_revision.is_none() || has(CREDENTIALS))
+            }
+            Self::Credentials { .. }
+            | Self::CredentialsApplied { .. }
+            | Self::CredentialsRelease { .. }
+            | Self::CredentialsReleased { .. } => has(CREDENTIALS),
+            Self::Choices { .. } => has(DYNAMIC_OPTIONS),
+            Self::Visual { state, .. } => {
+                has(VISUAL_FRESHNESS)
+                    && match state {
+                        VisualState::Current { content } | VisualState::Stale { content } => {
+                            content.jpeg_hex.is_none() || has(JPEG)
+                        }
+                        _ => true,
+                    }
+            }
+            Self::VisualRenew { .. } | Self::Unsubscribe { .. } => has(VISUAL_FRESHNESS),
+            _ => true,
+        }
+    }
+}
+
+// Empty struct alternatives make serde reject fields on internally tagged unit variants.
+impl<'de> Deserialize<'de> for ChoiceList {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "availability", rename_all = "snake_case", deny_unknown_fields)]
+        enum Strict {
+            Available { options: Vec<ChoiceOption> },
+            Unavailable {},
+        }
+        Ok(match Strict::deserialize(deserializer)? {
+            Strict::Available { options } => Self::Available { options },
+            Strict::Unavailable {} => Self::Unavailable,
+        })
+    }
+}
+impl<'de> Deserialize<'de> for VisualState {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "availability", rename_all = "snake_case", deny_unknown_fields)]
+        enum Strict {
+            Current { content: VisualContent },
+            Stale { content: VisualContent },
+            Unavailable {},
+        }
+        Ok(match Strict::deserialize(deserializer)? {
+            Strict::Current { content } => Self::Current { content },
+            Strict::Stale { content } => Self::Stale { content },
+            Strict::Unavailable {} => Self::Unavailable,
+        })
     }
 }

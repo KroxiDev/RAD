@@ -25,6 +25,7 @@ fn field(id: &str, required: bool, kind: FieldKind) -> Field {
 fn pick() -> Definition {
     let scenario = ["normal", "empty", "unavailable", "slow", "late", "crash"];
     Definition {
+        gestures: rad_plugin_contract::default_gestures(),
         response_timeout: None,
         id: "pick".into(),
         label: "pick".into(),
@@ -85,7 +86,7 @@ fn editing_asks_by_entity_with_the_draft_values_of_the_dependencies() {
     assert_eq!(query.field, 1);
     assert_eq!(
         query.request,
-        Request::new(
+        request(
             "options",
             json!({"id":"action-1","field":"group","cursor":null,"context":{"scenario":"empty"}})
         )
@@ -98,6 +99,7 @@ fn mixed() -> Definition {
         options: options.iter().map(|o| o.to_string()).collect(),
     };
     Definition {
+        gestures: rad_plugin_contract::default_gestures(),
         response_timeout: None,
         id: "mixed".into(),
         label: "mixed".into(),
@@ -129,7 +131,7 @@ fn adding_asks_by_type_and_sends_only_the_dependencies_that_are_fixed() {
     required_only.set(0, Some("x".into()));
     assert_eq!(
         item_query(&mut required_only, adding()),
-        Some(Request::new(
+        Some(request(
             "options",
             json!({"type":TYPE,"field":"item","cursor":null,"context":{"kind":"x"}}),
         )),
@@ -141,7 +143,7 @@ fn adding_asks_by_type_and_sends_only_the_dependencies_that_are_fixed() {
     both.set(1, Some("t2".into()));
     assert_eq!(
         item_query(&mut both, adding()),
-        Some(Request::new(
+        Some(request(
             "options",
             json!({"type":TYPE,"field":"item","cursor":null,
                    "context":{"kind":"x","tag":"t2"}}),
@@ -158,7 +160,7 @@ fn a_saved_optional_dependency_cleared_in_the_draft_is_asked_by_type_so_the_save
     form.set(1, Some(String::new()));
     assert_eq!(
         item_query(&mut form, editing()),
-        Some(Request::new(
+        Some(request(
             "options",
             json!({"type":TYPE,"field":"item","cursor":null,"context":{"kind":"x"}})
         ))
@@ -166,7 +168,7 @@ fn a_saved_optional_dependency_cleared_in_the_draft_is_asked_by_type_so_the_save
     let mut kept = FormDraft::load(mixed(), saved.to_vec());
     assert_eq!(
         item_query(&mut kept, editing()),
-        Some(Request::new(
+        Some(request(
             "options",
             json!({"id":"action-1","field":"item","cursor":null,
                    "context":{"kind":"x","tag":"t1"}})
@@ -377,7 +379,7 @@ fn one_question_is_in_flight_and_the_next_follows_its_answer_with_the_draft_cont
     assert_eq!((second.ticket, second.field), (3, 2));
     assert_eq!(
         second.request,
-        Request::new(
+        request(
             "options",
             json!({"id":"action-1","field":"member","cursor":null,
                    "context":{"scenario":"normal","group":"b"}})
@@ -449,6 +451,7 @@ fn chain() -> Definition {
         )
     };
     Definition {
+        gestures: rad_plugin_contract::default_gestures(),
         response_timeout: None,
         id: "chain".into(),
         label: "chain".into(),
@@ -474,7 +477,7 @@ fn chain() -> Definition {
 /// Answers every question the form has due, as a runtime with one item per list would.
 fn answer_everything(form: &mut FormDraft, mut ticket: u64) -> u64 {
     while let Some(query) = form.next_query(editing(), ticket) {
-        let field = query.request.arguments["field"]
+        let field = query.request.arguments()["field"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -505,7 +508,7 @@ fn changing_a_dependency_asks_its_dependents_again_and_drops_their_old_lists() {
         .expect("member is due again");
     assert_eq!(
         query.request,
-        Request::new(
+        request(
             "options",
             json!({"id":"action-1","field":"member","cursor":null,
                    "context":{"scenario":"normal","group":"b"}})
@@ -623,4 +626,8 @@ fn an_optional_field_that_is_not_set_is_not_asked_until_the_user_sets_it() {
         .next_query(editing(), next)
         .expect("member is wanted now");
     assert_eq!(query.field, 2);
+}
+
+fn request(op: &str, args: serde_json::Value) -> rad_api::Request {
+    rad_api::Request::parse(op, args).expect("valid typed fixture request")
 }

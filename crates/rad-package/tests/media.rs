@@ -132,6 +132,7 @@ fn full_settings_shared_media_roundtrip_into_real_store() {
                 brightness_percent: 17,
                 sleep_ms: u64::MAX,
                 press_threshold_ms: u64::MAX,
+                long_press_threshold_ms: 500,
             }),
         )
         .unwrap();

@@ -7,11 +7,14 @@ fn good() -> serde_json::Value {
 #[test]
 fn response_is_accepted_only_for_the_exact_request_and_runtime_session() {
     let bytes = serde_json::to_vec(&good()).unwrap();
-    let response = Response::decode(&bytes, 2, Some(SESSION)).unwrap();
+    let response = decode(&bytes, 2, Some(SESSION)).unwrap();
     assert_eq!(response.status, Status::Applied);
-    assert_eq!(response.data, json!({"changed":true,"revision":"10"}));
-    assert!(Response::decode(&bytes, 3, Some(SESSION)).is_err());
-    assert!(Response::decode(&bytes, 2, Some("00000000000000000000000000000002")).is_err());
+    assert_eq!(
+        serde_json::to_value(response.data).unwrap(),
+        json!({"changed":true,"revision":"10"})
+    );
+    assert!(decode(&bytes, 3, Some(SESSION)).is_err());
+    assert!(decode(&bytes, 2, Some("00000000000000000000000000000002")).is_err());
 }
 #[test]
 fn response_requires_all_fields_closed_codes_and_consistent_data_error_shapes() {
@@ -19,7 +22,7 @@ fn response_requires_all_fields_closed_codes_and_consistent_data_error_shapes() 
         let mut v = good();
         v.as_object_mut().unwrap().remove(field);
         assert!(
-            Response::decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err(),
+            decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err(),
             "{field}"
         );
     }
@@ -35,7 +38,7 @@ fn response_requires_all_fields_closed_codes_and_consistent_data_error_shapes() 
         let mut v = good();
         v[field] = value;
         assert!(
-            Response::decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err(),
+            decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err(),
             "{v}"
         );
     }
@@ -44,7 +47,7 @@ fn response_requires_all_fields_closed_codes_and_consistent_data_error_shapes() 
     error["data"] = json!(null);
     error["error"] = json!({"code":"storage_uncertain","message":"Storage result is uncertain","details":{},"outcome":"unknown"});
     assert_eq!(
-        Response::decode(&serde_json::to_vec(&error).unwrap(), 2, Some(SESSION))
+        decode(&serde_json::to_vec(&error).unwrap(), 2, Some(SESSION))
             .unwrap()
             .error
             .unwrap()
@@ -59,18 +62,18 @@ fn response_requires_all_fields_closed_codes_and_consistent_data_error_shapes() 
     ] {
         let mut v = error.clone();
         v["error"][field] = value;
-        assert!(Response::decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
+        assert!(decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
     }
     let mut v = error.clone();
     v["data"] = json!({});
-    assert!(Response::decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
+    assert!(decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
     let mut v = good();
     v["error"] = error["error"].clone();
-    assert!(Response::decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
+    assert!(decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
     for field in ["code", "message", "details", "outcome"] {
         let mut v = error.clone();
         v["error"].as_object_mut().unwrap().remove(field);
-        assert!(Response::decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
+        assert!(decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
     }
 }
 #[test]
@@ -83,7 +86,7 @@ fn applied_and_admitted_receipts_do_not_claim_success_without_their_required_ide
     ] {
         let mut v = good();
         v["data"] = data;
-        assert!(Response::decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
+        assert!(decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
     }
     let mut v = good();
     v["status"] = json!("admitted");
@@ -94,11 +97,20 @@ fn applied_and_admitted_receipts_do_not_claim_success_without_their_required_ide
         json!({"execution_id":"00000000000000000000000000000002:1"}),
     ] {
         v["data"] = data;
-        assert!(Response::decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
+        assert!(Response::decode_value(v.clone(), 2, None, rad_api::Operation::Run).is_err());
     }
     v["data"] = json!({"execution_id":format!("{SESSION}:1")});
-    assert!(Response::decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_ok());
+    assert!(Response::decode_value(v, 2, None, rad_api::Operation::Run).is_ok());
     let mut v = good();
     v["data"] = json!({"changed":false,"revision":"0"});
-    assert!(Response::decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_ok());
+    assert!(Response::decode_value(v, 2, None, rad_api::Operation::Edit).is_ok());
+}
+
+fn decode(bytes: &[u8], id: u64, session: Option<&str>) -> Result<Response, InvalidResponse> {
+    Response::decode_value(
+        rad_wire::parse_json(bytes).map_err(|_| InvalidResponse)?,
+        id,
+        session,
+        rad_api::Operation::Edit,
+    )
 }

@@ -608,6 +608,7 @@ fn settings_are_editor_only_and_remain_published_until_applied() {
         brightness_percent: 12,
         sleep_ms: 0,
         press_threshold_ms: 17,
+        long_press_threshold_ms: 500,
     };
     assert_eq!(a.settings(Origin::Editor), Some(SettingsData::default()));
     assert_eq!(a.settings(Origin::Automation), None);

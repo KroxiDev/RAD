@@ -1,12 +1,10 @@
-//! The 8×4 key grid. A click selects; a double click runs the key, exactly like Try.
+//! The runtime-described key grid. A click selects; a double click runs the key, exactly like Try.
 use super::{
     App, Drag,
     look::{KEY_RADIUS, Look},
     string,
 };
-use crate::Request;
 use eframe::egui::{self, CornerRadius, Stroke, StrokeKind};
-use serde_json::json;
 
 use crate::session::Grid;
 const GAP: f32 = 12.;
@@ -14,13 +12,15 @@ const KEY_RANGE: std::ops::RangeInclusive<f32> = 52.0..=104.;
 /// Room between the keys and the edge of the deck body drawn around them.
 const BEZEL: f32 = 14.;
 const MARGIN: f32 = BEZEL + 12.;
-const fn height_for(key: f32) -> f32 {
-    key * Grid::XL.rows() as f32 + GAP * (Grid::XL.rows() - 1) as f32 + 2. * MARGIN
+fn height_for(key: f32, grid: Grid) -> f32 {
+    key * grid.rows() as f32 + GAP * grid.rows().saturating_sub(1) as f32 + 2. * MARGIN
 }
-/// Height that shows all four rows at the smallest key size, without scrolling.
-pub(super) const MIN_HEIGHT: f32 = height_for(*KEY_RANGE.start());
-/// Height at which the keys are comfortably large.
-pub(super) const COMFORTABLE_HEIGHT: f32 = height_for(84.);
+pub(super) fn min_height(grid: Grid) -> f32 {
+    height_for(*KEY_RANGE.start(), grid)
+}
+pub(super) fn comfortable_height(grid: Grid) -> f32 {
+    height_for(84., grid)
+}
 
 /// What a key reads: its own text, or its name while it has neither text nor image.
 /// The runtime applies the same rule when it paints the deck.
@@ -259,10 +259,12 @@ impl App {
         }
         if let Some(drag) = response.dnd_release_payload::<Drag>() {
             match &*drag {
-                Drag::Button { id: source, .. } => self.send(Request::new(
-                    "edit",
-                    json!({"changes":[{"kind":"move","id":source,"position":position}]}),
-                )),
+                Drag::Button { id: source, .. } => self.send(crate::Request::Edit {
+                    changes: vec![rad_api::Change::Move {
+                        id: source.clone(),
+                        position,
+                    }],
+                }),
                 Drag::Folder => {
                     if id.is_none() {
                         self.create(position, true);

@@ -1,8 +1,5 @@
 //! Chunked client transfer. The runtime alone validates/normalizes/publishes data.
-use crate::{
-    Request,
-    session::{Error, Port, Session},
-};
+use crate::session::{Error, Port, Session};
 use serde_json::{Value, json};
 use std::io::Read;
 pub const CHUNK: usize = 8192;
@@ -34,18 +31,25 @@ impl<R: Read> Upload<R> {
                 return Err(io_error());
             }
             return session
-                .request(Request::new(
-                    "transfer_finish",
-                    json!({"transfer_id":self.id}),
-                ))
-                .map(|r| Progress::Finished(r.data));
+                .request(crate::Request::TransferFinish {
+                    transfer_id: self.id.clone(),
+                })
+                .and_then(|r| {
+                    serde_json::to_value(r.data)
+                        .map(Progress::Finished)
+                        .map_err(|_| Error::protocol())
+                });
         }
         let mut bytes = [0; CHUNK];
         let n = (self.size - self.offset).min(CHUNK as u64) as usize;
         self.reader
             .read_exact(&mut bytes[..n])
             .map_err(|_| io_error())?;
-        session.request(Request::new("transfer_write",json!({"transfer_id":self.id,"offset":self.offset.to_string(),"base64":encode(&bytes[..n])})))?;
+        session.request(crate::Request::TransferWrite {
+            transfer_id: self.id.clone(),
+            offset: self.offset.to_string(),
+            base64: encode(&bytes[..n]),
+        })?;
         self.offset += n as u64;
         Ok(Progress::Chunk(self.offset))
     }
@@ -98,14 +102,16 @@ impl<W: std::io::Write> Download<W> {
     }
     pub fn step<P: Port>(&mut self, session: &mut Session<P>) -> Result<Progress, Error> {
         let data = session
-            .request(Request::new(
-                "transfer_read",
-                json!({"transfer_id":self.id,"offset":self.offset.to_string()}),
-            ))?
+            .request(crate::Request::TransferRead {
+                transfer_id: self.id.clone(),
+                offset: self.offset.to_string(),
+            })?
             .data;
-        let encoded = data["base64"].as_str().ok_or_else(Error::protocol)?;
-        let bytes = decode(encoded)?;
-        let eof = data["eof"].as_bool().ok_or_else(Error::protocol)?;
+        let rad_api::ResponseData::TransferChunk(data) = data else {
+            return Err(Error::protocol());
+        };
+        let bytes = decode(&data.base64)?;
+        let eof = data.eof;
         if bytes.is_empty() && !eof {
             return Err(Error::protocol());
         }

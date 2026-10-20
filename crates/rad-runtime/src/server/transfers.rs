@@ -335,34 +335,62 @@ impl Server {
         let Some((key, c)) = flight.target else {
             return Ok(());
         };
+        use rad_api::{
+            Empty, ExportReady, ImagePrepared, PluginVersion, ResponseData as D, RestorePlugin,
+            RestorePrepared, RestoreSummary, Transfer, TransferChunk,
+        };
         let data = match output {
             Output::Begun { transfer_id } => {
                 if let FlightKind::Export(lease) = kind {
                     self.exports
                         .insert(transfer_id.clone(), (c.connection, lease));
                 }
-                json!({"transfer_id":transfer_id})
+                D::Transfer(Transfer { transfer_id })
             }
-            Output::Written | Output::Dropped => json!({}),
+            Output::Written | Output::Dropped => D::Empty(Empty {}),
             Output::ImagePrepared { media_ref } => {
                 if let FlightKind::Finish(token) = kind {
                     self.prepared
                         .insert((c.connection, media_ref.clone()), token);
                 }
-                json!({"media_ref":media_ref})
+                D::ImagePrepared(ImagePrepared { media_ref })
             }
             Output::RestorePrepared {
                 transfer_id,
                 summary,
             } => {
-                let plugins:Vec<_> = summary.plugins.iter().map(|p|json!({"id":p.id,"version":p.version.map(|v|json!({"major":v.major,"minor":v.minor,"patch":v.patch})),"origin":p.origin})).collect();
+                let plugins: Vec<_> = summary
+                    .plugins
+                    .iter()
+                    .map(|p| RestorePlugin {
+                        id: p.id.clone(),
+                        version: p.version.map(|v| PluginVersion {
+                            major: v.major,
+                            minor: v.minor,
+                            patch: v.patch,
+                        }),
+                        origin: p.origin.clone(),
+                    })
+                    .collect();
                 let complete = plugins.len() <= 32
                     && serde_json::to_vec(&plugins).is_ok_and(|bytes| bytes.len() <= 32 * 1024);
-                json!({"transfer_id":transfer_id,"summary":{"entities":summary.entities,"media_count":summary.media_count,"media_bytes":summary.media_bytes,"document_bytes":summary.document_bytes,"plugins_count":plugins.len(),"plugins_complete":complete,"plugins":if complete {plugins} else {vec![]}}})
+                D::RestorePrepared(RestorePrepared {
+                    transfer_id,
+                    summary: RestoreSummary {
+                        entities: summary.entities,
+                        media_count: summary.media_count,
+                        media_bytes: summary.media_bytes,
+                        document_bytes: summary.document_bytes as u64,
+                        plugins_count: plugins.len(),
+                        plugins_complete: complete,
+                        plugins: if complete { plugins } else { vec![] },
+                    },
+                })
             }
-            Output::ExportReady { transfer_id, size } => {
-                json!({"transfer_id":transfer_id,"size":size.to_string()})
-            }
+            Output::ExportReady { transfer_id, size } => D::ExportReady(ExportReady {
+                transfer_id,
+                size: size.to_string(),
+            }),
             Output::Chunk { bytes, eof } => {
                 if let FlightKind::Reply {
                     media: Some((id, ref media_ref)),
@@ -375,7 +403,10 @@ impl Server {
                 {
                     return self.respond(key, self.error(c, "not_found", false));
                 }
-                json!({"base64":encode(&bytes),"eof":eof})
+                D::TransferChunk(TransferChunk {
+                    base64: encode(&bytes),
+                    eof,
+                })
             }
             Output::RestoreData { data } => {
                 let FlightKind::Restore(token) = kind else {

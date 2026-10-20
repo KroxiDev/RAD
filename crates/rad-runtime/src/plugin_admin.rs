@@ -33,7 +33,7 @@ enum Job {
 }
 enum Reply {
     Boot(Result<Vec<InstalledPlugin>, rad_plugin_manager::Error>),
-    Prepared(Result<PreparedChange, rad_plugin_manager::Error>, bool),
+    Prepared(Result<Box<PreparedChange>, rad_plugin_manager::Error>, bool),
     Committed(
         ChangeKey,
         CommitOutcome,
@@ -278,6 +278,46 @@ impl Admin {
             self.send(Job::Stop);
         }
     }
+    /// Explicit repair of the same failed selection, only after its process was reaped.
+    /// No package operation, configuration edit, credential replacement or action replay.
+    pub fn can_retry(&self, id: &str, actor: &Authority, host: &Host) -> bool {
+        !self.busy
+            && !self.locked
+            && !self.stopping
+            && self.startup.is_empty()
+            && host.state(id) == Some(State::Reaped)
+            && !host.stopped_normally(id)
+            && actor.plugin_change_allowed(id).is_ok()
+            && actor.plugin_manifests().any(|(manifest, selection, _)| {
+                manifest.id == id
+                    && !actor.plugin_available(id, selection)
+                    && self.attempted.contains(&(id.to_owned(), selection))
+            })
+    }
+    pub fn retry(
+        &mut self,
+        origin: Origin,
+        id: &str,
+        actor: &Authority,
+        host: &mut Host,
+    ) -> Result<(), &'static str> {
+        if origin != Origin::Editor {
+            return Err("permission_denied");
+        }
+        if !self.can_retry(id, actor, host) {
+            return Err("operation_not_allowed");
+        }
+        let selection = actor
+            .plugin_manifests()
+            .find(|(manifest, _, _)| manifest.id == id)
+            .map(|(_, selection, _)| selection)
+            .ok_or("not_found")?;
+        host.remove(id).map_err(|_| "plugin_residual")?;
+        self.attempted.remove(&(id.to_owned(), selection));
+        self.error = None;
+        self.state = AdminState::Idle;
+        Ok(())
+    }
     pub fn set_extra_demand(&mut self, demand: std::collections::BTreeSet<String>) {
         self.demanded = demand;
     }
@@ -374,6 +414,15 @@ impl Admin {
             })
             .collect()
     }
+    /// Inventory includes preserved packages that cannot enter Authority or Host.
+    pub fn plugins_needing_update(&self) -> impl Iterator<Item = &str> {
+        self.installed.iter().filter_map(|item| {
+            item.manifest
+                .validate(rad_plugin_contract::HOST_API, rad_plugin_host::TARGET)
+                .is_err()
+                .then_some(item.manifest.id.as_str())
+        })
+    }
     pub fn status(&self, host: &Host) -> Value {
         let items: Vec<_> = self
             .installed
@@ -395,7 +444,7 @@ impl Admin {
                     "previous": item.previous.as_ref().map(|m| m.version),
                     "source": item.source,
                     "source_trusted": item.source.is_some(),
-                    "diagnostic": host.last_diagnostic(id).map(diagnostic_code),
+                    "diagnostic": if item.manifest.validate(rad_plugin_contract::HOST_API, rad_plugin_host::TARGET).is_err() { Some("incompatible_plugin") } else { host.last_diagnostic(id).map(diagnostic_code) },
                     "host": host_state,
                 })
             })
@@ -681,7 +730,7 @@ mod lifecycle_tests {
     }
     fn request(op: &str, version: Option<u32>) -> PluginAdmin {
         PluginAdmin {
-            operation: rad_protocol::PluginOperation::parse(op).unwrap(),
+            operation: serde_json::from_value(serde_json::json!(op)).unwrap(),
             plugin_id: (op != "install").then(|| "org.rad.fixture".into()),
             source: version.map(|v| format!("https://github.com/owner/repo/releases/tag/v{v}")),
         }
@@ -923,3 +972,95 @@ mod outcome_tests;
 
 #[cfg(all(test, feature = "fixture-tests"))]
 mod demand_tests;
+
+#[cfg(test)]
+mod repair_tests {
+    use super::*;
+    use rad_core::{configuration::Configuration, identity::IdentityRegistry};
+    fn setup() -> (Admin, Authority, Host, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "rad-explicit-repair-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let mut admin = Admin::new(
+            root.clone(),
+            Arc::new(|| {}),
+            Box::new(|_, _| panic!("repair must not download")),
+        );
+        let mut actor = Authority::new(
+            Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap(),
+            1,
+            std::num::NonZeroU128::new(81).unwrap(),
+        );
+        let mut host = Host::default();
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while admin.busy {
+            admin.poll(&mut actor, &mut host, 0);
+            assert!(std::time::Instant::now() < end);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        (admin, actor, host, root)
+    }
+    fn finish(mut admin: Admin, root: PathBuf) {
+        admin.shutdown();
+        admin.send(Job::Stop);
+        if let Some(worker) = admin.worker.take() {
+            worker.join().unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn incompatible_inventory_is_visible_as_needing_update_without_starting() {
+        let (mut admin, _, host, root) = setup();
+        let mut manifest: Manifest = serde_json::from_str(include_str!(
+            "../../rad-plugin-host/fixture/manifest-v1.json"
+        ))
+        .unwrap();
+        manifest.host_min = 2;
+        manifest.host_max = 3;
+        admin.installed.push(InstalledPlugin {
+            manifest,
+            previous: None,
+            source: Some("https://github.com/owner/repo".into()),
+        });
+        let status = admin.status(&host);
+        finish(admin, root);
+        assert_eq!(status["items"][0]["diagnostic"], "incompatible_plugin");
+        assert_eq!(status["items"][0]["host"], "absent");
+    }
+    #[test]
+    fn retry_requires_failed_selection_and_reap_and_only_clears_its_attempt() {
+        let (mut admin, mut actor, mut host, root) = setup();
+        let manifest: Manifest = serde_json::from_str(include_str!(
+            "../../rad-plugin-host/fixture/manifest-v1.json"
+        ))
+        .unwrap();
+        let id = manifest.id.clone();
+        actor
+            .register_plugin(manifest.clone(), rad_plugin_host::TARGET)
+            .unwrap();
+        let selection = actor.plugin_manifests().next().unwrap().1;
+        admin.attempted.insert((id.clone(), selection));
+        admin.attempted.insert(("other".into(), 99));
+        let launch = host.reserve_launch(manifest, 0).unwrap();
+        actor.fail_plugin_selection(&id, selection).unwrap();
+        assert!(!admin.can_retry(&id, &actor, &host));
+        let mut prepared =
+            Some(launch.spawn(std::process::Command::new(root.join("nonexistent-fixture"))));
+        host.attach(&mut prepared, 0).unwrap();
+        assert_eq!(host.state(&id), Some(State::Reaped));
+        assert_eq!(
+            admin.retry(Origin::Automation, &id, &actor, &mut host),
+            Err("permission_denied")
+        );
+        assert!(admin.can_retry(&id, &actor, &host));
+        admin.retry(Origin::Editor, &id, &actor, &mut host).unwrap();
+        assert_eq!(host.state(&id), None);
+        assert!(!admin.attempted.contains(&(id.clone(), selection)));
+        assert!(admin.attempted.contains(&("other".into(), 99)));
+        assert_eq!(actor.plugin_manifests().next().unwrap().1, selection);
+        assert!(!admin.can_retry(&id, &actor, &host));
+        finish(admin, root);
+    }
+}

@@ -6,6 +6,7 @@ pub struct SettingsData {
     pub brightness_percent: u8,
     pub sleep_ms: u64,
     pub press_threshold_ms: u64,
+    pub long_press_threshold_ms: u64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Validated complete settings; no universal mutable setters.
@@ -35,6 +36,9 @@ impl Settings {
     pub fn press_threshold_ms(self) -> u64 {
         self.data.press_threshold_ms
     }
+    pub fn long_press_threshold_ms(self) -> u64 {
+        self.data.long_press_threshold_ms
+    }
     /// Zero explicitly disables sleep, rather than denoting an infinite deadline.
     pub fn sleep_enabled(self) -> bool {
         self.data.sleep_ms != 0
@@ -47,6 +51,7 @@ impl Default for Settings {
                 brightness_percent: 100,
                 sleep_ms: 300_000,
                 press_threshold_ms: 0,
+                long_press_threshold_ms: 500,
             },
         }
     }

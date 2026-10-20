@@ -4,27 +4,25 @@ use rad_core::{
     configuration::{ActionKind, ConfigurationError, Edit},
     permissions::LocalPermissions,
 };
-pub(super) fn command(op: &str, m: &Map<String, Value>) -> Checked<Command> {
-    match op {
-        "undo" | "redo" => {
-            closed(m, &[])?;
-            Ok(if op == "undo" {
-                Command::Undo
-            } else {
-                Command::Redo
-            })
+pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
+    use rad_api::Request as R;
+    match request {
+        R::Undo {} => Ok(Command::Undo),
+        R::Redo {} => Ok(Command::Redo),
+        R::Duplicate {
+            id,
+            folder_id: folder,
+            position: pos,
         }
-        "duplicate" | "move_folder" => {
-            let folder_key = if op == "duplicate" {
-                "folder_id"
-            } else {
-                "parent_id"
-            };
-            closed(m, &["id", folder_key, "position"])?;
-            let target = id(m, "id")?;
-            let folder = id(m, folder_key)?;
-            let position = position(m)?;
-            let duplicate = op == "duplicate";
+        | R::MoveFolder {
+            id,
+            parent_id: folder,
+            position: pos,
+        } => {
+            let target = parse_id(id)?;
+            let folder = parse_id(folder)?;
+            let position = position(*pos)?;
+            let duplicate = matches!(request, R::Duplicate { .. });
             Ok(Command::PrepareEdits(vec![Box::new(move |cfg| {
                 let folder = resolve(cfg, folder)?;
                 let edit = if duplicate {
@@ -54,13 +52,12 @@ pub(super) fn command(op: &str, m: &Map<String, Value>) -> Checked<Command> {
                 Ok(vec![edit])
             })]))
         }
-        "delete" => {
-            closed(m, &["id", "confirm_contents"])?;
-            let target = id(m, "id")?;
-            let confirmed = m
-                .get("confirm_contents")
-                .and_then(Value::as_bool)
-                .ok_or("invalid_request")?;
+        R::Delete {
+            id,
+            confirm_contents,
+        } => {
+            let target = parse_id(id)?;
+            let confirmed = *confirm_contents;
             Ok(Command::PrepareEdits(vec![Box::new(move |cfg| {
                 let entity = resolve(cfg, target)?;
                 Ok(vec![match target.kind() {
@@ -73,15 +70,13 @@ pub(super) fn command(op: &str, m: &Map<String, Value>) -> Checked<Command> {
                 }])
             })]))
         }
-        "set_permissions" => {
-            closed(m, &["target", "value"])?;
-            let target = string(m, "target")?;
+        R::SetPermissions { target, value } => {
             let target = if target == "global" {
                 None
             } else {
                 Some(parse_id(target)?)
             };
-            let value = local(m.get("value").ok_or("invalid_request")?)?;
+            let value = local(value)?;
             if target.is_none() && value.own_value().is_none() {
                 return Err("invalid_request");
             };
@@ -102,32 +97,41 @@ pub(super) fn command(op: &str, m: &Map<String, Value>) -> Checked<Command> {
                 }])
             })]))
         }
-        "set_settings" => {
-            closed(m, &["changes"])?;
-            let m = m
-                .get("changes")
-                .and_then(Value::as_object)
-                .ok_or("invalid_request")?;
-            closed(m, &["brightness_percent", "sleep_ms", "press_threshold_ms"])?;
-            if m.is_empty() {
-                return Err("invalid_request");
-            };
-            let brightness = m
-                .get("brightness_percent")
-                .map(|v| {
-                    v.as_u64()
-                        .filter(|n| *n <= 100)
-                        .map(|n| n as u8)
-                        .ok_or("invalid_request")
+        R::SetPluginSettings {
+            plugin_id,
+            parameters,
+        } => {
+            let plugin = plugin_id.clone();
+            let settings = parameters
+                .as_ref()
+                .map(|p| {
+                    let bytes = serde_json::to_vec(p).map_err(|_| "invalid_request")?;
+                    rad_core::configuration::PluginSettings::new(bytes)
+                        .map_err(|_| "invalid_request")
                 })
                 .transpose()?;
-            let sleep = m
-                .get("sleep_ms")
-                .map(|v| decimal(v.as_str().ok_or("invalid_request")?))
+            Ok(Command::PrepareEdits(vec![Box::new(move |_| {
+                Ok(vec![Edit::SetPluginSettings { plugin, settings }])
+            })]))
+        }
+        R::SetSettings { changes } => {
+            if changes == &rad_api::SettingsChanges::default() {
+                return Err("invalid_request");
+            }
+            let brightness = changes.brightness_percent;
+            if brightness.is_some_and(|n| n > 100) {
+                return Err("invalid_request");
+            }
+            let sleep = changes.sleep_ms.as_deref().map(decimal).transpose()?;
+            let threshold = changes
+                .press_threshold_ms
+                .as_deref()
+                .map(decimal)
                 .transpose()?;
-            let threshold = m
-                .get("press_threshold_ms")
-                .map(|v| decimal(v.as_str().ok_or("invalid_request")?))
+            let long_threshold = changes
+                .long_press_threshold_ms
+                .as_deref()
+                .map(decimal)
                 .transpose()?;
             Ok(Command::PrepareEdits(vec![Box::new(move |cfg| {
                 let mut s = cfg.settings().data();
@@ -140,32 +144,21 @@ pub(super) fn command(op: &str, m: &Map<String, Value>) -> Checked<Command> {
                 if let Some(n) = threshold {
                     s.press_threshold_ms = n
                 }
+                if let Some(n) = long_threshold {
+                    s.long_press_threshold_ms = n;
+                }
                 Ok(vec![Edit::SetSettings(s)])
             })]))
         }
         _ => Err("invalid_request"),
     }
 }
-fn local(v: &Value) -> Checked<LocalPermissions> {
-    let m = v.as_object().ok_or("invalid_request")?;
-    if m.len() != 1 {
-        return Err("invalid_request");
-    };
-    if m.get("inherit") == Some(&Value::Bool(true)) {
-        return Ok(LocalPermissions::default());
-    };
-    let own = m
-        .get("own")
-        .and_then(Value::as_object)
-        .ok_or("invalid_request")?;
-    closed(own, &["consult", "modify", "execute"])?;
-    let b = |key| {
-        own.get(key)
-            .and_then(Value::as_bool)
-            .ok_or("invalid_request")
-    };
-    Ok(LocalPermissions::own(
-        Permissions::new(b("consult")?, b("modify")?, b("execute")?)
-            .map_err(|_| "invalid_request")?,
-    ))
+fn local(value: &rad_api::LocalPermissions) -> Checked<LocalPermissions> {
+    match value {
+        rad_api::LocalPermissions::Inherit(true) => Ok(LocalPermissions::default()),
+        rad_api::LocalPermissions::Inherit(false) => Err("invalid_request"),
+        rad_api::LocalPermissions::Own(p) => Ok(LocalPermissions::own(
+            Permissions::new(p.consult, p.modify, p.execute).map_err(|_| "invalid_request")?,
+        )),
+    }
 }

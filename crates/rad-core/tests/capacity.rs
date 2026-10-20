@@ -37,6 +37,7 @@ fn populated(count: usize) -> (Configuration, IdentityRegistry) {
             }
             *slot = Some(binding.identity());
             data.buttons.push(ButtonData {
+                gesture: Gesture::Press,
                 binding,
                 name: String::new(),
                 appearance: Default::default(),

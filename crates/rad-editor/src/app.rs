@@ -1,7 +1,7 @@
 //! Editor window: state, worker pump and layout. Views live in the submodules; the
 //! runtime stays the only authority, so nothing here edits published state optimistically.
 use crate::{
-    Controller, PollSchedule, Request,
+    Controller, Request,
     catalog::Entry,
     native::{self, Event, Job, OptionsEvent, OptionsJob, Reply, TransferKind},
     session::{Board, Inspection},
@@ -10,10 +10,7 @@ use crate::{
 };
 use eframe::egui;
 use serde_json::{Value, json};
-use std::{
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::{path::PathBuf, time::Instant};
 
 mod actions;
 mod bar;
@@ -64,6 +61,7 @@ struct Draft {
     /// `top`, `middle` or `bottom`, as the runtime resolved it or as just chosen.
     text_position: String,
     mode: String,
+    gesture: String,
     order: Vec<usize>,
     /// Milliseconds typed for each action; only wait actions use theirs.
     waits: Vec<String>,
@@ -80,6 +78,10 @@ impl Draft {
             image: string(&v.appearance["image"]),
             text_position: string(&v.appearance["text_position"]),
             mode: string(&v.button["fields"]["mode"]),
+            gesture: v.button["fields"]["gesture"]
+                .as_str()
+                .unwrap_or("press")
+                .into(),
             order: (0..v.actions.len()).collect(),
             waits: v
                 .actions
@@ -108,9 +110,7 @@ impl Draft {
 fn string(v: &Value) -> String {
     v.as_str().unwrap_or_default().into()
 }
-fn tr(es: bool, en: &'static str, es_text: &'static str) -> &'static str {
-    if es { es_text } else { en }
-}
+use crate::texts::tr;
 pub struct App {
     preferences: crate::preferences::Preferences,
     preferences_path: Option<PathBuf>,
@@ -122,7 +122,15 @@ pub struct App {
     credentials: credentials::Panel,
     credential_selection: Option<String>,
     control: Controller,
-    poll: PollSchedule,
+    schedule: crate::schedule::Schedule,
+    result_due: bool,
+    wake_registered: bool,
+    search_wake: Option<crate::worker::WakeTimer>,
+    runtime: PathBuf,
+    notices: Option<crate::notices::Notices>,
+    overview_due: bool,
+    resolving_unknown: bool,
+    reconnect_needed: bool,
     started: Instant,
     connected: bool,
     /// A connection attempt has finished, so "not connected" is a fact worth showing.
@@ -138,7 +146,7 @@ pub struct App {
     message_is_error: bool,
     /// Raw code behind an error message, kept for the tooltip.
     message_code: String,
-    es: bool,
+    es: crate::preferences::Language,
     palette: Palette,
     styled: Option<Palette>,
     settings_open: bool,
@@ -167,23 +175,27 @@ pub struct App {
     folded: std::collections::BTreeSet<actions::Category>,
     textures: std::collections::BTreeMap<String, egui::TextureHandle>,
     image_attempts: std::collections::BTreeSet<String>,
-    result_poll: PollSchedule,
     plugins: plugins::PluginUi,
 }
 impl App {
     pub fn new(runtime: PathBuf, theme: PathBuf) -> Self {
-        let preferences_path = crate::preferences::default_path();
+        Self::with_preferences_path(runtime, theme, crate::preferences::default_path())
+    }
+    fn with_preferences_path(
+        runtime: PathBuf,
+        theme: PathBuf,
+        preferences_path: Option<PathBuf>,
+    ) -> Self {
         let loaded = preferences_path
             .as_deref()
             .map(crate::preferences::Preferences::load)
             .transpose();
         let preference_error = loaded.as_ref().err().map(ToString::to_string);
         let preferences = loaded.ok().flatten().unwrap_or_default();
-        let es = preferences.language(&crate::preferences::system_locale())
-            == crate::preferences::Language::Es;
+        let es = preferences.language(&crate::preferences::system_locale());
         let options_worker = native::start_options(runtime.clone());
         let credential_worker = credentials::start(runtime.clone());
-        let mut worker = native::start(runtime, theme);
+        let mut worker = native::start(runtime.clone(), theme);
         let _ = worker.submit(Job::Connect);
         let mut app = Self {
             preferences,
@@ -194,7 +206,15 @@ impl App {
             credentials: Default::default(),
             credential_selection: None,
             control: Controller::default(),
-            poll: PollSchedule::default(),
+            schedule: Default::default(),
+            result_due: false,
+            wake_registered: false,
+            search_wake: None,
+            runtime,
+            notices: None,
+            overview_due: false,
+            resolving_unknown: false,
+            reconnect_needed: false,
             started: Instant::now(),
             connected: false,
             attempted: false,
@@ -231,14 +251,12 @@ impl App {
             folded: Default::default(),
             textures: Default::default(),
             image_attempts: Default::default(),
-            result_poll: PollSchedule::default(),
             plugins: Default::default(),
         };
         if let Some(error) = preference_error {
             app.warn(tr(
                 es,
                 "Could not read preferences — select your language again",
-                "No se pudieron leer las preferencias — vuelve a elegir el idioma",
             ));
             app.message_code = error;
         }
@@ -260,10 +278,10 @@ impl App {
     /// Says how a run of a key is going, in words; its execution id stays in the tooltip.
     fn say_run(&mut self, execution: &Value, state: &str) {
         let text = match state {
-            "running" => tr(self.es, "Running…", "Ejecutando…"),
-            "succeeded" => tr(self.es, "Done", "Hecho"),
-            "failed" => tr(self.es, "Failed", "Falló"),
-            other => other,
+            "running" => tr(self.es, "Running…"),
+            "succeeded" => tr(self.es, "Done"),
+            "failed" => tr(self.es, "Failed"),
+            _ => tr(self.es, "Something went wrong"),
         }
         .to_owned();
         if state == "failed" {
@@ -277,7 +295,7 @@ impl App {
     fn command(&mut self, job: Job) -> bool {
         let accepted = self.worker.enqueue(job).is_ok();
         if !accepted {
-            self.warn(tr(self.es, "Busy — not sent", "Ocupado — no enviado"));
+            self.warn(tr(self.es, "Busy — not sent"));
         }
         accepted
     }
@@ -344,9 +362,9 @@ impl App {
             return typed.to_owned();
         }
         if folder {
-            tr(self.es, "New folder", "Nueva carpeta").into()
+            tr(self.es, "New folder").into()
         } else {
-            tr(self.es, "New button", "Nuevo botón").into()
+            tr(self.es, "New button").into()
         }
     }
     fn create(&mut self, position: usize, folder: bool) {
@@ -355,15 +373,17 @@ impl App {
         };
         let name = self.creation_name(folder);
         self.send(if folder {
-            Request::new(
-                "create_folder",
-                json!({"parent_id":parent,"position":position,"name":name}),
-            )
+            Request::CreateFolder {
+                parent_id: parent,
+                position,
+                name,
+            }
         } else {
-            Request::new(
-                "create_button",
-                json!({"folder_id":parent,"position":position,"name":name}),
-            )
+            Request::CreateButton {
+                folder_id: parent,
+                position,
+                name,
+            }
         });
         self.new_name.clear();
     }
@@ -394,7 +414,7 @@ impl App {
     fn action_name(&self, action: &NewAction) -> String {
         match action {
             NewAction::Launcher(entry) => entry.name.clone(),
-            NewAction::Wait => tr(self.es, "Wait", "Esperar").into(),
+            NewAction::Wait => tr(self.es, "Wait").into(),
             NewAction::Plugin(entry) => entry.label.clone(),
         }
     }
@@ -403,16 +423,55 @@ impl App {
         if let Some(id) = self.slot_id(position) {
             self.add_action(&id, action);
         } else if let Some(folder) = self.folder() {
-            self.send(Request::new(
-                "create_button",
-                json!({"folder_id":folder,"position":position,"name":self.action_name(action)}),
-            ));
+            self.send(Request::CreateButton {
+                folder_id: folder,
+                position,
+                name: self.action_name(action),
+            });
             self.pending_action = Some((position, action.clone()));
         }
     }
     fn pump(&mut self, ctx: &egui::Context) {
+        if let Some(notices) = &self.notices {
+            let (connection, changed) = notices.take();
+            if connection == Some(true) {
+                // Even when disconnect/reconnect coalesced before this frame, the old
+                // request socket belongs to the old session and must be replaced.
+                self.reconnect_needed = true;
+                self.connected = false;
+            }
+            if connection == Some(false) {
+                self.connected = false;
+            }
+            for kind in changed {
+                match kind {
+                    rad_api::NoticeKind::Board => {
+                        self.force = true;
+                        self.plugins.visual_due = true;
+                    }
+                    rad_api::NoticeKind::Inspector => {
+                        self.inspect_needed = self.selected().is_some()
+                    }
+                    rad_api::NoticeKind::Overview => self.overview_due = true,
+                    rad_api::NoticeKind::Execution => self.result_due = true,
+                    rad_api::NoticeKind::Plugins => {
+                        self.plugins.dependency_status_due = true;
+                        self.plugins.resources.clear();
+                        self.plugins.manifest_invalidated |=
+                            self.plugins.manifest_pending.is_some();
+                    }
+                    rad_api::NoticeKind::Catalog => self.plugins.catalog_loaded = false,
+                    rad_api::NoticeKind::Dependencies => self.plugins.dependencies.reset(),
+                }
+            }
+        }
         if let Some(event) = self.worker.poll() {
+            // Some handlers finish this turn early; keep newly invalidated work runnable.
+            ctx.request_repaint();
             self.palette = event.palette;
+            // One recovery attempt per lost RPC, including a definitely-unsent mutation.
+            // A failed Connect starts disconnected, so it cannot trigger a retry loop.
+            let connection_lost = self.connected && !event.connected;
             self.connected = event.connected;
             match event.result {
                 Ok(Reply::PluginApplied(r)) => {
@@ -421,13 +480,9 @@ impl App {
                         self.plugins.form = None;
                         self.force = true;
                         self.inspect_needed = self.selected().is_some();
-                        self.say(tr(self.es, "Saved", "Guardado"));
+                        self.say(tr(self.es, "Saved"));
                     } else {
-                        self.warn(tr(
-                            self.es,
-                            "Not confirmed — draft retained",
-                            "Sin confirmar — borrador conservado",
-                        ));
+                        self.warn(tr(self.es, "Not confirmed — draft retained"));
                     }
                 }
                 Ok(Reply::PluginCatalog(catalog)) => {
@@ -438,6 +493,15 @@ impl App {
                     self.plugins.catalog_loaded = true;
                     self.plugins.catalog = catalog;
                     let selection_changed = self.plugins.status["items"] != status["items"];
+                    self.plugins.resources.retain(|id, (version, _)| {
+                        status["items"].as_array().is_some_and(|items| {
+                            items.iter().any(|item| {
+                                item["id"] == *id
+                                    && item["selected"]
+                                        == serde_json::to_value(*version).expect("version")
+                            })
+                        })
+                    });
                     self.plugins.status = status;
                     if selection_changed {
                         self.plugins.dependencies.reset();
@@ -451,6 +515,12 @@ impl App {
                     self.accept_plugin_visuals(ctx, &revision, visuals);
                 }
                 Err(e) => {
+                    if connection_lost {
+                        self.reconnect_needed = true;
+                        self.force = true;
+                        self.overview_due = true;
+                        self.inspect_needed = self.selected().is_some();
+                    }
                     if event.plugin_dependencies {
                         self.plugins.dependencies.fail(&e);
                         if e.code == "cursor_expired" {
@@ -458,15 +528,30 @@ impl App {
                         }
                     }
                     if e.unknown {
+                        self.resolving_unknown = true;
                         self.force = true;
+                        if !event.connected {
+                            self.reconnect_needed = true;
+                        }
                         self.plugins.dependencies.reset();
                         self.plugins.dependency_status_due = true;
+                    }
+                    if event.plugin_manifest {
+                        self.plugins.manifest_pending = None;
+                        self.plugins.manifest_invalidated = false;
                     }
                     if event.plugin_admin {
                         self.plugins.admin_pending = false;
                     }
                     if event.plugin_apply {
                         self.plugins.form_pending = false;
+                        if e.unknown
+                            && let Some((crate::plugins::FormTarget::Settings(id), _)) =
+                                self.plugins.form.as_ref()
+                        {
+                            self.plugins.settings_reload = Some(id.clone());
+                            self.plugins.form = None;
+                        }
                     }
                     if event.plugin_form {
                         self.plugins.form_loading = false;
@@ -495,13 +580,9 @@ impl App {
                     }
                     let reason = crate::status::describe_failure(&e, self.es);
                     if e.unknown {
-                        self.warn(format!(
+                        self.say(format!(
                             "{}: {reason}",
-                            tr(
-                                self.es,
-                                "Outcome unknown; not retried",
-                                "Resultado incierto; no reintentado"
-                            )
+                            tr(self.es, "Checking what changed…")
                         ));
                     } else if e.code == "runtime_unavailable" {
                         // The bar already says so, next to the way out.
@@ -523,19 +604,29 @@ impl App {
                     self.attempted = true;
                     self.connected = true;
                     self.force = true;
+                    self.overview_due = true;
                     self.catalog_due = Some(0);
                     self.say("");
                 }
                 Ok(Reply::Refresh(r)) => {
-                    if !self.settings_open {
-                        self.settings = r.status["settings"].clone();
+                    if !r.status.is_null() {
+                        if !self.settings_open {
+                            self.settings = r.status["settings"].clone();
+                        }
+                        if self.status["view_revision"] != r.status["view_revision"] {
+                            self.plugins.dependencies.reset();
+                            self.plugins.dependency_status_due = true;
+                            self.plugins.catalog_loaded = false;
+                        }
+                        self.status = r.status;
                     }
-                    if self.status["view_revision"] != r.status["view_revision"] {
-                        self.plugins.dependencies.reset();
-                        self.plugins.dependency_status_due = true;
-                        self.plugins.catalog_loaded = false;
+                    if self.resolving_unknown {
+                        self.resolving_unknown = false;
+                        self.say(tr(
+                            self.es,
+                            "State refreshed — check your change before trying again",
+                        ));
                     }
-                    self.status = r.status;
                     if let Some(board) = r.board {
                         let changed_folder = self
                             .board
@@ -554,6 +645,14 @@ impl App {
                         }) {
                             self.plugins.visuals.clear();
                         }
+                        if self
+                            .inspection
+                            .as_ref()
+                            .is_some_and(|inspection| !crate::session::coherent(&board, inspection))
+                        {
+                            self.inspection = None;
+                            self.inspect_needed = self.selected().is_some();
+                        }
                         self.board = Some(board);
                         if changed_folder {
                             self.control.select(None);
@@ -569,9 +668,18 @@ impl App {
                             self.select(position, Some(id));
                         }
                     }
-                    self.force = false;
                 }
                 Ok(Reply::Inspection(v)) => {
+                    if self
+                        .board
+                        .as_ref()
+                        .is_some_and(|board| !crate::session::coherent(board, &v))
+                    {
+                        self.force = true;
+                        self.inspect_needed = self.selected().is_some();
+                        self.inspection = None;
+                        return;
+                    }
                     if v.button["id"].as_str() == self.control.selected() {
                         self.draft = Draft::load(&v);
                         self.inspection = Some(v);
@@ -589,9 +697,17 @@ impl App {
                     operation,
                     response: r,
                 }) if operation == "result" => {
-                    self.say_run(&r.data["execution_id"], &string(&r.data["state"]));
-                    if r.data["state"] != "running" {
-                        self.control.terminal();
+                    if let rad_api::ResponseData::Execution(result) = r.data {
+                        let state = match result.state {
+                            rad_api::ExecutionState::Running => "running",
+                            rad_api::ExecutionState::Succeeded => "succeeded",
+                            rad_api::ExecutionState::Failed => "failed",
+                            rad_api::ExecutionState::TimedOut => "timed_out",
+                        };
+                        self.say_run(&json!(result.execution_id), state);
+                        if result.state != rad_api::ExecutionState::Running {
+                            self.control.terminal();
+                        }
                     }
                 }
                 Ok(Reply::NoAppIcon) => {
@@ -599,7 +715,6 @@ impl App {
                         self.say(tr(
                             self.es,
                             "This application has no PNG or JPEG icon to use",
-                            "Esta aplicación no trae un icono PNG o JPEG que usar",
                         ));
                     }
                 }
@@ -608,9 +723,26 @@ impl App {
                     response: r,
                 }) => {
                     self.icon_asked = false;
+                    if operation == "plugin_manifest" {
+                        if let rad_api::ResponseData::PluginManifest(view) = r.data
+                            && let Err(error) = self.plugins.accept_manifest(view)
+                        {
+                            self.warn(crate::status::describe_failure(&error, self.es));
+                        }
+                        return;
+                    }
+                    if operation == "plugin_log" {
+                        if let rad_api::ResponseData::PluginLog(log) = r.data
+                            && log.plugin_id == self.plugins.log_selected
+                        {
+                            self.plugins.log = Some(log);
+                        }
+                        return;
+                    }
                     if operation == "plugin_dependencies" {
-                        if let Err(error) = self.plugins.dependencies.accept(r.data)
-                            && error.code != "cursor_expired"
+                        if let Err(error) = self.plugins.dependencies.accept(
+                            serde_json::to_value(r.data).expect("typed dependency projection"),
+                        ) && error.code != "cursor_expired"
                         {
                             self.warn(crate::status::describe_failure(&error, self.es));
                             self.message_code = error.code;
@@ -622,24 +754,21 @@ impl App {
                         self.settings_open = true;
                         self.settings_tab = settings::Tab::Plugins;
                         self.plugins.section_open = true;
-                        self.say(tr(
-                            self.es,
-                            "Configuration restored",
-                            "Configuración restaurada",
-                        ));
+                        self.say(tr(self.es, "Configuration restored"));
                         self.force = true;
                         self.inspect_needed = self.selected().is_some();
                         return;
                     }
+                    if operation == "plugin_retry" {
+                        self.plugins.dependency_status_due = true;
+                        self.say(tr(self.es, "Plugin will retry when needed"));
+                        return;
+                    }
                     if operation == "plugin_admin" {
                         self.plugins.admin_pending = false;
-                        self.plugins.due = 0;
+                        self.plugins.dependency_status_due = true;
                         self.plugins.status["state"] = json!("preparing");
-                        self.say(tr(
-                            self.es,
-                            "Preparing — not yet activated",
-                            "Preparando — aún no activado",
-                        ));
+                        self.say(tr(self.es, "Preparing — not yet activated"));
                         return;
                     }
                     // The worker decides against what the runtime now holds: the key takes
@@ -653,18 +782,19 @@ impl App {
                         });
                     }
                     if r.status == rad_client::response::Status::Admitted
-                        && let Some(id) = r.data["execution_id"].as_str()
+                        && let rad_api::ResponseData::Admitted(data) = &r.data
                     {
-                        self.control.admitted(id.into());
+                        self.control.admitted(data.execution_id.clone());
+                        self.result_due = true;
                     }
                     match r.status {
                         rad_client::response::Status::Admitted => {
-                            self.say_run(&r.data["execution_id"], "running")
+                            if let rad_api::ResponseData::Admitted(data) = &r.data {
+                                self.say_run(&json!(data.execution_id), "running")
+                            }
                         }
-                        rad_client::response::Status::Applied => {
-                            self.say(tr(self.es, "Saved", "Guardado"))
-                        }
-                        _ => self.say(tr(self.es, "Updated", "Actualizado")),
+                        rad_client::response::Status::Applied => self.say(tr(self.es, "Saved")),
+                        _ => self.say(tr(self.es, "Updated")),
                     };
                     self.force = true;
                     self.inspect_needed = self.selected().is_some();
@@ -684,10 +814,7 @@ impl App {
                 Ok(Reply::Theme) => {}
                 Ok(Reply::TransferProgress(n)) => {
                     self.transfer_active = true;
-                    self.say(format!(
-                        "{} {n}",
-                        tr(self.es, "Transferred bytes:", "Bytes transferidos:")
-                    ));
+                    self.say(format!("{} {n}", tr(self.es, "Transferred bytes:")));
                 }
                 Ok(Reply::TransferFinished { kind, data }) => {
                     self.transfer_active = false;
@@ -695,11 +822,7 @@ impl App {
                         TransferKind::Image => {
                             self.draft.image = string(&data["media_ref"]);
                             self.image_path.clear();
-                            self.say(tr(
-                                self.es,
-                                "Image prepared: save within 60 seconds",
-                                "Imagen preparada: guardar antes de 60 segundos",
-                            ));
+                            self.say(tr(self.es, "Image prepared: save within 60 seconds"));
                         }
                         TransferKind::Restore => {
                             self.restore_token = data["transfer_id"].as_str().map(str::to_owned);
@@ -709,70 +832,87 @@ impl App {
                                     "{} · {count} plugins",
                                     tr(
                                         self.es,
-                                        "This backup will replace your current configuration",
-                                        "Se reemplazará tu configuración actual por la de esta copia"
+                                        "This backup will replace your current configuration"
                                     )
                                 ),
                                 None => tr(
                                     self.es,
                                     "This backup will replace your current configuration",
-                                    "Se reemplazará tu configuración actual por la de esta copia",
                                 )
                                 .into(),
                             };
                         }
-                        TransferKind::Export => {
-                            self.say(tr(self.es, "Export finished", "Exportación terminada"))
-                        }
+                        TransferKind::Export => self.say(tr(self.es, "Export finished")),
                     }
                 }
             }
         }
-        if !self.worker.busy() {
+        if self.reconnect_needed && !self.worker.busy() {
+            self.reconnect_needed = false;
+            let _ = self.worker.submit(Job::Connect);
+        }
+        if !self.worker.busy() && self.connected {
             let now = self.now_ms();
-            let visible = ctx.input(|i| {
-                i.viewport().focused.unwrap_or(true) && !i.viewport().minimized.unwrap_or(false)
+            let next_image = self.board.as_ref().and_then(|b| {
+                b.buttons.iter().find_map(|button| {
+                    let reference = button.appearance["image"].as_str()?;
+                    if self.textures.contains_key(reference)
+                        || self.image_attempts.contains(reference)
+                    {
+                        return None;
+                    }
+                    Some((
+                        string(&button.entity["id"]),
+                        reference.to_owned(),
+                        string(&button.entity["view_revision"]),
+                    ))
+                })
             });
-            if self.connected && (self.force || self.poll.due(now, visible, false)) {
-                let _ = self.worker.submit(Job::Refresh(self.force));
-            } else if self.connected
-                && self.control.result_request().is_some()
-                && self.result_poll.due(now, visible, false)
-            {
-                let _ = self
-                    .worker
-                    .submit(Job::Request(self.control.result_request().unwrap()));
-            } else if self.connected && self.transfer_active {
-                let _ = self.worker.submit(Job::TransferStep);
-            } else if self.connected && self.inspect_needed {
-                if let Some(id) = self.selected() {
-                    let _ = self.worker.submit(Job::Inspect(id));
+            match self.schedule.choose([
+                self.force || self.overview_due,
+                self.result_due && self.control.result_request().is_some(),
+                self.transfer_active,
+                self.inspect_needed,
+                self.catalog_due.is_some_and(|due| now >= due),
+                self.plugins.has_work(),
+                next_image.is_some(),
+            ]) {
+                Some(0) => {
+                    let force = std::mem::take(&mut self.force);
+                    let overview = std::mem::take(&mut self.overview_due)
+                        || self.status.is_null()
+                        || self.resolving_unknown;
+                    let _ = self.worker.submit(Job::Refresh {
+                        board: force,
+                        overview,
+                    });
                 }
-                self.inspect_needed = false;
-            } else if self.connected && self.catalog_due.is_some_and(|due| now >= due) {
-                let _ = self
-                    .worker
-                    .submit(Job::Request(self.catalog.request(false)));
-                self.catalog_due = None;
-            } else if self.connected && self.poll_plugins(now, visible) {
-                // Plugin work was submitted by its bounded scheduler.
-            } else if self.connected {
-                let next = self.board.as_ref().and_then(|b| {
-                    b.buttons.iter().find_map(|button| {
-                        let reference = button.appearance["image"].as_str()?;
-                        if self.textures.contains_key(reference)
-                            || self.image_attempts.contains(reference)
-                        {
-                            return None;
-                        }
-                        Some((
-                            string(&button.entity["id"]),
-                            reference.to_owned(),
-                            string(&button.entity["view_revision"]),
-                        ))
-                    })
-                });
-                if let Some((id, reference, revision)) = next {
+                Some(1) => {
+                    self.result_due = false;
+                    let _ = self
+                        .worker
+                        .submit(Job::Request(self.control.result_request().unwrap()));
+                }
+                Some(2) => {
+                    let _ = self.worker.submit(Job::TransferStep);
+                }
+                Some(3) => {
+                    self.inspect_needed = false;
+                    if let Some(id) = self.selected() {
+                        let _ = self.worker.submit(Job::Inspect(id));
+                    }
+                }
+                Some(4) => {
+                    self.catalog_due = None;
+                    let _ = self
+                        .worker
+                        .submit(Job::Request(self.catalog.request(false)));
+                }
+                Some(5) => {
+                    self.poll_plugins();
+                }
+                Some(6) => {
+                    let (id, reference, revision) = next_image.unwrap();
                     self.image_attempts.insert(reference.clone());
                     let _ = self.worker.submit(Job::Image {
                         id,
@@ -780,15 +920,13 @@ impl App {
                         revision,
                     });
                 }
-            } else if !self.connected && self.poll.due(now, visible, false) {
-                let _ = self.worker.submit(Job::Theme);
+                _ => {}
             }
         }
         if self.styled.as_ref() != Some(&self.palette) {
             Look::new(&self.palette).apply(ctx);
             self.styled = Some(self.palette.clone());
         }
-        ctx.request_repaint_after(Duration::from_millis(50));
     }
     /// Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) reach the runtime unless a text field wants them.
     fn shortcuts(&mut self, ctx: &egui::Context) {
@@ -801,15 +939,35 @@ impl App {
                 || i.consume_key(Modifiers::COMMAND, Key::Y)
         });
         if redo {
-            self.send(Request::new("redo", json!({})));
+            self.send(Request::Redo {});
         } else if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Z)) {
-            self.send(Request::new("undo", json!({})));
+            self.send(Request::Undo {});
         }
     }
 }
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if !self.wake_registered {
+            let wake = ctx.clone();
+            self.worker.set_waker(move || wake.request_repaint());
+            let wake = ctx.clone();
+            self.options_worker
+                .set_waker(move || wake.request_repaint());
+            let wake = ctx.clone();
+            self.credential_worker
+                .set_waker(move || wake.request_repaint());
+            let wake = ctx.clone();
+            self.notices = Some(crate::notices::Notices::start(
+                self.runtime.clone(),
+                move || wake.request_repaint(),
+            ));
+            let wake = ctx.clone();
+            self.search_wake = Some(crate::worker::WakeTimer::new(move || {
+                wake.request_repaint()
+            }));
+            self.wake_registered = true;
+        }
         self.pump(&ctx);
         self.credentials.pump(&mut self.credential_worker);
         if self.credential_selection != self.selected() {
@@ -843,9 +1001,12 @@ impl eframe::App for App {
         // The keys come first: the inspector takes what a comfortable grid leaves over,
         // and in a short tile never more than what still shows all four rows.
         let room = ui.available_height();
-        let inspector = (room - deck::COMFORTABLE_HEIGHT)
-            .clamp(176., 420.)
-            .min(room - deck::MIN_HEIGHT);
+        let comfortable = self
+            .board
+            .as_ref()
+            .map_or(0., |b| deck::comfortable_height(b.grid));
+        let minimum = self.board.as_ref().map_or(0., |b| deck::min_height(b.grid));
+        let inspector = (room - comfortable).clamp(176., 420.).min(room - minimum);
         egui::Panel::bottom("inspector")
             .exact_size(inspector.max(120.))
             .resizable(false)
@@ -865,5 +1026,142 @@ impl eframe::App for App {
         self.settings_window(&ctx, &look);
         self.plugin_form_window(&ctx);
         deck::drag_ghost(&ctx, &look);
+        if self.connected
+            && !self.worker.busy()
+            && (self.force
+                || self.overview_due
+                || self.inspect_needed
+                || self.transfer_active
+                || self.plugins.has_work()
+                || self.catalog_due.is_some_and(|due| self.now_ms() >= due)
+                || (self.result_due && self.control.result_request().is_some()))
+        {
+            ctx.request_repaint();
+        }
+    }
+}
+
+#[cfg(test)]
+mod connection_loss_tests {
+    use super::*;
+    #[test]
+    fn overview_bar_shows_plugin_attention_and_inaccessible_deck() {
+        let root =
+            std::env::temp_dir().join(format!("rad-editor-bar-no-runtime-{}", std::process::id()));
+        let mut app = App::with_preferences_path(root.clone(), root.join("no-theme"), None);
+        app.es = crate::preferences::Language::En;
+        app.connected = true;
+        app.status = serde_json::json!({"deck_state":"inaccessible", "plugins":[
+            {"id":"secret-technical-id", "code":"needs_credentials"},
+            {"id":"legacy", "code":"needs_update"},
+            {"id":"failed", "code":"failed"}
+        ]});
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            app.bar(ui, &Look::new(&Default::default()))
+        });
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::epaint::Shape::Text(t) = &shape.shape {
+                    Some(t.galley.job.text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for expected in [
+            "Deck inaccessible — editor available",
+            "Needs password",
+            "Needs update",
+            "Not working",
+            "Plugins",
+        ] {
+            assert!(texts.contains(&expected), "missing {expected}: {texts:?}");
+        }
+        assert!(
+            !texts
+                .iter()
+                .any(|text| text.contains("secret-technical-id"))
+        );
+        let plugins_button = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::epaint::Shape::Text(t) = &shape.shape {
+                    (t.galley.job.text == "Plugins").then(|| t.pos + t.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        let input = egui::RawInput {
+            events: vec![
+                egui::Event::PointerMoved(plugins_button),
+                egui::Event::PointerButton {
+                    pos: plugins_button,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+                egui::Event::PointerButton {
+                    pos: plugins_button,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            ],
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| app.bar(ui, &Look::new(&Default::default())));
+        assert!(app.settings_open);
+        assert!(app.settings_tab == settings::Tab::Plugins);
+    }
+    #[test]
+    fn not_applied_disconnect_attempts_one_reconnect_and_never_replays_mutation() {
+        let root =
+            std::env::temp_dir().join(format!("rad-editor-no-runtime-{}", std::process::id()));
+        let mut app = App::with_preferences_path(root.clone(), root.join("no-theme"), None);
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = sent.clone();
+        app.worker = crate::worker::Worker::spawn(move |job| {
+            record.lock().unwrap().push(match job {
+                Job::Request(Request::Undo {}) => "undo",
+                Job::Connect => "connect",
+                _ => panic!("unexpected job: {job:?}"),
+            });
+            crate::native::Event {
+                plugin_apply: false,
+                plugin_admin: false,
+                plugin_manifest: false,
+                plugin_dependencies: false,
+                plugin_form: false,
+                plugin_visual: false,
+                connected: false,
+                transfer_job: false,
+                palette: Palette::default(),
+                result: Err(crate::session::Error {
+                    code: "runtime_unavailable".into(),
+                    cause: None,
+                    unknown: false,
+                }),
+            }
+        });
+        app.connected = true;
+        app.send(Request::Undo {});
+        let ctx = egui::Context::default();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while app.worker.busy() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "reconnection must be bounded"
+            );
+            app.pump(&ctx);
+            std::thread::yield_now();
+        }
+        app.pump(&ctx);
+        assert_eq!(*sent.lock().unwrap(), ["undo", "connect"]);
+        assert!(!app.connected);
     }
 }

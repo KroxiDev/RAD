@@ -38,8 +38,12 @@ fn official_metrics_interoperates_without_hardware() {
             .success()
     );
     let bytes = fs::read(&output).unwrap();
-    let candidate =
-        rad_plugin_package::Candidate::parse(&bytes, 3, rad_plugin_host::TARGET).unwrap();
+    let candidate = rad_plugin_package::Candidate::parse(
+        &bytes,
+        rad_plugin_contract::HOST_API,
+        rad_plugin_host::TARGET,
+    )
+    .unwrap();
     assert_eq!(candidate.manifest().id, "org.rad.metrics");
     assert!(candidate.manifest().actions.is_empty());
     assert_eq!(
@@ -53,12 +57,20 @@ fn official_metrics_interoperates_without_hardware() {
     );
     assert_eq!(rad_plugin_package::encode(&candidate), bytes);
     assert!(
-        rad_plugin_package::Candidate::parse(&bytes[..bytes.len() - 1], 3, rad_plugin_host::TARGET)
-            .is_err()
+        rad_plugin_package::Candidate::parse(
+            &bytes[..bytes.len() - 1],
+            rad_plugin_contract::HOST_API,
+            rad_plugin_host::TARGET
+        )
+        .is_err()
     );
     let store = root.0.join("data/rad/plugins");
-    let mut manager =
-        rad_plugin_manager::Manager::create(&store, 3, rad_plugin_host::TARGET).unwrap();
+    let mut manager = rad_plugin_manager::Manager::create(
+        &store,
+        rad_plugin_contract::HOST_API,
+        rad_plugin_host::TARGET,
+    )
+    .unwrap();
     let mut change = Some(
         manager
             .prepare(rad_plugin_manager::Operation::Install, Some(&bytes))
@@ -91,8 +103,12 @@ fn official_metrics_interoperates_without_hardware() {
         check.success(),
         "I2 IPC uninstall and retained placeholder must be verified"
     );
-    let mut manager =
-        rad_plugin_manager::Manager::open(&store, 3, rad_plugin_host::TARGET).unwrap();
+    let mut manager = rad_plugin_manager::Manager::open(
+        &store,
+        rad_plugin_contract::HOST_API,
+        rad_plugin_host::TARGET,
+    )
+    .unwrap();
     assert!(manager.installed().unwrap().is_empty());
     let mut change = Some(
         manager
@@ -116,21 +132,23 @@ fn official_metrics_interoperates_without_hardware() {
         check.success(),
         "I2 compatible reinstall must recover saved visuals"
     );
-    let fault_executable = fs::read(
-        repo.join("target/conformance/metrics-fixture/release/metrics-conformance-fixture"),
-    )
-    .unwrap();
+    let fault_executable =
+        fs::read(repo.join("target/plugins/release/metrics-conformance-fixture")).unwrap();
     let fault_manifest = fs::read(repo.join("plugins/metrics/manifest.json")).unwrap();
     let fault_candidate = rad_plugin_package::Candidate::from_parts(
         &fault_manifest,
         &fault_executable,
-        3,
+        rad_plugin_contract::HOST_API,
         rad_plugin_host::TARGET,
     )
     .unwrap();
     let fault_bytes = rad_plugin_package::encode(&fault_candidate);
-    let mut manager =
-        rad_plugin_manager::Manager::open(&store, 3, rad_plugin_host::TARGET).unwrap();
+    let mut manager = rad_plugin_manager::Manager::open(
+        &store,
+        rad_plugin_contract::HOST_API,
+        rad_plugin_host::TARGET,
+    )
+    .unwrap();
     let mut change = Some(
         manager
             .prepare(

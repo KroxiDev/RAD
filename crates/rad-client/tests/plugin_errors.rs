@@ -29,9 +29,9 @@ fn rejected(id: u64, code: &str) -> Response {
         id: Some(id.to_string()),
         session_id: Some(SESSION.into()),
         status: Status::Error,
-        data: Value::Null,
+        data: rad_api::ResponseData::None,
         error: Some(Error {
-            code: code.into(),
+            code: rad_api::ErrorCode::parse(code).unwrap(),
             message: "Request rejected".into(),
             details: json!({}),
             outcome: Some(Outcome::NotApplied),
@@ -43,22 +43,14 @@ fn plugin_error_roundtrip_is_closed_and_correlated() {
     for code in CODES {
         let original = rejected(167, code);
         let bytes = serde_json::to_vec(&original).unwrap();
-        assert_eq!(
-            Response::decode(&bytes, 167, Some(SESSION)).unwrap(),
-            original
-        );
-        assert!(Response::decode(&bytes, 168, Some(SESSION)).is_err());
-        assert!(Response::decode(&bytes, 167, Some("00000000000000000000000000000368")).is_err());
+        assert_eq!(decode(&bytes, 167, Some(SESSION)).unwrap(), original);
+        assert!(decode(&bytes, 168, Some(SESSION)).is_err());
+        assert!(decode(&bytes, 167, Some("00000000000000000000000000000368")).is_err());
     }
     for code in ["plugin_arbitrary", "plugin_in_use_extra", "NETWORK", ""] {
-        assert!(
-            Response::decode(
-                &serde_json::to_vec(&rejected(167, code)).unwrap(),
-                167,
-                Some(SESSION)
-            )
-            .is_err()
-        );
+        let mut invalid = serde_json::to_value(rejected(167, "plugin_in_use")).unwrap();
+        invalid["error"]["code"] = json!(code);
+        assert!(decode(&serde_json::to_vec(&invalid).unwrap(), 167, Some(SESSION)).is_err());
     }
 }
 #[test]
@@ -97,7 +89,7 @@ fn plugin_admin_rejections_keep_not_applied_and_connection_usable() {
                     id: Some(n.to_string()),
                     session_id: Some(SESSION.into()),
                     status: Status::Ok,
-                    data: json!({"protocol":1,"session_id":SESSION,"limits":{},"capabilities":["plugin_admin","status"]}),
+                    data: rad_api::ResponseData::Hello(serde_json::from_value(json!({"protocol":1,"session_id":SESSION,"limits":serde_json::from_str::<serde_json::Value>(include_str!("../../rad-api/vectors/limits-v1.json")).unwrap(),"capabilities":["plugin_admin","status"]})).unwrap()),
                     error: None,
                 }
             } else if n <= CODES.len() + 1 {
@@ -110,7 +102,7 @@ fn plugin_admin_rejections_keep_not_applied_and_connection_usable() {
                     id: Some(n.to_string()),
                     session_id: Some(SESSION.into()),
                     status: Status::Ok,
-                    data: json!({"storage_state":"ready"}),
+                    data: rad_api::ResponseData::Status(serde_json::from_value(json!({"storage_state":"ready","view_revision":"1","active_folder_id":"f1","grid":{"columns":8,"rows":4}})).unwrap()),
                     error: None,
                 }
             };
@@ -128,11 +120,27 @@ fn plugin_admin_rejections_keep_not_applied_and_connection_usable() {
             assert_eq!(response, rejected((i + 2) as u64, code));
         }
         let response = client.request("status", json!({}))?;
-        assert_eq!(response.data["storage_state"], "ready");
+        assert_eq!(
+            serde_json::to_value(&response.data).unwrap()["storage_state"],
+            "ready"
+        );
         Ok::<_, rad_client::connection::Failure>(())
     })();
     drop(client);
     server.join().unwrap();
     std::fs::remove_dir_all(root).unwrap();
     result.expect("a correlated not_applied plugin rejection must not poison the client");
+}
+
+fn decode(
+    bytes: &[u8],
+    id: u64,
+    session: Option<&str>,
+) -> Result<Response, rad_api::response::InvalidResponse> {
+    Response::decode_value(
+        rad_wire::parse_json(bytes).map_err(|_| rad_api::response::InvalidResponse)?,
+        id,
+        session,
+        rad_api::Operation::PluginAdmin,
+    )
 }

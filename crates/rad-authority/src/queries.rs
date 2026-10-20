@@ -37,6 +37,7 @@ pub struct ButtonView {
     pub binding: Binding,
     pub name: String,
     pub mode: Mode,
+    pub gesture: rad_core::configuration::Gesture,
     pub permissions: Permissions,
     pub actions: Vec<Visible<ActionView>>,
 }
@@ -137,6 +138,7 @@ impl Authority {
                         binding: b.binding,
                         name: b.name.clone(),
                         mode: b.mode,
+                        gesture: b.gesture,
                         permissions,
                         actions: b.actions.iter().map(action_view).collect(),
                     })
@@ -701,5 +703,22 @@ impl Authority {
                 })
                 .collect(),
         )
+    }
+}
+
+impl Authority {
+    /// Editor-only access to retained non-secret plugin-owned settings. Bytes stay
+    /// opaque even when the corresponding package is missing or incompatible.
+    pub fn plugin_settings(&self, origin: Origin, plugin: &str) -> Option<&[u8]> {
+        (origin == Origin::Editor)
+            .then(|| {
+                self.published
+                    .configuration()
+                    .data()
+                    .plugin_settings
+                    .get(plugin)
+                    .map(|settings| settings.bytes())
+            })
+            .flatten()
     }
 }

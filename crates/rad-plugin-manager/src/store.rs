@@ -458,6 +458,9 @@ impl Manager {
     }
     pub fn executable(&self, id: &str) -> Result<File, Error> {
         let v = self.index.plugins.get(id).ok_or(Error::InvalidOperation)?;
+        self.load(v.current, id)?
+            .validate(self.host_api, &self.target)
+            .map_err(|_| Error::Incompatible)?;
         self.root
             .child(&crate::ledger::slot(v.current))?
             .file("plugin")
@@ -489,20 +492,19 @@ impl Manager {
         }
         let manifest = dir.read("manifest.json", 65536)?;
         let binary = dir.read("plugin", 67108864)?;
-        let candidate = rad_plugin_package::Candidate::from_parts(
+        let metadata = rad_plugin_package::Candidate::from_parts(
             &manifest,
             &binary,
             self.host_api,
             &self.target,
         )
-        .map_err(|_| Error::CorruptState)?;
-        if candidate.manifest().id != id {
+        .map(|candidate| candidate.manifest().clone())
+        .or_else(|_| crate::prerelease::inventory(&manifest, &binary, &self.target))?;
+        if metadata.id != id {
             return Err(Error::CorruptState);
         }
-        self.manifests
-            .borrow_mut()
-            .insert(slot, candidate.manifest().clone());
-        Ok(candidate.manifest().clone())
+        self.manifests.borrow_mut().insert(slot, metadata.clone());
+        Ok(metadata)
     }
 }
 

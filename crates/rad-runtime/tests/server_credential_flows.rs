@@ -35,20 +35,30 @@ fn seed(store: &Path) {
     let plugins = store.join("plugins");
     let reinstall = plugins.exists();
     let mut manager = if reinstall {
-        rad_plugin_manager::Manager::open(&plugins, 3, rad_plugin_host::TARGET).unwrap()
+        rad_plugin_manager::Manager::open(
+            &plugins,
+            rad_plugin_contract::HOST_API,
+            rad_plugin_host::TARGET,
+        )
+        .unwrap()
     } else {
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&plugins)
             .unwrap();
-        rad_plugin_manager::Manager::create(&plugins, 3, rad_plugin_host::TARGET).unwrap()
+        rad_plugin_manager::Manager::create(
+            &plugins,
+            rad_plugin_contract::HOST_API,
+            rad_plugin_host::TARGET,
+        )
+        .unwrap()
     };
-    let manifest = serde_json::to_vec(&json!({"contract":1,"id":PLUGIN,"version":{"major":1,"minor":0,"patch":0},"host_min":3,"host_max":3,"targets":[rad_plugin_host::TARGET],"actions":[{"id":"authenticate","label":"Authenticate","schema":{"version":1,"fields":[{"id":"revision","label":"Revision","required":false,"kind":{"type":"dynamic_choice","depends_on":[]}}]},"credential_slots":["password"]}],"visuals":[{"id":"probe","label":"Probe","schema":{"version":1,"fields":[]},"credential_slots":["password"]}]})).unwrap();
+    let manifest = serde_json::to_vec(&json!({"contract":1,"capabilities":["credentials","dynamic_options","visual_freshness"],"id":PLUGIN,"version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[rad_plugin_host::TARGET],"actions":[{"id":"authenticate","label":"Authenticate","schema":{"version":1,"fields":[{"id":"revision","label":"Revision","required":false,"kind":{"type":"dynamic_choice","depends_on":[]}}]},"credential_slots":["password"]}],"visuals":[{"id":"probe","label":"Probe","schema":{"version":1,"fields":[]},"credential_slots":["password"]}]})).unwrap();
     let executable = std::fs::read(binaries().join("rad-plugin-credentials-fixture")).unwrap();
     let candidate = rad_plugin_package::Candidate::from_parts(
         &manifest,
         &executable,
-        3,
+        rad_plugin_contract::HOST_API,
         rad_plugin_host::TARGET,
     )
     .unwrap();
@@ -187,7 +197,7 @@ fn connect(runtime: &Path, endpoint: Endpoint) -> Client {
 fn call(client: &mut Client, op: &str, args: Value) -> Value {
     let response = client.request(op, args).unwrap();
     assert!(response.error.is_none(), "{op}: {:?}", response.error);
-    response.data
+    serde_json::to_value(response.data).unwrap()
 }
 
 /// Waits for selected metadata; credentials remain configurable while dormant.

@@ -17,6 +17,7 @@ pub(super) struct PendingOptions {
 
 pub(super) struct WaitingOptions {
     pub snapshot: Option<rad_authority::plugins::CredentialSnapshot>,
+    settings: Option<rad_plugin_contract::Parameters>,
     generation: Option<u64>,
     pub pending: PendingOptions,
     pub deadline: u64,
@@ -67,8 +68,18 @@ impl Server {
         if waiting + occupied >= 2 {
             return self.respond(key, self.error(context, "resource_exhausted", false));
         }
+        let settings = match self
+            .actor
+            .plugin_settings(Origin::Editor, &query.plugin)
+            .map(serde_json::from_slice)
+            .transpose()
+        {
+            Ok(settings) => settings,
+            Err(_) => return self.respond(key, self.error(context, "executor_unavailable", false)),
+        };
         self.waiting_options.push(WaitingOptions {
             snapshot,
+            settings,
             generation: self.actor.plugin_generation(&query.plugin),
             pending: PendingOptions {
                 key,
@@ -85,6 +96,7 @@ impl Server {
         query: &PluginOptions,
         deadline: u64,
         revision: Option<u64>,
+        settings: Option<rad_plugin_contract::Parameters>,
     ) -> Result<rad_plugin_contract::Correlation, Host> {
         if !self.actor.plugin_available(&query.plugin, query.generation) {
             return Err(Host::Unavailable);
@@ -97,7 +109,7 @@ impl Server {
             .as_mut()
             .ok_or(Host::Unavailable)?
             .plugin_host_mut()
-            .options_with_credentials(
+            .options_with_settings(
                 &query.plugin,
                 generation,
                 OptionsQuery {
@@ -108,6 +120,7 @@ impl Server {
                 },
                 deadline,
                 revision,
+                settings,
             )
     }
 
@@ -162,6 +175,7 @@ impl Server {
                 &pending.query,
                 waiting.deadline,
                 waiting.snapshot.as_ref().map(|s| s.revision()),
+                waiting.settings,
             ) {
                 Ok(c) => {
                     self.options.insert((c.generation, c.request), pending);

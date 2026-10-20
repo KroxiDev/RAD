@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 [dependencies]
+rad-api = { path = "../rad-api" }
 rad-plugin-contract = { path = "../rad-plugin-contract" }
 rad-authority = { path = "../rad-authority" }
 rad-core = { path = "../rad-core" }

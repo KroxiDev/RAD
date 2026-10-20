@@ -108,16 +108,16 @@ impl App {
     /// Draws a category title and folds or unfolds it on click. Returns whether it is open.
     fn category(&mut self, ui: &mut egui::Ui, look: &Look, category: Category) -> bool {
         let title = match category {
-            Category::Navigation => tr(self.es, "Navigation", "Navegación"),
-            Category::Timing => tr(self.es, "Timing", "Tiempo"),
-            Category::Plugins => tr(self.es, "Plugins", "Plugins"),
-            Category::Applications => tr(self.es, "Applications", "Aplicaciones"),
+            Category::Navigation => tr(self.es, "Navigation"),
+            Category::Timing => tr(self.es, "Timing"),
+            Category::Plugins => tr(self.es, "Plugins"),
+            Category::Applications => tr(self.es, "Applications"),
         };
         let open = !self.folded.contains(&category);
         let hint = if open {
-            tr(self.es, "Hide", "Ocultar")
+            tr(self.es, "Hide")
         } else {
-            tr(self.es, "Show", "Mostrar")
+            tr(self.es, "Show")
         };
         if header(ui, look, title, open).on_hover_text(hint).clicked() {
             if open {
@@ -129,8 +129,8 @@ impl App {
         open
     }
     pub(super) fn actions(&mut self, ui: &mut egui::Ui, look: &Look) {
-        ui.label(egui::RichText::new(tr(self.es, "Actions", "Acciones")).heading());
-        let hint = tr(self.es, "Search applications", "Buscar aplicaciones");
+        ui.label(egui::RichText::new(tr(self.es, "Actions")).heading());
+        let hint = tr(self.es, "Search applications");
         let search = ui.add(
             look.field(&mut self.catalog.query, hint)
                 .margin(egui::Margin {
@@ -149,8 +149,9 @@ impl App {
         );
         if search.changed() {
             self.catalog_due = Some(self.now_ms() + SEARCH_DEBOUNCE_MS);
-            // What is being searched for must not stay folded away.
-            self.folded.remove(&Category::Applications);
+            if let Some(wake) = &self.search_wake {
+                wake.schedule(std::time::Duration::from_millis(SEARCH_DEBOUNCE_MS));
+            }
         }
         ui.add_space(4.);
         egui::ScrollArea::vertical()
@@ -212,7 +213,6 @@ impl App {
             self.say(tr(
                 self.es,
                 "Drag it onto a key, or double-click to add it to the selected key",
-                "Arrástrala a una tecla, o doble clic para añadirla a la seleccionada",
             ));
         }
     }
@@ -221,7 +221,7 @@ impl App {
             ui,
             look,
             Badge::Glyph("🗀"),
-            tr(self.es, "Folder", "Carpeta"),
+            tr(self.es, "Folder"),
             Drag::Folder,
         );
         if folder.double_clicked()
@@ -232,18 +232,13 @@ impl App {
             self.say(tr(
                 self.es,
                 "Drag the folder onto an empty key, or double-click with one selected",
-                "Arrastra la carpeta a una tecla vacía, o doble clic con una seleccionada",
             ));
         }
     }
     fn application_rows(&mut self, ui: &mut egui::Ui, look: &Look) {
         if self.catalog.entries.is_empty() {
             ui.add_space(4.);
-            ui.label(look.muted_text(tr(
-                self.es,
-                "No applications found",
-                "No se encontraron aplicaciones",
-            )));
+            ui.label(look.muted_text(tr(self.es, "No applications found")));
         }
         for entry in self.catalog.entries.clone() {
             self.list_action(
@@ -255,7 +250,7 @@ impl App {
         }
         if self.catalog.next.is_some() {
             ui.add_space(6.);
-            if ui.button(tr(self.es, "More…", "Más…")).clicked() {
+            if ui.button(tr(self.es, "More…")).clicked() {
                 self.send(self.catalog.request(true));
             }
         }

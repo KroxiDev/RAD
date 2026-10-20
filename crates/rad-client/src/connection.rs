@@ -65,22 +65,38 @@ impl Client {
             next_id: 1,
             closed: false,
         };
-        let response = client.request("hello", json!({}))?;
-        if response.status != Status::Ok
-            || response.data["protocol"] != 1
-            || response.data["session_id"]
-                != response
-                    .session_id
-                    .as_deref()
-                    .map(Value::from)
-                    .unwrap_or(Value::Null)
-            || !response.data["limits"].is_object()
-            || !response.data["capabilities"].is_array()
-        {
+        let response = client.call(rad_api::Request::Hello {})?;
+        let valid = matches!(&response.data, rad_api::ResponseData::Hello(hello)
+            if hello.protocol == rad_api::VERSION && Some(hello.session_id.as_str()) == response.session_id.as_deref());
+        if response.status != Status::Ok || !valid {
             return Err(client.fail("invalid_request", Some(1), None));
         }
         client.session = response.session_id;
         Ok(client)
+    }
+    pub fn call(&mut self, request: rad_api::Request) -> Result<Response, Failure> {
+        self.call_until(request, Instant::now() + Duration::from_secs(10))
+    }
+    /// Consume a dedicated connection; ordinary RPC and subscription frames are
+    /// never multiplexed through the synchronous response reader.
+    pub fn subscribe(mut self) -> Result<Subscription, Failure> {
+        let response = self.call(rad_api::Request::Subscribe {})?;
+        if response.status != Status::Ok {
+            let code = response
+                .error
+                .as_ref()
+                .map(|e| e.code.as_str())
+                .unwrap_or("invalid_request");
+            return Err(self.fail(code, None, None));
+        }
+        self.stream
+            .set_read_timeout(None)
+            .map_err(|_| self.fail("runtime_unavailable", None, None))?;
+        Ok(Subscription {
+            stream: self.stream,
+            session: self.session.expect("connected session"),
+            cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        })
     }
     pub fn request(&mut self, operation: &str, arguments: Value) -> Result<Response, Failure> {
         self.request_until(
@@ -96,25 +112,19 @@ impl Client {
         arguments: Value,
         deadline: Instant,
     ) -> Result<Response, Failure> {
-        let mutating = !matches!(
-            operation,
-            "hello"
-                | "status"
-                | "get"
-                | "get_section"
-                | "list"
-                | "schema"
-                | "options"
-                | "launcher_catalog"
-                | "plugin_catalog"
-                | "plugin_configuration"
-                | "plugin_status"
-                | "plugin_visual"
-                | "plugin_visual_read"
-                | "result"
-                | "media_read"
-                | "transfer_read"
-        );
+        let request = rad_api::Request::parse(operation, arguments)
+            .map_err(|_| self.fail("invalid_request", None, None))?;
+        self.call_until(request, deadline)
+    }
+    pub fn call_until(
+        &mut self,
+        request: rad_api::Request,
+        deadline: Instant,
+    ) -> Result<Response, Failure> {
+        let operation = request.operation().as_str();
+        let arguments = request.arguments();
+        let operation_code = request.operation();
+        let mutating = operation_code.is_mutation();
         let prior = mutating.then_some(Outcome::NotApplied);
         if self.closed {
             return Err(self.fail("runtime_unavailable", None, prior));
@@ -156,26 +166,13 @@ impl Client {
             }
             let mut payload = vec![0; length];
             read_exact_until(&mut self.stream, &mut payload, deadline)?;
-            let response = Response::decode(&payload, id, self.session.as_deref())
+            let response = rad_wire::parse_json(&payload)
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
+                .and_then(|value| {
+                    Response::decode_value(value, id, self.session.as_deref(), operation_code)
+                        .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
+                })
                 .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-            let expected = match operation {
-                "run" => Status::Admitted,
-                "edit" | "create_folder" | "create_button" | "add_action" | "duplicate"
-                | "delete" | "move_folder" | "set_permissions" | "undo" | "redo"
-                | "set_settings" | "restore_commit" => Status::Applied,
-                _ => Status::Ok,
-            };
-            if mutating
-                && response
-                    .error
-                    .as_ref()
-                    .is_some_and(|error| error.outcome.is_none())
-            {
-                return Err(io::ErrorKind::InvalidData.into());
-            }
-            if response.status != Status::Error && response.status != expected {
-                return Err(io::ErrorKind::InvalidData.into());
-            }
             Ok(response)
         })();
         match result {
@@ -257,4 +254,67 @@ fn private_directory(path: &Path) -> bool {
     // SAFETY: geteuid has no arguments, pointer access or side effects.
     let uid = unsafe { libc::geteuid() };
     std::fs::symlink_metadata(path).is_ok_and(|m| m.uid() == uid && m.mode() & 0o077 == 0)
+}
+
+/// Blocking event source for an editor worker. There is no periodic timeout.
+pub struct Subscription {
+    stream: UnixStream,
+    session: String,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+pub struct SubscriptionCancel(UnixStream, std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl SubscriptionCancel {
+    pub fn cancel(&self) {
+        self.1.store(true, std::sync::atomic::Ordering::Release);
+        let _ = self.0.shutdown(Shutdown::Both);
+    }
+}
+impl Subscription {
+    pub fn cancellation(&self) -> io::Result<SubscriptionCancel> {
+        self.stream
+            .try_clone()
+            .map(|stream| SubscriptionCancel(stream, self.cancelled.clone()))
+    }
+    pub fn recv(&mut self) -> Result<rad_api::Notice, Failure> {
+        let result = (|| {
+            if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let mut header = [0; 4];
+            self.stream.read_exact(&mut header)?;
+            let size = u32::from_be_bytes(header) as usize;
+            if !(1..=4096).contains(&size) {
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+            let mut bytes = vec![0; size];
+            self.stream.read_exact(&mut bytes)?;
+            let value = rad_wire::parse_json(&bytes)
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+            let notice = rad_api::Notice::decode(value)
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+            if notice.v != rad_api::VERSION
+                || notice.session_id != self.session
+                || notice.revision.parse::<u64>().is_err()
+            {
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+            if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            Ok(notice)
+        })();
+        result.map_err(|e: io::Error| {
+            let _ = self.stream.shutdown(Shutdown::Both);
+            Failure {
+                code: if e.kind() == io::ErrorKind::InvalidData {
+                    "invalid_request"
+                } else {
+                    "runtime_unavailable"
+                },
+                id: None,
+                session_id: Some(self.session.clone()),
+                outcome: None,
+            }
+        })
+    }
 }

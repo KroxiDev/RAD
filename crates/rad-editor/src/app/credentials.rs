@@ -32,41 +32,30 @@ enum Intent {
     Save(SecretDraft),
     Remove,
 }
-fn field_ui(ui: &mut egui::Ui, field: &mut Field, es: bool, available: bool) -> Option<Intent> {
+fn field_ui(
+    ui: &mut egui::Ui,
+    field: &mut Field,
+    es: impl Into<crate::preferences::Language> + Copy,
+    available: bool,
+) -> Option<Intent> {
     if field.pending {
-        ui.label(tr(
-            es,
-            "Saving — awaiting durable confirmation",
-            "Guardando — esperando confirmación durable",
-        ));
+        ui.label(tr(es, "Saving — awaiting durable confirmation"));
         return None;
     }
     if let Some(error) = &field.error {
         ui.label(if error.unknown {
-            tr(
-                es,
-                "Outcome unknown — check status before retrying",
-                "Resultado desconocido — consulta el estado antes de reintentar",
-            )
+            tr(es, "Outcome unknown — check status before retrying")
         } else {
-            tr(
-                es,
-                "Not saved — operation failed",
-                "No guardado — la operación falló",
-            )
+            tr(es, "Not saved — operation failed")
         });
     }
     if field.state == Some(State::Unavailable) {
-        ui.label(tr(
-            es,
-            "Stored credential unavailable — enter it again",
-            "Credencial guardada no disponible — introdúcela de nuevo",
-        ));
+        ui.label(tr(es, "Stored credential unavailable — enter it again"));
     }
     let hint = if field.state == Some(State::Present) {
         "••••••••"
     } else {
-        tr(es, "New credential", "Nueva credencial")
+        tr(es, "New credential")
     };
     let mut output = egui::TextEdit::singleline(&mut *field.draft.0)
         .password(true)
@@ -83,31 +72,21 @@ fn field_ui(ui: &mut egui::Ui, field: &mut Field, es: bool, available: bool) -> 
         field.confirm = true;
     }
     if field.draft.0.len() > 4096 {
-        ui.label(tr(
-            es,
-            "Too long — maximum 4096 UTF-8 bytes",
-            "Demasiado larga — máximo 4096 bytes UTF-8",
-        ));
+        ui.label(tr(es, "Too long — maximum 4096 UTF-8 bytes"));
     }
     let mut intent = None;
     if field.confirm {
-        ui.label(tr(
-            es,
-            "Replace the saved credential?",
-            "¿Reemplazar la credencial guardada?",
-        ));
+        ui.label(tr(es, "Replace the saved credential?"));
         ui.horizontal(|ui| {
             if available
                 && field.draft.0.len() <= 4096
-                && ui
-                    .button(tr(es, "Save credential", "Guardar credencial"))
-                    .clicked()
+                && ui.button(tr(es, "Save credential")).clicked()
             {
                 intent = Some(Intent::Save(std::mem::take(&mut field.draft)));
                 field.dirty = false;
                 field.confirm = false;
             }
-            if ui.button(tr(es, "Cancel", "Cancelar")).clicked() {
+            if ui.button(tr(es, "Cancel")).clicked() {
                 field.draft = SecretDraft::default();
                 field.dirty = false;
                 field.confirm = false;
@@ -118,8 +97,8 @@ fn field_ui(ui: &mut egui::Ui, field: &mut Field, es: bool, available: bool) -> 
         && !field.dirty
         && matches!(field.state, Some(State::Present | State::Unavailable))
         && ui
-            .button(tr(es, "Remove credential", "Eliminar credencial"))
-            .on_hover_text(tr(es, "Cannot be undone", "No se puede deshacer"))
+            .button(tr(es, "Remove credential"))
+            .on_hover_text(tr(es, "Cannot be undone"))
             .clicked()
     {
         intent = Some(Intent::Remove);
@@ -158,16 +137,22 @@ pub(super) fn start(runtime: std::path::PathBuf) -> CredentialWorker {
                 }
             })?;
             let mut session = crate::session::Session::new(client);
-            let mut args = serde_json::json!({"plugin_id":job.plugin,"slot":job.slot});
-            let operation = match &job.operation {
-                Operation::Status => "credential_status",
-                Operation::Remove => "credential_remove",
-                Operation::Replace(secret) => {
-                    args["secret"] = serde_json::Value::String(secret.0.to_string());
-                    "credential_replace"
-                }
+            let request = match &job.operation {
+                Operation::Status => crate::Request::CredentialStatus {
+                    plugin_id: job.plugin,
+                    slot: job.slot.clone(),
+                },
+                Operation::Remove => crate::Request::CredentialRemove {
+                    plugin_id: job.plugin,
+                    slot: job.slot.clone(),
+                },
+                Operation::Replace(secret) => crate::Request::CredentialReplace {
+                    plugin_id: job.plugin,
+                    slot: job.slot.clone(),
+                    secret: secret.0.to_string(),
+                },
             };
-            let response = session.request(crate::Request::new(operation, args))?;
+            let response = session.request(request)?;
             decode_state(
                 response.data,
                 !matches!(job.operation, Operation::Status),
@@ -183,7 +168,7 @@ pub(super) fn start(runtime: std::path::PathBuf) -> CredentialWorker {
 }
 
 fn decode_state(
-    data: serde_json::Value,
+    data: rad_api::ResponseData,
     mutating: bool,
     status: rad_client::response::Status,
 ) -> Result<State, crate::session::Error> {
@@ -192,15 +177,15 @@ fn decode_state(
         cause: None,
         unknown: mutating,
     };
-    if status != rad_client::response::Status::Ok
-        || data.as_object().is_none_or(|object| object.len() != 1)
-    {
+    if status != rad_client::response::Status::Ok {
         return Err(error());
     }
-    match data["state"].as_str() {
-        Some("absent") => Ok(State::Absent),
-        Some("present") => Ok(State::Present),
-        Some("unavailable") => Ok(State::Unavailable),
+    match data {
+        rad_api::ResponseData::Credential(data) => Ok(match data.state {
+            rad_api::CredentialState::Absent => State::Absent,
+            rad_api::CredentialState::Present => State::Present,
+            rad_api::CredentialState::Unavailable => State::Unavailable,
+        }),
         _ => Err(error()),
     }
 }
@@ -261,6 +246,8 @@ impl Panel {
                 Err(error) => {
                     if error.unknown {
                         field.state = None;
+                        // Reconcile by a read; never replay the uncertain write.
+                        field.requested = false;
                     }
                     field.error = Some(error);
                 }
@@ -272,25 +259,17 @@ impl Panel {
         ui: &mut egui::Ui,
         worker: &mut CredentialWorker,
         connected: bool,
-        es: bool,
+        es: impl Into<crate::preferences::Language> + Copy,
     ) {
         if self.fields.is_empty() {
             return;
         }
         ui.separator();
-        ui.label(
-            egui::RichText::new(tr(
-                es,
-                "Credentials — saved separately",
-                "Credenciales — guardado separado",
-            ))
-            .strong(),
-        );
+        ui.label(egui::RichText::new(tr(es, "Credentials — saved separately")).strong());
         ui.label(
             egui::RichText::new(tr(
                 es,
                 "Shared by this plugin; not included in exports or Undo.",
-                "Compartidas por este plugin; fuera de exportaciones y Deshacer.",
             ))
             .small()
             .weak(),
@@ -299,7 +278,7 @@ impl Panel {
             ui.push_id((self.generation, slot), |ui| {
                 ui.label(slot);
                 if !connected {
-                    ui.label(tr(es, "Runtime unavailable", "Runtime no disponible"));
+                    ui.label(tr(es, "Runtime unavailable"));
                     return;
                 }
                 let mut operation = None;
@@ -307,11 +286,7 @@ impl Panel {
                     operation = Some(Operation::Status);
                 }
                 if !field.requested || field.checking {
-                    ui.label(tr(
-                        es,
-                        "Checking credential status…",
-                        "Consultando estado de credencial…",
-                    ));
+                    ui.label(tr(es, "Checking credential status…"));
                 } else {
                     operation =
                         field_ui(ui, field, es, !worker.busy()).map(|intent| match intent {
@@ -321,13 +296,7 @@ impl Panel {
                     if !worker.busy()
                         && !field.dirty
                         && operation.is_none()
-                        && ui
-                            .button(tr(
-                                es,
-                                "Check credential status",
-                                "Consultar estado de credencial",
-                            ))
-                            .clicked()
+                        && ui.button(tr(es, "Check credential status")).clicked()
                     {
                         operation = Some(Operation::Status);
                     }

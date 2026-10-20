@@ -1,7 +1,7 @@
 //! Pure versioned plugin contracts; no processes, I/O, installation or permissions.
-/// Newest host API; a manifest declares the inclusive range of APIs it supports.
-pub const HOST_API: u32 = 3;
-/// Oldest host API this host still speaks (API 2 only adds to API 1).
+/// Current contract major. The pre-release linear APIs 2/3 are not majors.
+pub const HOST_API: u32 = 1;
+/// First published major; there is no preceding published major yet.
 pub const HOST_API_MIN: u32 = 1;
 pub const MAX_PLUGINS: usize = 32;
 mod manifest;
@@ -74,3 +74,6 @@ mod bounded;
 
 mod credentials;
 pub use credentials::*;
+
+mod capabilities;
+pub use capabilities::*;

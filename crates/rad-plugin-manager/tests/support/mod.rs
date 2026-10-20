@@ -29,7 +29,7 @@ pub fn package(major: u32) -> Vec<u8> {
 }
 
 pub fn package_for(id: &str, major: u32) -> Vec<u8> {
-    let manifest = serde_json::json!({"contract":1,"id":id,"version":{"major":major,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[TARGET],"actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[]},"credential_slots":[]}],"visuals":[]});
+    let manifest = serde_json::json!({"contract":1,"capabilities":[],"id":id,"version":{"major":major,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[TARGET],"actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[]},"credential_slots":[]}],"visuals":[]});
     let manifest = serde_json::to_vec(&manifest).unwrap();
     let executable = fs::read(std::env::current_exe().unwrap()).unwrap();
     let candidate = rad_plugin_package::Candidate::from_parts(

@@ -3,6 +3,8 @@ use rad_core::{configuration::*, identity, permissions};
 mod document;
 mod v1;
 mod v1_document;
+mod v2;
+mod v2_document;
 use document as d;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecError {
@@ -11,13 +13,13 @@ pub enum CodecError {
     InvalidValue,
     TooLarge,
 }
-/// Encode the canonical v2 deck document.
+/// Encode the canonical v3 deck document.
 /// No historical ledger, media bytes or runtime state.
 pub fn encode(config: &Configuration) -> Result<Vec<u8>, CodecError> {
     let data = config.data();
     let doc = d::Document {
         settings: write_settings(data.settings),
-        version: 2,
+        version: 3,
         grid: [data.grid.columns(), data.grid.rows()],
         plugin_dependencies: data
             .plugin_dependencies
@@ -65,15 +67,11 @@ pub fn decode_data(bytes: &[u8]) -> Result<ConfigurationData, CodecError> {
     if bytes.len() > 1024 * 1024 {
         return Err(CodecError::TooLarge);
     }
-    #[derive(serde::Deserialize)]
-    struct Version {
-        version: u64,
-    }
-    let version: Version =
-        serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?;
-    let doc: d::Document = match version.version {
+    let version = document_version(bytes)?;
+    let doc: d::Document = match version {
         1 => v1::import(bytes)?,
-        2 => serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?,
+        2 => v2::import(bytes)?,
+        3 => serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?,
         _ => return Err(CodecError::UnsupportedVersion),
     };
     check_strings(&doc)?;
@@ -255,6 +253,11 @@ fn write_button(v: &ButtonData) -> d::Button {
             Mode::Sequential => d::Mode::Sequential,
             Mode::Parallel => d::Mode::Parallel,
         },
+        gesture: match v.gesture {
+            Gesture::Press => d::Gesture::Press,
+            Gesture::Hold => d::Gesture::Hold,
+            Gesture::LongPress => d::Gesture::LongPress,
+        },
         actions: v
             .actions
             .iter()
@@ -307,6 +310,11 @@ fn read_button(v: d::Button) -> Result<ButtonData, CodecError> {
         mode: match v.mode {
             d::Mode::Sequential => Mode::Sequential,
             d::Mode::Parallel => Mode::Parallel,
+        },
+        gesture: match v.gesture {
+            d::Gesture::Press => Gesture::Press,
+            d::Gesture::Hold => Gesture::Hold,
+            d::Gesture::LongPress => Gesture::LongPress,
         },
         actions: v
             .actions
@@ -431,6 +439,7 @@ fn write_settings(s: SettingsData) -> d::Settings {
         brightness_percent: s.brightness_percent,
         sleep_ms: s.sleep_ms.to_string(),
         press_threshold_ms: s.press_threshold_ms.to_string(),
+        long_press_threshold_ms: s.long_press_threshold_ms.to_string(),
     }
 }
 fn read_settings(s: d::Settings) -> Result<SettingsData, CodecError> {
@@ -438,8 +447,23 @@ fn read_settings(s: d::Settings) -> Result<SettingsData, CodecError> {
         brightness_percent: s.brightness_percent,
         sleep_ms: decimal(&s.sleep_ms)?,
         press_threshold_ms: decimal(&s.press_threshold_ms)?,
+        long_press_threshold_ms: decimal(&s.long_press_threshold_ms)?,
     };
     Settings::from_data(data)
         .map(|s| s.data())
         .map_err(|_| CodecError::InvalidValue)
+}
+
+/// Inspect the version before migration; this does not validate the document.
+pub fn document_version(bytes: &[u8]) -> Result<u64, CodecError> {
+    if bytes.len() > 1024 * 1024 {
+        return Err(CodecError::TooLarge);
+    }
+    #[derive(serde::Deserialize)]
+    struct Version {
+        version: u64,
+    }
+    let version: Version =
+        serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?;
+    Ok(version.version)
 }

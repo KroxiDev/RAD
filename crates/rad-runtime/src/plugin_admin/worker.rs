@@ -30,7 +30,7 @@ pub(super) fn run(
         let reply = match job {
             Job::Prepare(request) => {
                 let result = prepare(m, request, &download, &cancel);
-                Reply::Prepared(result, m.state() == ManagerState::Ready)
+                Reply::Prepared(result.map(Box::new), m.state() == ManagerState::Ready)
             }
             Job::Commit(prepared) => {
                 let key = prepared.key();
@@ -290,7 +290,7 @@ mod prepare_recovery_tests {
         let Reply::Prepared(Ok(prepared), _) = receive() else {
             panic!("retry without restart");
         };
-        commands.send(Job::Commit(prepared)).unwrap();
+        commands.send(Job::Commit(*prepared)).unwrap();
         assert!(matches!(
             receive(),
             Reply::Committed(_, CommitOutcome::Applied, Ok(_))

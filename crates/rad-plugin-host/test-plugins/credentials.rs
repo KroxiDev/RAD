@@ -1,4 +1,4 @@
-//! Isolated API3 peer: only compares a fixture string, never connects to a service.
+//! Isolated major-1 credential peer: only compares a fixture string, never connects to a service.
 use rad_plugin_contract::*;
 use std::{
     collections::BTreeMap,
@@ -30,7 +30,8 @@ fn main() {
         };
         let message = match envelope.message {
             Message::Hello {
-                host_api: 3,
+                host_api: 1,
+                capabilities,
                 plugin_id,
                 plugin_version,
                 ..
@@ -41,6 +42,7 @@ fn main() {
                     _ => Duration::ZERO,
                 };
                 Message::Ready {
+                    capabilities,
                     plugin_id,
                     plugin_version,
                 }
@@ -111,6 +113,7 @@ fn main() {
                 credential_revision: Some(revision),
                 ..
             } if maps.contains_key(&revision) => Message::Visual {
+                valid_for_ms: 1000,
                 state: if maps[&revision]
                     .as_slice()
                     .iter()

@@ -51,6 +51,7 @@ struct Entry {
     plugin: String,
     source: String,
     bytes: Vec<u8>,
+    settings: Option<Vec<u8>>,
     generation: Option<u64>,
     credential_revision: Option<u64>,
     key: Option<Correlation>,
@@ -135,6 +136,9 @@ impl Visuals {
                             bytes.to_vec(),
                             generation,
                             credential_revision,
+                            actor
+                                .plugin_settings(Origin::Editor, key.plugin())
+                                .map(<[u8]>::to_vec),
                         ),
                     );
                 }
@@ -142,12 +146,13 @@ impl Visuals {
         }
         let mut changed = false;
         self.entries.retain(|id, e| {
-            let keep = desired.get(id).is_some_and(|(p, s, b, g, r)| {
+            let keep = desired.get(id).is_some_and(|(p, s, b, g, r, settings)| {
                 p == &e.plugin
                     && s == &e.source
                     && b == &e.bytes
                     && g == &e.generation
                     && r == &e.credential_revision
+                    && settings == &e.settings
             });
             if !keep {
                 if let Some(key) = e.key {
@@ -157,7 +162,7 @@ impl Visuals {
             }
             keep
         });
-        for (id, (plugin, source, bytes, generation, credential_revision)) in desired {
+        for (id, (plugin, source, bytes, generation, credential_revision, settings)) in desired {
             if self.entries.contains_key(&id) {
                 continue;
             }
@@ -167,6 +172,7 @@ impl Visuals {
                     plugin,
                     source,
                     bytes,
+                    settings,
                     generation,
                     credential_revision,
                     key: None,
@@ -183,7 +189,14 @@ impl Visuals {
         }
         for e in self.entries.values_mut() {
             if e.key.is_none() && e.generation.is_some() {
-                e.key = subscribe(host, &e.plugin, &e.source, &e.bytes, e.credential_revision);
+                e.key = subscribe(
+                    host,
+                    &e.plugin,
+                    &e.source,
+                    &e.bytes,
+                    e.credential_revision,
+                    e.settings.as_deref(),
+                );
             }
             let raw = e
                 .key
@@ -339,6 +352,7 @@ fn subscribe(
     source: &str,
     bytes: &[u8],
     revision: Option<u64>,
+    settings: Option<&[u8]>,
 ) -> Option<Correlation> {
     if let Some(revision) = revision {
         let generation = host.bindings().find(|(m, _, _)| m.id == plugin)?.1;
@@ -360,7 +374,8 @@ fn subscribe(
         .parameters(definition)
         .ok()?;
     let params = serde_json::from_slice(bytes).ok()?;
-    host.subscribe_with_credentials(plugin, source, params, 1000, revision)
+    let settings = settings.map(serde_json::from_slice).transpose().ok()?;
+    host.subscribe_with_settings(plugin, source, params, 1000, revision, settings)
         .ok()
 }
 fn content(state: &VisualState) -> Option<&VisualContent> {
@@ -780,6 +795,7 @@ mod image_tests {
                     plugin: "p".into(),
                     source: "s".into(),
                     bytes: vec![],
+                    settings: None,
                     generation: Some(1),
                     credential_revision: None,
                     key: None,
@@ -813,5 +829,89 @@ mod image_tests {
             assert_eq!(view.availability, Availability::Unavailable, "{name}");
             assert!(!view.image, "{name}");
         }
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+    use rad_core::{configuration::*, identity::IdentityRegistry};
+
+    #[test]
+    fn changed_settings_invalidate_cached_visual_even_before_process_ready() {
+        let c = Configuration::prepare_new(&IdentityRegistry::new(951).unwrap()).unwrap();
+        let c = c
+            .configuration()
+            .prepare_edit(
+                c.registry(),
+                Origin::Editor,
+                Edit::CreateButton {
+                    folder: c.configuration().data().principal,
+                    position: 0,
+                    name: "Visual".into(),
+                },
+            )
+            .unwrap();
+        let button = c.configuration().data().buttons[0].binding;
+        let c = c
+            .configuration()
+            .prepare_edit(
+                c.registry(),
+                Origin::Editor,
+                Edit::SetVisual {
+                    button: button.identity(),
+                    visual: VisualSource::External {
+                        type_key: ExternalType::new("org.rad.obs".into(), "record".into()).unwrap(),
+                        configuration: br#"{"schema_version":1,"values":{}}"#.to_vec(),
+                    },
+                },
+            )
+            .unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(952).unwrap());
+        actor
+            .register_plugin(
+                serde_json::from_slice(include_bytes!("../../../plugins/obs/manifest.json"))
+                    .unwrap(),
+                rad_plugin_host::TARGET,
+            )
+            .unwrap();
+        let mut visuals = Visuals::new(Arc::new(|| {}));
+        let mut host = Host::default();
+        assert!(visuals.poll(&actor, &mut host));
+        assert!(!visuals.poll(&actor, &mut host));
+        let ticket = actor.reserve(1, Origin::Editor).unwrap();
+        let effects = actor.submit(
+            ticket,
+            vec![Edit::SetPluginSettings {
+                plugin: "org.rad.obs".into(),
+                settings: Some(
+                    PluginSettings::new(br#"{"schema_version":1,"values":{"port":5555}}"#.to_vec())
+                        .unwrap(),
+                ),
+            }],
+        );
+        let id = effects
+            .iter()
+            .find_map(|e| match e {
+                rad_authority::Effect::Persist { id, .. } => Some(*id),
+                _ => None,
+            })
+            .unwrap();
+        actor.complete(
+            id,
+            rad_authority::Outcome::Applied {
+                revision: 2,
+                changed: true,
+            },
+        );
+        assert!(
+            visuals.poll(&actor, &mut host),
+            "settings change must replace binding, not retain cached state"
+        );
+        assert_eq!(
+            visuals.view(button.short()).availability,
+            Availability::Unavailable
+        );
+        assert!(!visuals.poll(&actor, &mut host));
     }
 }

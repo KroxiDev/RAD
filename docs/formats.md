@@ -11,7 +11,7 @@ Las decisiones están en [ADR 0002](adr/0002-identidades-sobre-lo-vigente.md),
 
 | Formato | Escritor actual | Lectores |
 |---|---|---|
-| Documento JSON del deck | 2 | 1 mediante importador, 2 |
+| Documento JSON del deck | 3 | 1 y 2 mediante importadores, 3 |
 | Store SQLite | 2 | Migración única de 1, 2 |
 | Copia RADPKG | 2 | 1, 2 |
 | Preferencias del editor | 1 | 1 |
@@ -22,13 +22,13 @@ RAD para abrirlas. Un documento desconocido no se reemplaza por valores de fábr
 El lector heredado vive únicamente en `rad-codec`; Store y restauración lo
 reutilizan. El codec trabaja con bytes acotados, sin acceder al sistema de archivos.
 
-## Documento del deck v2
+## Documento del deck v3
 
 JSON UTF-8 de hasta **1 MiB**; el escritor canónico es `rad_codec::encode` y el
 lector es `rad_codec::decode_data`. La reconstrucción del dominio valida el árbol,
 las referencias, las identidades y los valores. Los campos desconocidos se rechazan.
 
-- `version`: `2`.
+- `version`: `3`.
 - `grid`: `[8,4]` (columnas, filas). Solo se admite el XL; guardar una rejilla no
   implementa otros modelos. `Grid::XL` reúne sus constantes en el dominio.
 - `settings`: brillo, reposo y umbral de pulsación. No contiene idioma ni opciones
@@ -54,13 +54,13 @@ compacto; el lector no exige el orden de sus propiedades ni ausencia de espacios
 
 | Objeto | Campos y representación |
 |---|---|
-| `settings` | `brightness_percent`: número entero 0–100; `sleep_ms` y `press_threshold_ms`: cadenas decimales `u64` (0–18446744073709551615). Defaults solo al crear: `100`, `"300000"`, `"0"`. Reposo cero lo desactiva. |
+| `settings` | `brightness_percent`: número entero 0–100; `sleep_ms` y `press_threshold_ms`: cadenas decimales `u64` (0–18446744073709551615). Defaults al crear: `100`, `"300000"`, `"0"`. `long_press_threshold_ms`: cadena decimal `u64`, independiente del umbral de pulsar; omitido equivale a `"500"` y el escritor omite ese valor. Reposo cero lo desactiva. |
 | Identidad | `{"installation":"77","serial":"1"}`: instalación `u128` (1–340282366920938463463374607431768211455), serial `u64` no nulo. |
 | Binding | `{"kind":"folder","number":"1","identity":{...}}`: `kind` es `folder`, `button` o `action`; `number` es `u64` no nulo. El ShortId es la pareja clase/número (`f1`, `b1`, `a1`); la identidad es instalación/serial. |
 | Permisos | `{"consult":true,"modify":true,"execute":false}`: tres booleanos; `modify` o `execute` requieren `consult`. Este ejemplo es el default global al crear. |
 | Permisos locales | `"inherit"` o `{"own":{...}}` con objeto completo de permisos. Un botón hereda del global y una acción del botón; `own` reemplaza el conjunto, no lo combina. |
 | Carpeta | `binding` de clase folder, `parent` identidad o `null`, `slots` array de exactamente 32 identidades de botón o `null`, en orden de posiciones 0–31. `parent` omitido se lee como `null`; el escritor siempre lo emite. |
-| Botón | `binding` de clase button, `name` cadena, `appearance` objeto, `visual` variante, `permissions` locales, `mode` (`"sequential"` o `"parallel"`), `actions` array ordenado de 0–20 acciones. |
+| Botón | `binding` de clase button, `name` cadena, `appearance` objeto, `visual` variante, `permissions` locales, `mode` (`"sequential"` o `"parallel"`), `gesture` (`"press"`, `"hold"` o `"long_press"`; omitido equivale a `"press"`, que el escritor omite), `actions` array ordenado de 0–20 acciones. |
 | Apariencia | `text` cadena; `image` digest SHA-256 de 64 dígitos hexadecimales minúsculos o `null` (omitido también se lee como `null`); `text_position` opcional: `"top"`, `"middle"`, `"bottom"`, `"above_image"`, `"below_image"` o `null`. Ausente/null sigue la colocación automática según la imagen; el escritor lo omite en ese caso. |
 | Acción | `binding` de clase action, `kind` variante de la tabla siguiente, `permissions` locales. |
 | Tipo externo | `{"plugin":"id","name":"tipo"}`: ambas cadenas no vacías y sin caracteres de control. |
@@ -132,11 +132,21 @@ se admite su reconstrucción hasta el techo anterior de 10.000 y se permiten cam
 que no aumenten su cantidad de entidades. Se pueden borrar elementos y deshacer;
 no hace falta alterar el original antes de abrirlo o restaurarlo.
 
+### Importación del documento v2
+
+El importador cerrado de v2 conserva el contenido y asigna gesto `press` a cada
+botón y umbral largo 500 ms. No acepta campos de v3 con una etiqueta v2. Los
+[golden v2](fixtures/v2/README.md) provienen del escritor original; el
+[golden v3](fixtures/v3/README.md) incluye selección y umbral no predeterminados.
+La omisión canónica de Press y 500 ms evita aumentar documentos históricos en el
+límite de 1 MiB. Semántica de planes y reservas de fin:
+[ADR 0015](adr/0015-gesto-del-plan-y-documento-v3.md).
+
 ### Importación del documento v1
 
 El importador conserva el contenido del deck, descarta `gui_language` y asigna la
 rejilla XL y los espacios nuevos vacíos. Las pausas prerelease `pauses_ms` solo se
-aceptan si todas valen cero; no se silencian pausas con efecto. El escritor v2 nunca
+aceptan si todas valen cero; no se silencian pausas con efecto. El escritor actual nunca
 vuelve a emitir ese campo. El editor usa el idioma del sistema hasta que se elige
 uno explícitamente.
 
@@ -265,6 +275,15 @@ es SHA-256 de la concatenación `installation:u128 BE || folders:u64 BE ||
 buttons:u64 BE || actions:u64 BE || serial:u64 BE`. Tanto ese checksum como el del
 registro forman parte de la comparación antes/después de una escritura incierta.
 Un candidato con contadores menores que los persistidos se rechaza.
+
+### Apertura de un Store v2 con documento antiguo
+
+Antes de convertir documentos v1/v2 se conserva el archivo completo como
+`.document-v2-backup`, sin sobrescribir un respaldo distinto. Las revisiones
+válidas se convierten atómicamente, incluidos sus digests, sin cambiar IDs,
+heads, contadores, medios ni el esquema SQLite v2. Evidencia corrupta permanece
+intacta y retenida; una versión documental futura impide migrar. Reabrir una
+base ya migrada no vuelve a convertir ni sobrescribe el respaldo.
 
 ### Apertura de un Store v1
 

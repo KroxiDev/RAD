@@ -528,3 +528,81 @@ fn migrates_real_v1_at_one_mib_with_7200_entities_without_losing_content() {
         7200
     );
 }
+
+#[test]
+fn migrates_v2_documents_without_bumping_sqlite_or_losing_original_evidence() {
+    let path = path("document-v3");
+    let original = include_bytes!("../../../docs/fixtures/v2/profile.sqlite3");
+    std::fs::write(&path, original).unwrap();
+    let store = Store::open(&path).unwrap();
+    let loaded = store.load().unwrap();
+    assert_eq!(
+        loaded.configuration.data().plugin_settings["fixture.plugin"].bytes(),
+        &[0, 255, 42]
+    );
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let document: Vec<u8> = db
+        .query_row(
+            "SELECT document FROM revisions WHERE id=(SELECT current FROM heads)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        String::from_utf8(document)
+            .unwrap()
+            .contains("\"version\":3")
+    );
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        std::fs::read(PathBuf::from(format!(
+            "{}.document-v2-backup",
+            path.display()
+        )))
+        .unwrap(),
+        original
+    );
+    drop(store);
+    Store::open(&path).unwrap();
+}
+
+#[test]
+fn v2_document_migration_keeps_corrupt_head_and_can_reopen_without_overwriting_backup() {
+    let path = path("v2-corrupt-document");
+    std::fs::write(
+        &path,
+        include_bytes!("../../../docs/fixtures/v2/profile.sqlite3"),
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let document = include_bytes!("../../../docs/fixtures/v2/profile.json");
+    db.execute(
+        "INSERT INTO revisions(id,document,digest) VALUES(2,?1,zeroblob(32))",
+        [document.as_slice()],
+    )
+    .unwrap();
+    db.execute("UPDATE heads SET current=2,previous=1", [])
+        .unwrap();
+    drop(db);
+    let before = std::fs::read(&path).unwrap();
+    let store = Store::open(&path).unwrap();
+    assert!(store.load().unwrap().recovered_previous);
+    assert!(store.recovery_hold().unwrap().is_some());
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    assert!(store.load().unwrap().recovered_previous);
+    drop(store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let retained: Vec<u8> = db
+        .query_row("SELECT document FROM revisions WHERE id=2", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(retained, document);
+    let backup = PathBuf::from(format!("{}.document-v2-backup", path.display()));
+    assert_eq!(std::fs::read(backup).unwrap(), before);
+}
