@@ -13,7 +13,7 @@ Arquitectura, ADR, norma de interfaz y este plan en el repo, con AGENTS.md aline
 
 ## Fase 1 · Datos y formato — hecha (d7424f0)
 
-Un solo cambio de formato, congelado en v2 y documentado en
+En esta fase se congeló el formato v2, documentado en
 [Formatos](formats.md). Validación completa de ambos workspaces y las tres
 conformidades superada sin hardware ni ventanas.
 
@@ -93,12 +93,30 @@ conformidades superada sin hardware ni ventanas.
 - **Pruebas:** el test corre dentro de `cargo test`, sin red, y falla ante una
   dependencia que no figura en la tabla.
 
-## Fase 2 · Contratos
+## Fase 2 · Contratos — hecha (379bee2)
 
-Crea `docs/client-api.md` y publica la especificación de plugins en
-`KroxiDev/rad-plugins`; `plugins/README.md` pasa a enlazarla.
+Contrato de clientes en [client-api.md](client-api.md), `rad-api` compartido y
+editor dirigido por vistas y avisos. Contrato de plugins major 1, SDK compartido
+y arnés genérico, con [especificación y guía](https://github.com/KroxiDev/rad-plugins/tree/sdk-v0.2.0/docs)
+publicadas y enlazadas desde `plugins/README.md`. SDK fijado en `sdk-v0.2.0`;
+plugins oficiales republicados en
+[audio-v0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.2.0),
+[media-v0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/media-v0.2.0),
+[obs-v0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.2.0) y
+[metrics-v0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.2.0),
+con paquetes de producto, manifests, licencias, checksums y reportes de alcance.
 
-### A3 · Contrato de plugins v1
+La selección de un gesto por botón exigió la evolución autorizada a documento v3,
+con importadores de v1 y v2 y umbral independiente de pulsación larga de 500 ms
+iniciales ([ADR 0015](adr/0015-gesto-del-plan-y-documento-v3.md)). Store y RADPKG
+conservan su versión exterior 2.
+
+Validación completa en serie de ambos workspaces y las tres conformidades
+superada, sin hardware ni ventanas. Las conformidades usan backends sintéticos de
+la misma implementación y manifests idénticos; los reportes de las releases
+distinguen esos fixtures del ejecutable de producto y no certifican hardware real.
+
+### A3 · Contrato de plugins v1 — hecho (379bee2)
 
 - **Evidencia:** solo se notifica «pulsada», sin soltar ni pulsación larga
   (`crates/rad-core/src/input.rs:10–175`, mensaje `Invoke`); cinco tipos de campo
@@ -116,7 +134,7 @@ Crea `docs/client-api.md` y publica la especificación de plugins en
 - **Pruebas:** el arnés y los vectores de referencia; los plugins oficiales pasan el
   arnés.
 
-### A4 · Una sola definición de los protocolos
+### A4 · Una sola definición de los protocolos — hecho (379bee2)
 
 - **Evidencia:** `crates/rad-plugin-contract/src/protocol.rs` frente a
   `plugins/sdk/src/protocol.rs`, que ya difieren (por ejemplo, en `Outcome`); las
@@ -127,7 +145,7 @@ Crea `docs/client-api.md` y publica la especificación de plugins en
   [ADR 0010](adr/0010-api-de-clientes.md).
 - **Pruebas:** vectores probados en ambos lados y comprobación en compilación.
 
-### API · `rad-api`, vistas y avisos
+### API · `rad-api`, vistas y avisos — hecho (379bee2)
 
 - **Evidencia:** el editor consulta el estado cada 250 ms con foco y cada 1 s sin foco
   (`crates/rad-editor/src/lib.rs:36–50`), recarga una carpeta con hasta 66 peticiones
@@ -138,7 +156,7 @@ Crea `docs/client-api.md` y publica la especificación de plugins en
   releyendo; salida JSON de `rad-cli` con versión; editor sin sondeo ni repintado
   periódico.
 
-### B8 · Multimedia puede mostrar un estado viejo como vigente
+### B8 · Multimedia puede mostrar un estado viejo como vigente — hecho (379bee2)
 
 - **Evidencia:** el hilo hace `wait → reader.read → publish` sin plazo para leer y
   convertir la carátula, y el heartbeat repite el último estado
@@ -148,7 +166,7 @@ Crea `docs/client-api.md` y publica la especificación de plugins en
   carátulas.
 - **Pruebas:** fuente sana sin cambios, lector bloqueado y renovación sin carga.
 
-### B9 · La salida del SDK bloquea
+### B9 · La salida del SDK bloquea — hecho (379bee2)
 
 - **Evidencia:** `write_all` y `flush` bajo un mutex global; el heartbeat escribe
   reteniendo el registro de suscripciones (`plugins/sdk/src/writer.rs:28–31`;
@@ -157,7 +175,7 @@ Crea `docs/client-api.md` y publica la especificación de plugins en
   OBS (`plugins/obs/src/output.rs:31–83`); [ADR 0007](adr/0007-contrato-de-plugins-v1.md).
 - **Pruebas:** el arnés con un host que no lee.
 
-### B10 · Reparto de los trabajos de fondo del editor
+### B10 · Reparto de los trabajos de fondo del editor — hecho (379bee2)
 
 - **Evidencia:** la cadena `else if` de `App::pump`
   (`crates/rad-editor/src/app.rs:644–698`) deja que el refresco periódico monopolice
@@ -265,11 +283,11 @@ UX4 y UX8. Con la fase 3: UX5.
 | UX1 | El inspector muestra IDs (`crates/rad-editor/src/app/inspector.rs:638–660`) | Pasan a «Avanzado» |
 | UX2 | Copiar o mover una tecla exige escribir el ID de una carpeta (`inspector.rs:610–636`) | Selector de carpeta por nombre, o arrastrar y soltar |
 | UX3 | Los permisos de automatización aparecen en cada tecla y en Ajustes (`inspector.rs:598–608`; `crates/rad-editor/src/app/settings.rs:49–50`) | «Avanzado → Automatización», ocultos salvo que se activen |
-| UX4 | Estados y mensajes técnicos, y códigos en bruto (`crates/rad-editor/src/app/plugins.rs:76–100`; `crates/rad-editor/src/status.rs:23,103,132`) | Los cuatro estados de plugin, mensajes con acción y resolución automática |
+| UX4 — hecho (379bee2) | Estados y mensajes técnicos, y códigos en bruto (`crates/rad-editor/src/app/plugins.rs:76–100`; `crates/rad-editor/src/status.rs:23,103,132`) | Los cuatro estados de plugin, mensajes con acción y resolución automática |
 | UX5 | Poner en marcha RAD exige la terminal (`crates/rad-editor/src/app/bar.rs:77–78`; `README.md:53,61,93`) | Servicio gestionado por el editor (B2) |
 | UX6 | El progreso se muestra en bytes (`crates/rad-editor/src/app.rs:618`) | Barra de progreso |
 | UX7 | Instalar un plugin exige pegar un enlace, también para los oficiales, y actualizar lo vuelve a pedir | Lista de oficiales y actualización desde el origen registrado |
-| UX8 | Unos 200 pares de traducción escritos en el código (`crates/rad-editor/src/app.rs:111`) | Catálogos por idioma |
+| UX8 — hecho (379bee2) | Unos 200 pares de traducción escritos en el código (`crates/rad-editor/src/app.rs:111`) | Catálogos por idioma |
 
 ## Fase 4 · Medición
 
@@ -291,12 +309,13 @@ UX4 y UX8. Con la fase 3: UX5.
 | M3 | Despertares periódicos: repintado de 50 ms, sondeo de 250 ms, heartbeat de 400 ms por visual, incluso sin suscripciones (`plugins/sdk/src/runtime.rs:139`), polling de OBS cada 20 ms con sesiones abiertas (`plugins/obs/src/plugin.rs:340–353`) y sondeo de 500 ms sin deck | Gran parte desaparece con la fase 2; el sondeo sin deck es una excepción registrada |
 | M4 | `Cargo.toml` sin `[profile.release]`; binarios de 14 a 16 MB | Medir memoria y arranque antes de strip o LTO: el tamaño en disco no es memoria residente |
 
-## Documentación pendiente
+## Documentación
 
-- **D4:** el README de multimedia dice 0.1.0 frente a 0.1.1 y 64 aplicaciones frente
-  al límite de 32 del host; sus cifras de RSS y CPU son históricas, de una sola
-  máquina (`plugins/media/README.md:6,58–69`).
-- `docs/client-api.md` y la especificación de plugins en la fase 2.
+- **D4 — hecho (379bee2):** README de multimedia actualizado a 0.2.0 y al límite
+  de 32 aplicaciones; las cifras de RSS y CPU de 0.1.x se identifican como
+  históricas, de una sola máquina, no como aceptación de la entrega actual.
+- **Contratos — hecho (379bee2):** `docs/client-api.md` y especificación y guía
+  de plugins publicadas con la fase 2.
 
 ## Matriz de regresiones
 
@@ -307,7 +326,7 @@ Casos que se conservan, o se añaden si falta cobertura.
 | Cliente y UI | Desconexión tras el envío, worker muerto, sin replay, crédito único, vistas coherentes por revisión, avisos coalescidos, Unknown resuelto releyendo, cursor inválido o parcial, salida JSON de `rad-cli` |
 | Textos | Todas las claves existen en cada catálogo; ningún código en bruto en la UI; respaldo en inglés |
 | Publicación y Store | Fallos de escritura, sync o rollback; before/after; reinicio; hold de evidencia corrupta; medios cambiados en la segunda pasada |
-| Formatos | Golden real de cada versión; importador de v1 en el Store y en la restauración; rechazo de versiones futuras |
+| Formatos | Golden real de cada versión; importadores de v1 y v2 en el Store y en la restauración; rechazo de versiones futuras |
 | Identidades | Contadores tras recuperación y restauración; poda tras el historial; límite sobre lo vigente con mensaje claro; un ShortId nunca reasignado |
 | Copias | Los tres destinos; reserva de ambos rangos; destino editado y deshecho hasta quedar vacío; deshacer tras restaurar; copia v1 real; ajustes de plugins restaurados; plugins ausentes ofrecidos para instalar |
 | Host con runtime y Authority | Handshake, API, frames y correlaciones inválidas; flood; caída; residual de setup; deadline seguido de respuesta tardía o reap; parada y reap; selección distinta |
