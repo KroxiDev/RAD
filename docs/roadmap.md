@@ -11,11 +11,13 @@ La evidencia cita el código en `662115c`; las líneas pueden haberse movido.
 
 Arquitectura, ADR, norma de interfaz y este plan en el repo, con AGENTS.md alineado.
 
-## Fase 1 · Datos y formato
+## Fase 1 · Datos y formato — hecha (d7424f0)
 
-Un solo cambio de formato, para congelarlo una vez. Crea `docs/formats.md`.
+Un solo cambio de formato, congelado en v2 y documentado en
+[Formatos](formats.md). Validación completa de ambos workspaces y las tres
+conformidades superada sin hardware ni ventanas.
 
-### A1 · Restaurar una copia en otra instalación
+### A1 · Restaurar una copia en otra instalación — hecho (d7424f0)
 
 - **Evidencia:** en una instalación nueva, `prepare_restore` devuelve
   `Identity(ShortIdCollision)`: toda instalación nace con `f1` y una identidad
@@ -30,7 +32,7 @@ Un solo cambio de formato, para congelarlo una vez. Crea `docs/formats.md`.
   restaurar; una copia v1 real (golden); ajustes de plugins restaurados; plugins
   ausentes ofrecidos para instalar.
 
-### A2 · Límite de identidades sobre lo vigente
+### A2 · Límite de identidades sobre lo vigente — hecho (d7424f0)
 
 - **Evidencia:** tope de 10.000 que cuenta el histórico
   (`crates/rad-store/src/ledger.rs:5`). Cada guardado lee, compara e inserta el
@@ -45,8 +47,12 @@ Un solo cambio de formato, para congelarlo una vez. Crea `docs/formats.md`.
 - **Pruebas:** contadores correctos tras recuperación y restauración; la poda nunca
   permite reasignar un ShortId; el límite produce un mensaje claro; coste del guardado
   con 10.000 identidades, antes y después.
+- **Medición:** perfil sintético con 10.000 identidades retenidas, una vigente y
+  diez guardados de brillo: 540,609 ms en v1 frente a 249,976 ms en v2, tiempo total.
+  Una muestra por versión; no representa 10.000 entidades vigentes ni fija un
+  presupuesto de rendimiento.
 
-### A5 · Tres tipos de ajustes
+### A5 · Tres tipos de ajustes — hecho (d7424f0)
 
 - **Evidencia:** el idioma vive en `crates/rad-core/src/configuration/settings.rs`
   (`gui_language`) y el runtime nunca lo usa.
@@ -57,7 +63,7 @@ Un solo cambio de formato, para congelarlo una vez. Crea `docs/formats.md`.
 - **Pruebas:** el idioma no está en el documento ni en las copias; las preferencias
   del editor no viajan; golden con el lugar de los ajustes de plugins.
 
-### A6 · Rejilla en el formato
+### A6 · Rejilla en el formato — hecho (d7424f0)
 
 - **Evidencia:** `KEY_COUNT = 32` (`crates/rad-core/src/input.rs:10`), carpetas de 32
   (`crates/rad-core/src/configuration.rs:87`; `configuration/edits.rs:310`), el
@@ -67,7 +73,7 @@ Un solo cambio de formato, para congelarlo una vez. Crea `docs/formats.md`.
   otros modelos.
 - **Pruebas:** golden del formato con la rejilla; el comportamiento del XL no cambia.
 
-### D3 · Corte limpio e importador de v1
+### D3 · Corte limpio e importador de v1 — hecho (d7424f0)
 
 - **Evidencia:** `pauses_ms` (`crates/rad-codec/src/document.rs:56–58`); `Settings`
   con `deny_unknown_fields` y `gui_language` obligatorio (`document.rs:127`); el
@@ -78,7 +84,7 @@ Un solo cambio de formato, para congelarlo una vez. Crea `docs/formats.md`.
   restauración de una copia v1 real; rechazo explícito de versiones futuras; golden
   de cada formato, generados desde un perfil de prueba.
 
-### D2 · Capas verificadas
+### D2 · Capas verificadas — hecho (d7424f0)
 
 - **Evidencia:** `rad-package` depende de `rad-store` por `MediaSource`, `MediaEntry`
   y `MediaReadError` (`crates/rad-store/src/source.rs:3–16`).
@@ -290,8 +296,7 @@ UX4 y UX8. Con la fase 3: UX5.
 - **D4:** el README de multimedia dice 0.1.0 frente a 0.1.1 y 64 aplicaciones frente
   al límite de 32 del host; sus cifras de RSS y CPU son históricas, de una sola
   máquina (`plugins/media/README.md:6,58–69`).
-- `docs/formats.md` en la fase 1; `docs/client-api.md` y la especificación de plugins
-  en la fase 2.
+- `docs/client-api.md` y la especificación de plugins en la fase 2.
 
 ## Matriz de regresiones
 
