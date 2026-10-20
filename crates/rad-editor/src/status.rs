@@ -22,6 +22,10 @@ pub fn recovery_notice(status: &Value, es: bool) -> Option<&'static str> {
 /// A sentence for a known error code. Unknown codes pass through, never hidden.
 pub fn describe_error(code: &str, es: bool) -> &str {
     let (en, es_text) = match code {
+        "unsupported_version" => (
+            "Update RAD to open this backup",
+            "Actualiza RAD para abrir esta copia",
+        ),
         "plugin_failed" => ("Plugin failed", "Falló el plugin"),
         "plugin_limit" => (
             "Maximum of 32 plugins reached",
@@ -132,4 +136,31 @@ pub fn describe_error(code: &str, es: bool) -> &str {
         _ => return code,
     };
     if es { es_text } else { en }
+}
+
+/// Keeps the wire code for details while explaining capacity failures with a way out.
+pub fn describe_failure(error: &crate::session::Error, es: bool) -> &str {
+    if error.code != "resource_exhausted" {
+        return describe_error(&error.code, es);
+    }
+    let (en, translated) = match error.cause.as_deref() {
+        Some("entity_limit") => (
+            "No more buttons can be created: maximum reached — remove unused items",
+            "No se pueden crear más botones: se alcanzó el máximo — elimina elementos que no uses",
+        ),
+        Some("identity_counter_exhausted") => (
+            "No new identities are available — export a backup and contact support",
+            "No quedan identidades nuevas — exporta una copia y contacta con soporte",
+        ),
+        Some("document_limit") => (
+            "Configuration is too large — shorten texts or remove unused items",
+            "La configuración es demasiado grande — acorta textos o elimina elementos que no uses",
+        ),
+        Some("storage_capacity") => (
+            "Not enough storage to save — free disk space and retry",
+            "No hay espacio para guardar — libera espacio en disco y reintenta",
+        ),
+        _ => return describe_error(&error.code, es),
+    };
+    if es { translated } else { en }
 }

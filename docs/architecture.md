@@ -116,7 +116,7 @@ El usuario ve el funcionamiento, no el mecanismo: principios S1–S5 en [ux.md](
 | 2 · Aplicación | `rad-authority` | Publicación, historial, navegación, vistas y bindings de plugins | plugin-contract, core, codec |
 | 3 · Adapters | `rad-store` | SQLite, identidades, revisiones, medios, recuperación y GC | core, codec, media |
 | 3 | `rad-credentials` | Vault cifrado privado y reconciliación | ninguna |
-| 3 | `rad-package` | Copias: exportar, restaurar y staging | core, codec, media (hoy también store: D2) |
+| 3 | `rad-package` | Copias: exportar, restaurar y staging | core, codec, media |
 | 3 | `rad-plugin-manager` | Preparación, descarga, selector durable y journal | plugin-contract, plugin-package |
 | 3 | `rad-plugin-host` | Procesos, handshake, pipes, generaciones y residuales | plugin-contract |
 | 3 | `rad-transport` | Sockets, origen confiable, crédito y readiness | wire |

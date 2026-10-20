@@ -7,7 +7,11 @@ use crate::identity::{Binding, EntityIdentity, EntityKind, IdentityError, Identi
 use crate::permissions::{LocalPermissions, Permissions};
 
 mod settings;
-pub use settings::{Language, Settings, SettingsData};
+pub use settings::{Settings, SettingsData};
+mod grid;
+pub use grid::Grid;
+mod plugin_settings;
+pub use plugin_settings::{PluginDependency, PluginSettings, PluginVersion};
 
 mod edits;
 mod validation;
@@ -27,6 +31,7 @@ pub enum ConfigurationError {
     ProtectedNavigation,
     ConfirmationRequired,
     InvalidValue,
+    ResourceExhausted,
 }
 impl From<IdentityError> for ConfigurationError {
     fn from(error: IdentityError) -> Self {
@@ -41,6 +46,9 @@ pub struct FolderData {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigurationData {
+    pub grid: Grid,
+    pub plugin_dependencies: std::collections::BTreeMap<String, PluginDependency>,
+    pub plugin_settings: std::collections::BTreeMap<String, PluginSettings>,
     pub settings: SettingsData,
     pub principal: EntityIdentity,
     pub global_permissions: Permissions,
@@ -53,8 +61,9 @@ pub struct Configuration {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
-    configuration: Configuration,
+    configuration: Box<Configuration>,
     registry: IdentityRegistry,
+    root_adoption: Option<RootAdoption>,
 }
 impl Candidate {
     pub fn configuration(&self) -> &Configuration {
@@ -64,32 +73,38 @@ impl Candidate {
         &self.registry
     }
     pub fn into_parts(self) -> (Configuration, IdentityRegistry) {
-        (self.configuration, self.registry)
+        (*self.configuration, self.registry)
     }
 }
 impl Configuration {
     /// Prepare the initial Principal only for a genuinely empty identity registry.
     pub fn prepare_new(registry: &IdentityRegistry) -> Result<Candidate, ConfigurationError> {
-        if registry.records().next().is_some() {
+        if registry.records().next().is_some()
+            || registry.counters() != crate::identity::IdentityCounters::default()
+        {
             return Err(ConfigurationError::RegistryMismatch);
         }
         let mut registry = registry.clone();
         let binding = registry.allocate(EntityKind::Folder)?;
         Ok(Candidate {
-            configuration: Self {
+            configuration: Box::new(Self {
                 data: ConfigurationData {
+                    grid: Grid::XL,
+                    plugin_dependencies: Default::default(),
+                    plugin_settings: Default::default(),
                     settings: SettingsData::default(),
                     principal: binding.identity(),
                     global_permissions: Permissions::default(),
                     folders: vec![FolderData {
                         binding,
                         parent: None,
-                        slots: vec![None; 32],
+                        slots: vec![None; Grid::XL.key_count()],
                     }],
                     buttons: vec![],
                 },
-            },
+            }),
             registry,
+            root_adoption: None,
         })
     }
     pub fn settings(&self) -> Settings {
@@ -163,6 +178,8 @@ impl Appearance {
 }
 /// Most actions one button holds. A product decision, not a hardware bound.
 pub const MAX_ACTIONS: usize = 20;
+/// Fixed live-entity ceiling measured against the 1 MiB document budget.
+pub const MAX_LIVE_IDENTITIES: usize = 7000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ButtonData {
     pub binding: Binding,
@@ -337,4 +354,31 @@ pub enum ActionParameters {
     Launcher(DesktopEntry),
     External(Vec<u8>),
     Wait(Wait),
+}
+
+/// Replacement of the initial root needed to preserve an equivalent undo snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RootAdoption {
+    pub previous: Binding,
+    pub replacement: Binding,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortableRestore {
+    pub candidate: Candidate,
+    pub history_base: Option<ConfigurationData>,
+}
+impl Candidate {
+    pub fn root_adoption(&self) -> Option<RootAdoption> {
+        self.root_adoption
+    }
+}
+mod restore;
+
+impl ConfigurationData {
+    pub fn entity_count(&self) -> usize {
+        self.buttons.iter().fold(
+            self.folders.len().saturating_add(self.buttons.len()),
+            |n, b| n.saturating_add(b.actions.len()),
+        )
+    }
 }

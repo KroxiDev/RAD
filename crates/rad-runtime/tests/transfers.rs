@@ -26,6 +26,7 @@ fn verified_restore_data_moves_to_authority_without_stale_candidate() {
     rad_package::export(
         rad_package::ExportSnapshot {
             configuration: candidate.configuration(),
+            registry: candidate.registry(),
             media: &mut Empty,
         },
         &mut bytes,
@@ -35,7 +36,7 @@ fn verified_restore_data_moves_to_authority_without_stale_candidate() {
     let area = rad_package::StagingArea::create_new(&path).unwrap();
     let prepared = rad_package::prepare(&mut bytes.as_slice(), &area).unwrap();
     let (data, media) = prepared.into_verified_data().unwrap();
-    assert_eq!(&data, candidate.configuration().data());
+    assert_eq!(&data.data, candidate.configuration().data());
     assert!(media.catalog().is_empty());
     assert_eq!(area.usage().unwrap().0, 1);
     media.discard().unwrap();
@@ -75,6 +76,7 @@ fn begin(
                 kind,
                 size,
                 export_revision: None,
+                export_snapshot: None,
             },
         )
         .unwrap()
@@ -96,7 +98,8 @@ fn quotas_origin_connection_and_expiry_are_enforced_before_io() {
             Operation::Begin {
                 kind: Kind::Restore,
                 size: None,
-                export_revision: None
+                export_revision: None,
+                export_snapshot: None,
             }
         ),
         Err(Error::NotAllowed)
@@ -110,7 +113,8 @@ fn quotas_origin_connection_and_expiry_are_enforced_before_io() {
             Operation::Begin {
                 kind: Kind::ImageImport,
                 size: Some(1),
-                export_revision: None
+                export_revision: None,
+                export_snapshot: None,
             }
         ),
         Err(Error::Capacity)
@@ -143,7 +147,8 @@ fn quotas_origin_connection_and_expiry_are_enforced_before_io() {
             Operation::Begin {
                 kind: Kind::ImageImport,
                 size: Some(1),
-                export_revision: None
+                export_revision: None,
+                export_snapshot: None,
             }
         ),
         Err(Error::Capacity)
@@ -162,7 +167,8 @@ fn quotas_origin_connection_and_expiry_are_enforced_before_io() {
             Operation::Begin {
                 kind: Kind::ImageImport,
                 size: Some(1),
-                export_revision: None
+                export_revision: None,
+                export_snapshot: None,
             }
         ),
         Err(Error::Capacity)
@@ -315,6 +321,7 @@ fn export_prepare_confirm_uses_current_ledger_and_store_without_actor_file_reads
                 kind: Kind::Export,
                 size: None,
                 export_revision: Some(loaded.revision),
+                export_snapshot: Some(image_candidate.clone()),
             },
         )
         .unwrap()
@@ -438,9 +445,16 @@ fn export_prepare_confirm_uses_current_ledger_and_store_without_actor_file_reads
     let current = store.load().unwrap();
     let candidate = current
         .configuration
-        .prepare_restore(&current.registry, Origin::Editor, true, data)
+        .prepare_portable_restore(
+            &current.registry,
+            Origin::Editor,
+            true,
+            data.data,
+            data.identity.installation,
+            data.identity.counters,
+        )
         .unwrap();
-    let result = t.commit(&mut store, &candidate, 2, &restore);
+    let result = t.commit(&mut store, &candidate.candidate, 2, &restore);
     assert!(matches!(result, rad_store::CommitOutcome::Applied { .. }));
     t.resolved(&restore, &result).unwrap();
     assert_eq!(store.load().unwrap().configuration.data().buttons.len(), 1);
@@ -745,7 +759,8 @@ fn automation_can_read_root_resolved_visible_media_but_not_manage_transfers() {
             Operation::Begin {
                 kind: Kind::Export,
                 size: None,
-                export_revision: Some(2)
+                export_revision: Some(2),
+                export_snapshot: None,
             }
         ),
         Err(Error::NotAllowed)
@@ -794,6 +809,190 @@ fn internal_load_visual_returns_owned_normalized_image_only_to_trusted_editor() 
         Err(Error::NotAllowed)
     ));
     drop(t);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn export_uses_pinned_registry_not_later_store_high_water_marks() {
+    let path = root();
+    std::fs::create_dir(&path).unwrap();
+    let base = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
+    let mut store = rad_store::Store::create(&path.join("db"), &base).unwrap();
+    let later = base
+        .configuration()
+        .prepare_edit(
+            base.registry(),
+            Origin::Editor,
+            rad_core::configuration::Edit::CreateButton {
+                folder: base.configuration().data().principal,
+                position: 0,
+                name: "later".into(),
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        store.commit(&later),
+        rad_store::CommitOutcome::Applied { .. }
+    ));
+    let mut transfers = Transfers::create(&path.join("transfers"), 77).unwrap();
+    let output = transfers
+        .execute(
+            &mut store,
+            ctx(1, 0),
+            Operation::Begin {
+                kind: Kind::Export,
+                size: None,
+                export_revision: Some(1),
+                export_snapshot: Some(base.clone()),
+            },
+        )
+        .unwrap();
+    let Output::Begun { transfer_id } = output else {
+        panic!()
+    };
+    let Output::Chunk { bytes, .. } = transfers
+        .execute(
+            &mut store,
+            ctx(1, 1),
+            Operation::Read {
+                transfer_id,
+                offset: 0,
+            },
+        )
+        .unwrap()
+    else {
+        panic!()
+    };
+    let area = rad_package::StagingArea::create_new(&path.join("verify")).unwrap();
+    let (verified, media) = rad_package::prepare(&mut bytes.as_slice(), &area)
+        .unwrap()
+        .into_verified_data()
+        .unwrap();
+    assert_eq!(verified.identity.counters, base.registry().counters());
+    drop(media);
+    drop(area);
+    drop(transfers);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn export_metadata_uses_installed_selection_and_preserves_absent_hints_without_mutating_deck() {
+    use rad_core::configuration::{PluginDependency, PluginSettings, PluginVersion};
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
+    let old = PluginDependency {
+        version: Some(PluginVersion {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        }),
+        origin: Some("https://github.com/example/old".into()),
+    };
+    let new = PluginDependency {
+        version: Some(PluginVersion {
+            major: 2,
+            minor: 0,
+            patch: 0,
+        }),
+        origin: Some("https://github.com/example/new".into()),
+    };
+    let mut data = initial.configuration().data().clone();
+    for id in ["present", "missing"] {
+        data.plugin_settings
+            .insert(id.into(), PluginSettings::new(vec![]).unwrap());
+        data.plugin_dependencies.insert(id.into(), old.clone());
+    }
+    data.plugin_dependencies
+        .insert("unused".into(), old.clone());
+    let base = initial
+        .configuration()
+        .prepare_restore(initial.registry(), Origin::Editor, true, data)
+        .unwrap();
+    let snapshot = export_snapshot(
+        &base,
+        [
+            ("present".into(), new.clone()),
+            ("unrelated".into(), new.clone()),
+        ]
+        .into(),
+    )
+    .unwrap();
+    let deps = &snapshot.configuration().data().plugin_dependencies;
+    assert_eq!(deps.len(), 2);
+    assert_eq!(deps["present"], new);
+    assert_eq!(deps["missing"], old);
+    assert_eq!(
+        base.configuration().data().plugin_dependencies["present"],
+        old
+    );
+    assert_eq!(snapshot.registry(), base.registry());
+}
+
+#[test]
+fn export_requires_a_snapshot_captured_by_its_owner() {
+    let (path, mut store, mut transfers) = fixture();
+    let result = transfers.execute(
+        &mut store,
+        ctx(1, 0),
+        Operation::Begin {
+            kind: Kind::Export,
+            size: None,
+            export_revision: Some(1),
+            export_snapshot: None,
+        },
+    );
+    assert!(matches!(result, Err(Error::Invalid)));
+    assert!(transfers.metadata().handles.is_empty());
+    drop(transfers);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn export_metadata_that_exceeds_document_budget_returns_specific_capacity_cause() {
+    use rad_core::configuration::{PluginDependency, PluginSettings};
+    let path = root();
+    std::fs::create_dir(&path).unwrap();
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
+    let mut data = initial.configuration().data().clone();
+    for n in 0..100 {
+        data.plugin_settings.insert(
+            format!("plugin-{n}"),
+            PluginSettings::new(vec![255; 4095]).unwrap(),
+        );
+    }
+    let base = initial
+        .configuration()
+        .prepare_restore(initial.registry(), Origin::Editor, true, data)
+        .unwrap();
+    let mut store = rad_store::Store::create(&path.join("db"), &base).unwrap();
+    let installed = (0..100)
+        .map(|n| {
+            (
+                format!("plugin-{n}"),
+                PluginDependency {
+                    version: None,
+                    origin: Some("x".repeat(4000)),
+                },
+            )
+        })
+        .collect();
+    let snapshot = export_snapshot(&base, installed).unwrap();
+    let mut transfers = Transfers::create(&path.join("transfers"), 77).unwrap();
+    let result = transfers.execute(
+        &mut store,
+        ctx(1, 0),
+        Operation::Begin {
+            kind: Kind::Export,
+            size: None,
+            export_revision: Some(1),
+            export_snapshot: Some(snapshot),
+        },
+    );
+    assert!(matches!(result, Err(Error::DocumentLimit)), "{result:?}");
+    assert!(transfers.metadata().handles.is_empty());
+    drop(transfers);
     drop(store);
     std::fs::remove_dir_all(path).unwrap();
 }

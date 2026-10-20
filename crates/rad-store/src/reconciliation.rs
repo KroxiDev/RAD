@@ -7,10 +7,11 @@ pub(crate) struct Stamp {
     pub previous: Option<i64>,
     pub document: Vec<u8>,
     pub ledger: Vec<u8>,
+    pub counters: Vec<u8>,
 }
 impl Stamp {
     pub fn read(connection: &Connection) -> Result<Self, StoreError> {
-        Ok(connection.query_row("SELECT current,previous,revisions.digest,meta.ledger_digest,(SELECT hold FROM recovery WHERE singleton=1) FROM heads JOIN revisions ON revisions.id=heads.current CROSS JOIN meta WHERE heads.singleton=1 AND meta.singleton=1",[],|r|Ok(Self {current:r.get(0)?,previous:r.get(1)?,document:r.get(2)?,ledger:r.get(3)?,hold:r.get(4)?}))?)
+        Ok(connection.query_row("SELECT current,previous,revisions.digest,meta.ledger_digest,(SELECT hold FROM recovery WHERE singleton=1),(SELECT digest FROM counters WHERE singleton=1) FROM heads JOIN revisions ON revisions.id=heads.current CROSS JOIN meta WHERE heads.singleton=1 AND meta.singleton=1",[],|r|Ok(Self {current:r.get(0)?,previous:r.get(1)?,document:r.get(2)?,ledger:r.get(3)?,hold:r.get(4)?,counters:r.get(5)?}))?)
     }
 }
 pub(crate) struct Pending {

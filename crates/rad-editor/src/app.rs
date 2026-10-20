@@ -112,6 +112,8 @@ fn tr(es: bool, en: &'static str, es_text: &'static str) -> &'static str {
     if es { es_text } else { en }
 }
 pub struct App {
+    preferences: crate::preferences::Preferences,
+    preferences_path: Option<PathBuf>,
     worker: Worker<Job, Event>,
     /// Questions about plugin option lists, on a connection of their own: a slow plugin
     /// must not hold up Apply or the polling that `worker` does.
@@ -170,11 +172,22 @@ pub struct App {
 }
 impl App {
     pub fn new(runtime: PathBuf, theme: PathBuf) -> Self {
+        let preferences_path = crate::preferences::default_path();
+        let loaded = preferences_path
+            .as_deref()
+            .map(crate::preferences::Preferences::load)
+            .transpose();
+        let preference_error = loaded.as_ref().err().map(ToString::to_string);
+        let preferences = loaded.ok().flatten().unwrap_or_default();
+        let es = preferences.language(&crate::preferences::system_locale())
+            == crate::preferences::Language::Es;
         let options_worker = native::start_options(runtime.clone());
         let credential_worker = credentials::start(runtime.clone());
         let mut worker = native::start(runtime, theme);
         let _ = worker.submit(Job::Connect);
-        Self {
+        let mut app = Self {
+            preferences,
+            preferences_path,
             worker,
             options_worker,
             credential_worker,
@@ -195,7 +208,7 @@ impl App {
             message: String::new(),
             message_is_error: false,
             message_code: String::new(),
-            es: false,
+            es,
             palette: Palette::default(),
             styled: None,
             settings_open: false,
@@ -220,7 +233,16 @@ impl App {
             image_attempts: Default::default(),
             result_poll: PollSchedule::default(),
             plugins: Default::default(),
+        };
+        if let Some(error) = preference_error {
+            app.warn(tr(
+                es,
+                "Could not read preferences — select your language again",
+                "No se pudieron leer las preferencias — vuelve a elegir el idioma",
+            ));
+            app.message_code = error;
         }
+        app
     }
     fn now_ms(&self) -> u64 {
         self.started.elapsed().as_millis().min(u64::MAX as u128) as u64
@@ -283,6 +305,7 @@ impl App {
     }
     fn select(&mut self, position: usize, id: Option<String>) {
         self.credentials.clear();
+        self.plugins.dependency_credentials = None;
         self.plugins.form = None;
         self.selected_slot = Some(position);
         self.control.select(id);
@@ -295,7 +318,8 @@ impl App {
     fn follow_selection(&mut self) {
         match self.selected() {
             Some(id) => {
-                let position = (0..32).find(|&p| self.slot_id(p).as_deref() == Some(id.as_str()));
+                let position = (0..self.board.as_ref().map_or(0, |b| b.grid.key_count()))
+                    .find(|&p| self.slot_id(p).as_deref() == Some(id.as_str()));
                 if position.is_some() {
                     self.selected_slot = position;
                 } else {
@@ -413,7 +437,11 @@ impl App {
                 Ok(Reply::Plugins { catalog, status }) => {
                     self.plugins.catalog_loaded = true;
                     self.plugins.catalog = catalog;
+                    let selection_changed = self.plugins.status["items"] != status["items"];
                     self.plugins.status = status;
+                    if selection_changed {
+                        self.plugins.dependencies.reset();
+                    }
                 }
                 Ok(Reply::PluginForm { target, loaded }) => {
                     self.plugins.form_loading = false;
@@ -423,6 +451,17 @@ impl App {
                     self.accept_plugin_visuals(ctx, &revision, visuals);
                 }
                 Err(e) => {
+                    if event.plugin_dependencies {
+                        self.plugins.dependencies.fail(&e);
+                        if e.code == "cursor_expired" {
+                            return;
+                        }
+                    }
+                    if e.unknown {
+                        self.force = true;
+                        self.plugins.dependencies.reset();
+                        self.plugins.dependency_status_due = true;
+                    }
                     if event.plugin_admin {
                         self.plugins.admin_pending = false;
                     }
@@ -439,6 +478,10 @@ impl App {
                     }
                     if !event.connected {
                         self.plugins.visuals.clear();
+                        self.plugins.status = Value::Null;
+                        self.plugins.dependencies.reset();
+                        self.plugins.dependency_credentials = None;
+                        self.credentials.clear();
                     }
                     self.attempted = true;
                     self.pending_action = None;
@@ -450,7 +493,7 @@ impl App {
                     if matches!(e.code.as_str(), "not_found" | "result_expired") {
                         self.control.terminal();
                     }
-                    let reason = crate::status::describe_error(&e.code, self.es);
+                    let reason = crate::status::describe_failure(&e, self.es);
                     if e.unknown {
                         self.warn(format!(
                             "{}: {reason}",
@@ -466,13 +509,17 @@ impl App {
                     } else {
                         self.warn(reason);
                     }
-                    self.message_code = e.code.clone();
+                    self.message_code = match &e.cause {
+                        Some(cause) => format!("{}: {cause}", e.code),
+                        None => e.code.clone(),
+                    };
                     if e.code == "runtime_unavailable" || e.code == "deadline_exceeded" {
                         self.connected = false;
                     }
                 }
                 Ok(Reply::Connected) => {
-                    self.plugins.catalog_loaded = false;
+                    self.plugins.reconnect();
+                    self.credentials.clear();
                     self.attempted = true;
                     self.connected = true;
                     self.force = true;
@@ -480,11 +527,12 @@ impl App {
                     self.say("");
                 }
                 Ok(Reply::Refresh(r)) => {
-                    self.es = r.status["settings"]["gui_language"] == "es";
                     if !self.settings_open {
                         self.settings = r.status["settings"].clone();
                     }
                     if self.status["view_revision"] != r.status["view_revision"] {
+                        self.plugins.dependencies.reset();
+                        self.plugins.dependency_status_due = true;
                         self.plugins.catalog_loaded = false;
                     }
                     self.status = r.status;
@@ -534,7 +582,7 @@ impl App {
                     response: r,
                 }) if operation == "launcher_catalog" => {
                     if let Err(e) = self.catalog.accept(&r.data) {
-                        self.warn(crate::status::describe_error(&e.code, self.es));
+                        self.warn(crate::status::describe_failure(&e, self.es));
                     }
                 }
                 Ok(Reply::Response {
@@ -560,6 +608,29 @@ impl App {
                     response: r,
                 }) => {
                     self.icon_asked = false;
+                    if operation == "plugin_dependencies" {
+                        if let Err(error) = self.plugins.dependencies.accept(r.data)
+                            && error.code != "cursor_expired"
+                        {
+                            self.warn(crate::status::describe_failure(&error, self.es));
+                            self.message_code = error.code;
+                        }
+                        return;
+                    }
+                    if operation == "restore_commit" && self.plugins.restore_result(r.status) {
+                        self.credentials.clear();
+                        self.settings_open = true;
+                        self.settings_tab = settings::Tab::Plugins;
+                        self.plugins.section_open = true;
+                        self.say(tr(
+                            self.es,
+                            "Configuration restored",
+                            "Configuración restaurada",
+                        ));
+                        self.force = true;
+                        self.inspect_needed = self.selected().is_some();
+                        return;
+                    }
                     if operation == "plugin_admin" {
                         self.plugins.admin_pending = false;
                         self.plugins.due = 0;
@@ -632,7 +703,23 @@ impl App {
                         }
                         TransferKind::Restore => {
                             self.restore_token = data["transfer_id"].as_str().map(str::to_owned);
-                            self.restore_summary = data["summary"].to_string();
+                            let count = data["summary"]["plugins_count"].as_u64();
+                            self.restore_summary = match count {
+                                Some(count) => format!(
+                                    "{} · {count} plugins",
+                                    tr(
+                                        self.es,
+                                        "This backup will replace your current configuration",
+                                        "Se reemplazará tu configuración actual por la de esta copia"
+                                    )
+                                ),
+                                None => tr(
+                                    self.es,
+                                    "This backup will replace your current configuration",
+                                    "Se reemplazará tu configuración actual por la de esta copia",
+                                )
+                                .into(),
+                            };
                         }
                         TransferKind::Export => {
                             self.say(tr(self.es, "Export finished", "Exportación terminada"))

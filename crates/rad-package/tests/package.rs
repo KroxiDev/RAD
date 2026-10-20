@@ -1,6 +1,6 @@
 use rad_core::{configuration::Configuration, identity::IdentityRegistry};
+use rad_media::{MediaEntry, MediaReadError, MediaSource};
 use rad_package::*;
-use rad_store::{MediaEntry, MediaReadError, MediaSource};
 use sha2::{Digest, Sha256};
 struct Empty;
 impl MediaSource for Empty {
@@ -18,6 +18,7 @@ fn export_empty_media_is_exact_versioned_full_settings_document() {
     let receipt = export(
         ExportSnapshot {
             configuration: c.configuration(),
+            registry: c.registry(),
             media: &mut Empty,
         },
         &mut bytes,
@@ -25,8 +26,8 @@ fn export_empty_media_is_exact_versioned_full_settings_document() {
     .unwrap();
     let doc = rad_codec::encode(c.configuration()).unwrap();
     assert_eq!(&bytes[..8], b"RADPKG\r\n");
-    assert_eq!(&bytes[8..12], &[0, 1, 0, 0]);
-    assert_eq!(receipt.total_len, 92 + doc.len() as u64);
+    assert_eq!(&bytes[8..12], &[0, 2, 0, 0]);
+    assert_eq!(receipt.total_len, 140 + doc.len() as u64);
     assert_eq!(bytes.len() as u64, receipt.total_len);
     assert_eq!(&bytes[60..60 + doc.len()], doc);
     assert_eq!(
@@ -58,6 +59,7 @@ fn prepare_stages_then_confirmation_returns_candidate_without_publication() {
     export(
         ExportSnapshot {
             configuration: c.configuration(),
+            registry: c.registry(),
             media: &mut Empty,
         },
         &mut bytes,
@@ -83,6 +85,7 @@ fn staging_remains_anchored_when_its_directory_name_is_replaced() {
     export(
         ExportSnapshot {
             configuration: c.configuration(),
+            registry: c.registry(),
             media: &mut Empty,
         },
         &mut bytes,
@@ -108,6 +111,7 @@ fn empty_bytes() -> Vec<u8> {
     export(
         ExportSnapshot {
             configuration: c.configuration(),
+            registry: c.registry(),
             media: &mut Empty,
         },
         &mut b,
@@ -116,11 +120,14 @@ fn empty_bytes() -> Vec<u8> {
     b
 }
 fn with_document(mut bytes: Vec<u8>, document: Vec<u8>) -> Vec<u8> {
+    let old_len = u32::from_be_bytes(bytes[20..24].try_into().unwrap()) as usize;
+    let metadata = bytes[60 + old_len..60 + old_len + 48].to_vec();
     bytes.truncate(60);
-    bytes[12..20].copy_from_slice(&(92 + document.len() as u64).to_be_bytes());
+    bytes[12..20].copy_from_slice(&(140 + document.len() as u64).to_be_bytes());
     bytes[20..24].copy_from_slice(&(document.len() as u32).to_be_bytes());
     bytes[28..60].copy_from_slice(&Sha256::digest(&document));
     bytes.extend(document);
+    bytes.extend(metadata);
     let hash = Sha256::digest(&bytes);
     bytes.extend_from_slice(&hash);
     bytes
@@ -128,7 +135,8 @@ fn with_document(mut bytes: Vec<u8>, document: Vec<u8>) -> Vec<u8> {
 #[test]
 fn document_inclusive_limit_streams_reads_at_most_64k() {
     let bytes = empty_bytes();
-    let mut doc = bytes[60..bytes.len() - 32].to_vec();
+    let mut doc =
+        bytes[60..60 + u32::from_be_bytes(bytes[20..24].try_into().unwrap()) as usize].to_vec();
     doc.resize(1024 * 1024, b' ');
     let bytes = with_document(bytes, doc);
     struct Bounded<'a>(&'a [u8]);
@@ -249,6 +257,7 @@ fn one_byte_io_and_interrupted_calls_preserve_complete_stream() {
     export(
         ExportSnapshot {
             configuration: c.configuration(),
+            registry: c.registry(),
             media: &mut Empty,
         },
         &mut out,
@@ -404,6 +413,7 @@ fn confirmation_uses_current_ledger_including_retired_and_old_backup_never_reuse
     export(
         ExportSnapshot {
             configuration: &foreign,
+            registry: &reg,
             media: &mut Empty,
         },
         &mut b,
@@ -435,6 +445,9 @@ fn identity_maxima_restore_into_same_identity_without_narrowing() {
         IdentityRegistry::from_records(u128::MAX, [IdentityRecord::new(binding, false)]).unwrap();
     let config = Configuration::from_data(
         ConfigurationData {
+            grid: rad_core::configuration::Grid::XL,
+            plugin_settings: Default::default(),
+            plugin_dependencies: Default::default(),
             settings: SettingsData::default(),
             principal: id,
             global_permissions: Permissions::default(),
@@ -452,6 +465,7 @@ fn identity_maxima_restore_into_same_identity_without_narrowing() {
     export(
         ExportSnapshot {
             configuration: &config,
+            registry: &registry,
             media: &mut Empty,
         },
         &mut bytes,
@@ -569,6 +583,7 @@ fn absent_plugins_opaque_parameters_and_permission_ownership_roundtrip_without_e
     export(
         ExportSnapshot {
             configuration: c.configuration(),
+            registry: c.registry(),
             media: &mut Empty,
         },
         &mut bytes,
@@ -682,6 +697,7 @@ fn confirmation_rechecks_reverse_identity_collision_against_current_ledger() {
     export(
         ExportSnapshot {
             configuration: &config,
+            registry: &registry,
             media: &mut Empty,
         },
         &mut bytes,
@@ -698,5 +714,217 @@ fn confirmation_rechecks_reverse_identity_collision_against_current_ledger() {
         Err(PackageError::IdentityCollision)
     ));
     assert_eq!(area.usage().unwrap(), (0, 0));
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn portable_backup_is_v2_and_restores_into_a_virgin_installation() {
+    use rad_core::configuration::Origin;
+    let bytes = empty_bytes();
+    assert_eq!(&bytes[8..10], &2u16.to_be_bytes());
+    let destination = Configuration::prepare_new(&IdentityRegistry::new(88).unwrap()).unwrap();
+    let (root, area) = area();
+    let prepared = prepare(&mut bytes.as_slice(), &area).unwrap();
+    let (restored, media) = prepared
+        .confirm(
+            destination.configuration(),
+            destination.registry(),
+            Origin::Editor,
+            true,
+        )
+        .unwrap();
+    assert_eq!(restored.configuration().data().principal.installation(), 77);
+    drop(media);
+    drop(area);
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn real_v1_package_remains_portable_and_infers_present_identity_counters() {
+    let bytes = include_bytes!("../../../docs/fixtures/v1/profile.radpkg");
+    let (root, area) = area();
+    let prepared = prepare(&mut bytes.as_slice(), &area).unwrap();
+    let destination = Configuration::prepare_new(&IdentityRegistry::new(123).unwrap()).unwrap();
+    let (candidate, media) = prepared
+        .confirm(
+            destination.configuration(),
+            destination.registry(),
+            rad_core::configuration::Origin::Editor,
+            true,
+        )
+        .unwrap();
+    assert_eq!(
+        candidate.configuration().data().principal.installation(),
+        77
+    );
+    assert_eq!(
+        candidate.configuration().data().grid,
+        rad_core::configuration::Grid::XL
+    );
+    drop(media);
+    drop(area);
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn v2_keeps_retired_high_water_marks_and_absent_plugin_settings_and_origin() {
+    use rad_core::configuration::{Edit, Origin, PluginDependency, PluginSettings, PluginVersion};
+    let base = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
+    let added = base
+        .configuration()
+        .prepare_edit(
+            base.registry(),
+            Origin::Editor,
+            Edit::CreateButton {
+                folder: base.configuration().data().principal,
+                position: 0,
+                name: "retired".into(),
+            },
+        )
+        .unwrap();
+    let removed = added
+        .configuration()
+        .prepare_edit(
+            added.registry(),
+            Origin::Editor,
+            Edit::DeleteButton {
+                button: added.configuration().data().buttons[0].binding.identity(),
+            },
+        )
+        .unwrap();
+    let mut data = removed.configuration().data().clone();
+    data.plugin_settings.insert(
+        "absent.plugin".into(),
+        PluginSettings::new(vec![0, 1, 255]).unwrap(),
+    );
+    data.plugin_dependencies.insert(
+        "absent.plugin".into(),
+        PluginDependency {
+            version: Some(PluginVersion {
+                major: 1,
+                minor: 2,
+                patch: 3,
+            }),
+            origin: Some("https://github.com/example/plugin".into()),
+        },
+    );
+    let configuration = Configuration::from_data(data, removed.registry()).unwrap();
+    let mut bytes = Vec::new();
+    export(
+        ExportSnapshot {
+            configuration: &configuration,
+            registry: removed.registry(),
+            media: &mut Empty,
+        },
+        &mut bytes,
+    )
+    .unwrap();
+    let (root, area) = area();
+    let prepared = prepare(&mut bytes.as_slice(), &area).unwrap();
+    let summary = prepared.summary();
+    assert_eq!(summary.plugins.len(), 1);
+    assert_eq!(
+        summary.plugins[0].origin.as_deref(),
+        Some("https://github.com/example/plugin")
+    );
+    let (verified, media) = prepared.into_verified_data().unwrap();
+    assert_eq!(verified.identity.counters, removed.registry().counters());
+    assert_eq!(verified.identity.counters.buttons, 1);
+    assert_eq!(verified.data, *configuration.data());
+    drop(media);
+    drop(area);
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn future_document_in_package_reports_unsupported_version() {
+    let bytes = empty_bytes();
+    let length = u32::from_be_bytes(bytes[20..24].try_into().unwrap()) as usize;
+    let document = String::from_utf8(bytes[60..60 + length].to_vec())
+        .unwrap()
+        .replace("\"version\":2", "\"version\":3");
+    let bytes = with_document(bytes, document.into_bytes());
+    let (root, area) = area();
+    assert!(matches!(
+        prepare(&mut bytes.as_slice(), &area),
+        Err(PackageError::UnsupportedVersion)
+    ));
+    drop(area);
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn real_large_v1_package_at_document_boundary_can_be_restored() {
+    let bytes = include_bytes!("../../../docs/fixtures/v1/large.radpkg");
+    let (root, area) = area();
+    let prepared = prepare(&mut bytes.as_slice(), &area).unwrap();
+    assert_eq!(prepared.summary().entities, 7200);
+    let destination = Configuration::prepare_new(&IdentityRegistry::new(999).unwrap()).unwrap();
+    let (candidate, media) = prepared
+        .confirm(
+            destination.configuration(),
+            destination.registry(),
+            rad_core::configuration::Origin::Editor,
+            true,
+        )
+        .unwrap();
+    let data = candidate.configuration().data();
+    assert_eq!(
+        data.folders.len()
+            + data
+                .buttons
+                .iter()
+                .map(|b| 1 + b.actions.len())
+                .sum::<usize>(),
+        7200
+    );
+    drop(media);
+    drop(area);
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn frozen_v2_package_roundtrips_exactly_with_portable_settings_and_counters() {
+    use rad_core::identity::IdentityRecord;
+    let bytes = include_bytes!("../../../docs/fixtures/v2/profile.radpkg");
+    let (root, area) = area();
+    let prepared = prepare(&mut bytes.as_slice(), &area).unwrap();
+    let (verified, mut media) = prepared.into_verified_data().unwrap();
+    assert!(!verified.data.plugin_settings.is_empty());
+    assert!(!verified.data.plugin_dependencies.is_empty());
+    let records =
+        verified
+            .data
+            .folders
+            .iter()
+            .map(|f| f.binding)
+            .chain(verified.data.buttons.iter().flat_map(|b| {
+                std::iter::once(b.binding).chain(b.actions.iter().map(|a| a.binding))
+            }))
+            .map(|binding| IdentityRecord::new(binding, false));
+    let registry = IdentityRegistry::from_records_with_counters(
+        verified.identity.installation,
+        records,
+        verified.identity.counters,
+    )
+    .unwrap();
+    let configuration = Configuration::from_data(verified.data, &registry).unwrap();
+    assert_eq!(
+        rad_codec::encode(&configuration).unwrap(),
+        include_bytes!("../../../docs/fixtures/v2/profile.json")
+    );
+    let mut encoded = vec![];
+    export(
+        ExportSnapshot {
+            configuration: &configuration,
+            registry: &registry,
+            media: &mut media,
+        },
+        &mut encoded,
+    )
+    .unwrap();
+    assert_eq!(encoded, bytes);
+    drop(media);
+    drop(area);
     std::fs::remove_dir(root).unwrap();
 }

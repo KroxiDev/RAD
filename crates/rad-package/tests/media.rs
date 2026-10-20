@@ -1,5 +1,5 @@
 use rad_core::{
-    configuration::{Appearance, Candidate, Configuration, Edit, Language, Origin, SettingsData},
+    configuration::{Appearance, Candidate, Configuration, Edit, Origin, SettingsData},
     identity::IdentityRegistry,
 };
 use rad_package::*;
@@ -110,6 +110,7 @@ fn bytes(c: &Candidate, images: &[rad_media::NormalizedImage]) -> Vec<u8> {
     export(
         ExportSnapshot {
             configuration: c.configuration(),
+            registry: c.registry(),
             media: &mut Source::new(images),
         },
         &mut b,
@@ -131,7 +132,6 @@ fn full_settings_shared_media_roundtrip_into_real_store() {
                 brightness_percent: 17,
                 sleep_ms: u64::MAX,
                 press_threshold_ms: u64::MAX,
-                gui_language: Language::Es,
             }),
         )
         .unwrap();
@@ -193,7 +193,7 @@ fn staged_media_changes_after_confirmation_cannot_partially_publish() {
         .write(true)
         .open(root.join("transfer-0000000000000000"))
         .unwrap();
-    let offset = 60 + u32::from_be_bytes(b[20..24].try_into().unwrap()) as u64 + 36;
+    let offset = 108 + u32::from_be_bytes(b[20..24].try_into().unwrap()) as u64 + 36;
     f.seek(SeekFrom::Start(offset)).unwrap();
     f.write_all(b"bad").unwrap();
     drop(f);
@@ -217,6 +217,7 @@ fn export_catalog_and_output_failures_never_return_receipt() {
         export(
             ExportSnapshot {
                 configuration: c.configuration(),
+                registry: c.registry(),
                 media: &mut missing
             },
             &mut Vec::new()
@@ -228,6 +229,7 @@ fn export_catalog_and_output_failures_never_return_receipt() {
         export(
             ExportSnapshot {
                 configuration: base.configuration(),
+                registry: base.registry(),
                 media: &mut extra
             },
             &mut Vec::new()
@@ -240,6 +242,7 @@ fn export_catalog_and_output_failures_never_return_receipt() {
         export(
             ExportSnapshot {
                 configuration: c.configuration(),
+                registry: c.registry(),
                 media: &mut duplicate
             },
             &mut Vec::new()
@@ -266,6 +269,7 @@ fn export_catalog_and_output_failures_never_return_receipt() {
             export(
                 ExportSnapshot {
                     configuration: c.configuration(),
+                    registry: c.registry(),
                     media: &mut Source::new(&images)
                 },
                 &mut Fails(n)
@@ -284,7 +288,7 @@ fn corrupt_media_framing_checksums_duplicates_order_and_exact_references_reject(
     let images = [image(1), image(2)];
     let c = with_images(&initial(), &images);
     let original = bytes(&c, &images);
-    let start = 60 + u32::from_be_bytes(original[20..24].try_into().unwrap()) as usize;
+    let start = 108 + u32::from_be_bytes(original[20..24].try_into().unwrap()) as usize;
     let first_len =
         u32::from_be_bytes(original[start + 32..start + 36].try_into().unwrap()) as usize;
     let second = start + 36 + first_len;
@@ -442,6 +446,7 @@ fn source_errors_mutation_and_catalog_caps_reject_without_success() {
             export(
                 ExportSnapshot {
                     configuration: c.configuration(),
+                    registry: c.registry(),
                     media: &mut source
                 },
                 &mut Vec::new()
@@ -462,6 +467,7 @@ fn source_errors_mutation_and_catalog_caps_reject_without_success() {
             export(
                 ExportSnapshot {
                     configuration: c.configuration(),
+                    registry: c.registry(),
                     media: &mut source
                 },
                 &mut Vec::new()
@@ -496,6 +502,7 @@ fn inclusive_catalog_caps_are_not_confused_with_missing_references() {
             export(
                 ExportSnapshot {
                     configuration: base.configuration(),
+                    registry: base.registry(),
                     media: &mut source
                 },
                 &mut Vec::new()
@@ -540,7 +547,7 @@ fn last_second_pass_failure_rolls_back_and_uncertain_retains_prepared_ownership(
         let images = [image(1), image(2)];
         let c = with_images(&base, &images);
         let b = bytes(&c, &images);
-        let start = 60 + u32::from_be_bytes(b[20..24].try_into().unwrap()) as usize;
+        let start = 108 + u32::from_be_bytes(b[20..24].try_into().unwrap()) as usize;
         let first = u32::from_be_bytes(b[start + 32..start + 36].try_into().unwrap()) as usize;
         let offset = (start + 36 + first + 36) as u64;
         let (root, area) = area();

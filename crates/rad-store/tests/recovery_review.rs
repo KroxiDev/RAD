@@ -239,7 +239,10 @@ fn durable_hold_survives_restart_and_requires_current_explicit_disposition() {
         )
         .unwrap()
     );
-    assert_eq!(s.load().unwrap().registry.records().count(), 2);
+    let loaded = s.load().unwrap();
+    assert_eq!(loaded.registry.records().count(), 1);
+    assert_eq!(loaded.registry.counters().buttons, 1);
+    assert_eq!(loaded.registry.counters().serial, 2);
     drop(db);
     drop(s);
     std::fs::remove_file(p).unwrap();

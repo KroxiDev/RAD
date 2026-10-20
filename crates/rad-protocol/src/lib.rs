@@ -9,7 +9,7 @@ mod execution;
 mod queries;
 use rad_authority::{Authority, Command, Effect, StorageState};
 use rad_core::{
-    configuration::{Language, Origin},
+    configuration::Origin,
     identity::{EntityKind, ShortId},
     permissions::Permissions,
 };
@@ -229,6 +229,9 @@ impl Protocol {
         op: &str,
         args: &Map<String, Value>,
     ) -> Checked<Value> {
+        if op == "plugin_dependencies" {
+            return plugins::dependencies(a, c, args);
+        }
         if op == "plugin_configuration" {
             return plugins::configuration(a, c, args);
         }
@@ -272,8 +275,9 @@ impl Protocol {
             "status" => {
                 let s = a.status(c.origin);
                 let mut v = json!({"storage_state":match a.storage_state(){StorageState::Ready=>"ready",StorageState::Uncertain=>"uncertain",StorageState::RecoveryRequired=>"recovery_required"},"view_revision":s.revision.map(|r|r.value().to_string()),"active_folder_id":s.active.map(|b|short(b.short()))});
+                v["grid"] = json!({"columns":s.grid.columns(),"rows":s.grid.rows()});
                 if let Some(settings) = a.settings(c.origin) {
-                    v["settings"] = json!({"brightness_percent":settings.brightness_percent,"sleep_ms":settings.sleep_ms.to_string(),"press_threshold_ms":settings.press_threshold_ms.to_string(),"gui_language":match settings.gui_language {Language::En=>"en",Language::Es=>"es"}});
+                    v["settings"] = json!({"brightness_percent":settings.brightness_percent,"sleep_ms":settings.sleep_ms.to_string(),"press_threshold_ms":settings.press_threshold_ms.to_string()});
                     v["global_permissions"] =
                         permissions(a.global_permissions(c.origin).expect("Editor settings"));
                     v["history_operations"] = json!(
@@ -415,6 +419,7 @@ impl Protocol {
                 let code = match reason {
                     Rejection::Execution(e) => execution::error_code(*e),
                     Rejection::Persistence => "storage_error",
+                    Rejection::ResourceExhausted(_) => "resource_exhausted",
                     Rejection::Invalid => "invalid_request",
                     Rejection::Configuration(e) => configuration_error(e),
                     Rejection::StorageUncertain => "storage_uncertain",
@@ -441,7 +446,7 @@ impl Protocol {
             error.map(|(code, outcome)| Error {
                 code: code.into(),
                 message: "Request rejected".into(),
-                details: json!({}),
+                details: rejection_details(e),
                 outcome: Some(outcome),
             }),
         ))
@@ -469,6 +474,7 @@ impl Protocol {
             ops.extend([
                 "plugin_admin",
                 "plugin_status",
+                "plugin_dependencies",
                 "credential_status",
                 "credential_replace",
                 "credential_remove",
@@ -560,6 +566,7 @@ fn configuration_error(e: &rad_core::configuration::ConfigurationError) -> &'sta
         E::NotFound => "not_found",
         E::Occupied => "busy",
         E::NotAllowed | E::ProtectedNavigation | E::ConfirmationRequired => "operation_not_allowed",
+        E::ResourceExhausted => "resource_exhausted",
         E::Identity(I::ShortIdExhausted | I::SerialExhausted) => "resource_exhausted",
         E::Identity(I::ShortIdCollision | I::IdentityCollision | I::ConflictingRetirement) => {
             "identity_collision"
@@ -570,3 +577,28 @@ fn configuration_error(e: &rad_core::configuration::ConfigurationError) -> &'sta
 
 mod credentials;
 pub use credentials::CredentialOperation;
+
+fn rejection_details(effect: &Effect) -> Value {
+    use rad_authority::Rejection;
+    use rad_core::{configuration::ConfigurationError as E, identity::IdentityError as I};
+    let cause = match effect {
+        Effect::Rejected {
+            reason: Rejection::Configuration(E::ResourceExhausted),
+            ..
+        } => "entity_limit",
+        Effect::Rejected {
+            reason: Rejection::Configuration(E::Identity(I::ShortIdExhausted | I::SerialExhausted)),
+            ..
+        } => "identity_counter_exhausted",
+        Effect::Rejected {
+            reason: Rejection::ResourceExhausted(rad_authority::ResourceLimit::DocumentBytes),
+            ..
+        } => "document_limit",
+        Effect::Rejected {
+            reason: Rejection::ResourceExhausted(rad_authority::ResourceLimit::StorageCapacity),
+            ..
+        } => "storage_capacity",
+        _ => return json!({}),
+    };
+    json!({"cause":cause})
+}

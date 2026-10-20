@@ -29,9 +29,9 @@ CREATE TABLE heads (
 CREATE TABLE meta (
     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
     installation BLOB NOT NULL CHECK(length(installation)=16),
-    ledger_count INTEGER NOT NULL CHECK(ledger_count BETWEEN 1 AND 10000),
+    ledger_count INTEGER NOT NULL CHECK(ledger_count >= 1),
     ledger_digest BLOB NOT NULL CHECK(length(ledger_digest)=32),
     barrier INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 PRAGMA application_id=1380009025;
-PRAGMA user_version=1;
+PRAGMA user_version=2;

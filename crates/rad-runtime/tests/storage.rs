@@ -83,6 +83,7 @@ fn transfer_runs_on_existing_store_worker_and_is_single_flight() {
                 kind: Kind::ImageImport,
                 size: Some(1),
                 export_revision: None,
+                export_snapshot: None,
             },
         })
         .unwrap();

@@ -1,0 +1,47 @@
+// TEMPORARY measurement; remove after selecting the fixed live-entity ceiling.
+use rad_core::{configuration::*,identity::*};
+fn populated(count:usize)->(Configuration,IdentityRegistry) {
+ let mut c=Configuration::prepare_new(&IdentityRegistry::new(1).unwrap()).unwrap();
+ for position in 0..16 { c=c.configuration().prepare_edit(c.registry(),Origin::Editor,Edit::CreateFolder{parent:c.configuration().data().principal,position,name:String::new()}).unwrap(); }
+ let mut data=c.configuration().data().clone();
+ let mut registry=c.registry().clone();
+ let mut total=registry.records().count();
+ for folder in &mut data.folders {
+  for slot in &mut folder.slots {
+   if slot.is_some() || total>=count {continue}
+   let binding=registry.allocate(EntityKind::Button).unwrap(); total+=1;
+   let mut actions=Vec::new();
+   for _ in 0..MAX_ACTIONS.min(count-total) { actions.push(ActionData{binding:registry.allocate(EntityKind::Action).unwrap(),kind:ActionKind::Wait(Wait::new(0).unwrap()),permissions:Default::default()});total+=1; }
+   *slot=Some(binding.identity());
+   data.buttons.push(ButtonData{binding,name:String::new(),appearance:Default::default(),visual:VisualSource::Manual,permissions:Default::default(),mode:Default::default(),actions});
+  }
+ }
+ assert_eq!(total,count);
+ (Configuration::from_data(data,&registry).unwrap(),registry)
+}
+
+struct Empty;
+impl rad_store::MediaSource for Empty {
+ fn catalog(&self)->&[rad_store::MediaEntry]{&[]}
+ fn read(&mut self,_:&[u8;32])->Result<rad_media::NormalizedImage,rad_store::MediaReadError>{panic!("empty")}
+}
+fn main() {
+ let (c,r)=populated(7200);
+ let before=rad_codec::encode(&c).unwrap().len();
+ let mut data=c.data().clone();
+ let mut remaining=1024*1024-before;
+ for button in &mut data.buttons {
+  let grow=remaining.min(8190-button.name.len());
+  button.name.push_str(&"x".repeat(grow));remaining-=grow;
+ }
+ assert_eq!(remaining,0);
+ let c=Configuration::from_data(data,&r).unwrap();
+ let bytes=rad_codec::encode(&c).unwrap();assert_eq!(bytes.len(),1024*1024);
+ let candidate=c.prepare_restore(&r,Origin::Editor,true,c.data().clone()).unwrap();
+ let root=std::path::Path::new("docs/fixtures/v1");
+ std::fs::write(root.join("large.json"),&bytes).unwrap();
+ let store=rad_store::Store::create(&root.join("large.sqlite3"),&candidate).unwrap();drop(store);
+ let mut package=Vec::new();rad_package::export(rad_package::ExportSnapshot{configuration:&c,media:&mut Empty},&mut package).unwrap();
+ std::fs::write(root.join("large.radpkg"),package).unwrap();
+ println!("original v1: 7200 entities, minimal={before}B, padded canonical={}B",bytes.len());
+}

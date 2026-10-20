@@ -456,7 +456,15 @@ impl Server {
                 if context.origin != Origin::Editor { return Err("permission_denied"); }
                 let (admin, native) = self.plugin_admin.as_ref().zip(self.native.as_ref())
                     .ok_or("executor_unavailable")?;
-                Ok(admin.status(native.plugin_host()))
+                let mut status=admin.status(native.plugin_host());
+                if let Some(items)=status["items"].as_array_mut() {
+                    for item in items {
+                        let id=item["id"].as_str().unwrap_or_default();
+                        let needs=self.actor.plugin_credential_status(id).iter().any(|(_,present)|!present);
+                        item["needs_credentials"]=json!(needs);
+                    }
+                }
+                Ok(status)
             }
             External::PluginVisual { id } => Ok(self.plugin_visuals.as_ref()
                 .map(|visuals| visuals.ipc_view(&self.actor, id))

@@ -10,7 +10,6 @@ fn new_configuration_has_complete_normative_settings_defaults() {
     assert_eq!(s.sleep_ms(), 300_000);
     assert!(s.sleep_enabled());
     assert_eq!(s.press_threshold_ms(), 0);
-    assert_eq!(s.gui_language(), Language::En);
     assert_eq!(s.data(), c.configuration().data().settings);
 }
 #[test]
@@ -20,7 +19,6 @@ fn settings_constructor_rejects_bad_brightness_and_preserves_full_durations_and_
             brightness_percent,
             sleep_ms: u64::MAX,
             press_threshold_ms: u64::MAX,
-            gui_language: Language::Es,
         };
         let result = Settings::from_data(data);
         if brightness_percent > 100 {
@@ -50,7 +48,6 @@ fn reconstruction_validates_settings_without_silently_defaulting() {
         brightness_percent: 0,
         sleep_ms: 0,
         press_threshold_ms: u64::MAX,
-        gui_language: Language::Es,
     };
     let restored = Configuration::from_data(data.clone(), c.registry()).unwrap();
     assert_eq!(restored.settings().data(), data.settings);
@@ -63,7 +60,6 @@ fn editor_settings_edit_produces_atomic_candidate_without_new_ids() {
         brightness_percent: 42,
         sleep_ms: 0,
         press_threshold_ms: 73,
-        gui_language: Language::Es,
     };
     let next = c
         .configuration()
@@ -134,7 +130,6 @@ fn invalid_settings_step_cannot_be_hidden_by_later_valid_step_and_batch_allocati
     );
     assert!(c.configuration().data().buttons.is_empty());
     let changed = SettingsData {
-        gui_language: Language::Es,
         ..SettingsData::default()
     };
     let good = c
@@ -173,7 +168,6 @@ fn restore_preserves_settings_and_current_ledger_without_merging_or_defaulting()
                 brightness_percent: 17,
                 sleep_ms: u64::MAX,
                 press_threshold_ms: 0,
-                gui_language: Language::Es,
             }),
         )
         .unwrap();

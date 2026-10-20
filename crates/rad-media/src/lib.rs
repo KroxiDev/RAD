@@ -1,4 +1,7 @@
 //! In-memory static image normalization. No filesystem or Store responsibilities.
+mod source;
+pub use source::{MediaEntry, MediaReadError, MediaSource};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedImage {
     png: Vec<u8>,

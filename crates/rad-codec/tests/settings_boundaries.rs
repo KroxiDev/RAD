@@ -9,7 +9,6 @@ fn all_brightness_bytes_and_failed_restore_preserve_original_and_ledger() {
             brightness_percent: brightness,
             sleep_ms: u64::MAX,
             press_threshold_ms: u64::MAX,
-            gui_language: Language::Es,
         };
         let changed = base.configuration().prepare_edit(
             base.registry(),

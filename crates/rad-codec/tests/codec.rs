@@ -87,7 +87,7 @@ fn unsupported_version_is_distinct_from_malformed_document() {
     let json = String::from_utf8(encode(&c).unwrap()).unwrap();
     assert_eq!(
         decode_data(
-            json.replacen("\"version\":1", "\"version\":2", 1)
+            json.replacen("\"version\":2", "\"version\":3", 1)
                 .as_bytes()
         ),
         Err(CodecError::UnsupportedVersion)
@@ -110,6 +110,9 @@ fn integer_strings_are_canonical_and_keep_u64_u128_maxima() {
     let registry =
         IdentityRegistry::from_records(u128::MAX, [IdentityRecord::new(binding, false)]).unwrap();
     let data = ConfigurationData {
+        grid: Grid::XL,
+        plugin_settings: Default::default(),
+        plugin_dependencies: Default::default(),
         settings: SettingsData::default(),
         principal: id,
         global_permissions: Permissions::default(),
@@ -208,8 +211,8 @@ fn duplicate_unknown_nested_fields_malformed_and_untrusted_semantics() {
     let (c, r) = full();
     let json = String::from_utf8(encode(&c).unwrap()).unwrap();
     for bad in [
-        json.replacen("\"version\":1", "\"version\":1,\"version\":1", 1),
-        json.replacen("\"version\":1", "\"version\":1,\"secret\":null", 1),
+        json.replacen("\"version\":2", "\"version\":2,\"version\":2", 1),
+        json.replacen("\"version\":2", "\"version\":2,\"secret\":null", 1),
         json.replacen("\"serial\":\"1\"", "\"serial\":\"1\",\"serial\":\"1\"", 1),
         json.replacen("\"parent\":null", "\"parent\":null,\"parent\":null", 1),
         json.replacen("\"consult\":true", "\"consult\":true,\"extra\":false", 1),
@@ -654,7 +657,13 @@ fn gaps_between_actions_are_not_written_and_earlier_documents_read_only_when_the
     assert!(!text.contains("pauses_ms"), "{text}");
     // Documents written before waiting became an action carried a gap list per button.
     let earlier = |gaps: &str| {
-        text.replace(
+        let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        v["version"] = serde_json::json!(1);
+        v.as_object_mut().unwrap().remove("grid");
+        v.as_object_mut().unwrap().remove("plugin_settings");
+        v.as_object_mut().unwrap().remove("plugin_dependencies");
+        v["settings"]["gui_language"] = serde_json::json!("en");
+        serde_json::to_string(&v).unwrap().replace(
             r#""actions":[]"#,
             &format!(r#""actions":[],"pauses_ms":{gaps}"#),
         )

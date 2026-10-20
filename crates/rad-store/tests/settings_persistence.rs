@@ -48,7 +48,6 @@ fn changed(base: &Candidate) -> Candidate {
                     brightness_percent: 33,
                     sleep_ms: 0,
                     press_threshold_ms: u64::MAX,
-                    gui_language: Language::Es,
                 }),
             ],
         )

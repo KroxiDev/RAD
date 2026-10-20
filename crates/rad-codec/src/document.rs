@@ -4,6 +4,19 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct Document {
     pub settings: Settings,
     pub version: u8,
+    pub grid: [u8; 2],
+    #[serde(
+        default,
+        skip_serializing_if = "std::collections::BTreeMap::is_empty",
+        deserialize_with = "unique_map"
+    )]
+    pub plugin_dependencies: std::collections::BTreeMap<String, PluginDependency>,
+    #[serde(
+        default,
+        skip_serializing_if = "std::collections::BTreeMap::is_empty",
+        deserialize_with = "unique_map"
+    )]
+    pub plugin_settings: std::collections::BTreeMap<String, String>,
     pub principal: Identity,
     pub global_permissions: Permissions,
     pub folders: Vec<Folder>,
@@ -53,9 +66,6 @@ pub(crate) struct Button {
     pub permissions: Local,
     pub mode: Mode,
     pub actions: Vec<Action>,
-    /// Gap list that buttons carried before waiting became an action. Read, never written.
-    #[serde(default, skip_serializing)]
-    pub pauses_ms: Option<Vec<String>>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -128,5 +138,43 @@ pub(crate) struct Settings {
     pub brightness_percent: u8,
     pub sleep_ms: String,
     pub press_threshold_ms: String,
-    pub gui_language: String,
+}
+
+fn unique_map<'de, D: serde::Deserializer<'de>, V: Deserialize<'de>>(
+    d: D,
+) -> Result<std::collections::BTreeMap<String, V>, D::Error> {
+    struct Visitor<V>(std::marker::PhantomData<V>);
+    impl<'de, V: Deserialize<'de>> serde::de::Visitor<'de> for Visitor<V> {
+        type Value = std::collections::BTreeMap<String, V>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("unique plugin settings")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut result = std::collections::BTreeMap::new();
+            while let Some((k, v)) = map.next_entry::<String, V>()? {
+                if result.insert(k, v).is_some() {
+                    return Err(serde::de::Error::custom("duplicate plugin"));
+                }
+            }
+            Ok(result)
+        }
+    }
+    d.deserialize_map(Visitor(std::marker::PhantomData))
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PluginDependency {
+    pub version: Option<PluginVersion>,
+    pub origin: Option<String>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PluginVersion {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
 }

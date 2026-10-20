@@ -258,6 +258,7 @@ fn available(items: &[(&str, &str)]) -> ChoiceList {
 fn refusal(code: &str) -> Error {
     Error {
         code: code.into(),
+        cause: None,
         unknown: false,
     }
 }

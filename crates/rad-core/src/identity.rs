@@ -107,12 +107,13 @@ impl IdentityRecord {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// Complete local ledger, including retired bindings. Fields are never mutable views.
+/// Retained local ledger plus durable counters. Fields are never mutable views.
 ///
-/// Both keys are indexed without removing retired assignments. Capacity limits
-/// belong to Store; this type does not promise a process memory ceiling.
+/// Both keys are indexed; retired assignments can be pruned without releasing their
+/// numeric reservations. The live-entity limit belongs to Configuration.
 pub struct IdentityRegistry {
     installation: u128,
+    counters: IdentityCounters,
     records: BTreeMap<ShortId, IdentityRecord>,
     identities: BTreeMap<EntityIdentity, ShortId>,
 }
@@ -124,6 +125,7 @@ impl IdentityRegistry {
         }
         Ok(Self {
             installation,
+            counters: IdentityCounters::default(),
             records: BTreeMap::new(),
             identities: BTreeMap::new(),
         })
@@ -140,22 +142,13 @@ impl IdentityRegistry {
     /// local serials ignore foreign serials but short-ID counters include all origins.
     pub fn allocate(&mut self, kind: EntityKind) -> Result<Binding, IdentityError> {
         let number = self
-            .records
-            .range(ShortId::new(kind, 1)?..=ShortId::new(kind, u64::MAX)?)
-            .next_back()
-            .map(|(short, _)| short.number)
-            .unwrap_or(0)
+            .counters
+            .number(kind)
             .checked_add(1)
             .ok_or(IdentityError::ShortIdExhausted)?;
         let serial = self
-            .identities
-            .range(
-                EntityIdentity::new(self.installation, 1)?
-                    ..=EntityIdentity::new(self.installation, u64::MAX)?,
-            )
-            .next_back()
-            .map(|(identity, _)| identity.serial)
-            .unwrap_or(0)
+            .counters
+            .serial
             .checked_add(1)
             .ok_or(IdentityError::SerialExhausted)?;
         let binding = Binding::new(
@@ -188,7 +181,7 @@ impl IdentityRegistry {
 
     /// Reconstruct a COMPLETE ledger supplied by Store, not an old active snapshot.
     /// Exact duplicates are idempotent; contradictory retirement or either identity
-    /// collision is rejected. Counters are derived, never trusted from input.
+    /// collision is rejected. This legacy reconstruction derives counters from a complete ledger.
     /// Missing records cannot be detected here: Store must verify integrity and must
     /// not roll this ledger back when recovering an older configuration.
     pub fn from_records(
@@ -213,6 +206,12 @@ impl IdentityRegistry {
 impl IdentityRegistry {
     /// Called only after both keys have been validated or freshly allocated.
     fn insert(&mut self, record: IdentityRecord) {
+        let binding = record.binding;
+        let number = self.counters.number_mut(binding.short.kind);
+        *number = (*number).max(binding.short.number);
+        if binding.identity.installation == self.installation {
+            self.counters.serial = self.counters.serial.max(binding.identity.serial);
+        }
         self.identities
             .insert(record.binding.identity, record.binding.short);
         self.records.insert(record.binding.short, record);
@@ -244,5 +243,67 @@ impl std::fmt::Display for ShortId {
             EntityKind::Action => "a",
         };
         write!(f, "{prefix}{}", self.number)
+    }
+}
+
+/// Durable high-water marks; independent of the retained identity ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct IdentityCounters {
+    pub folders: u64,
+    pub buttons: u64,
+    pub actions: u64,
+    pub serial: u64,
+}
+impl IdentityCounters {
+    pub fn number(self, kind: EntityKind) -> u64 {
+        match kind {
+            EntityKind::Folder => self.folders,
+            EntityKind::Button => self.buttons,
+            EntityKind::Action => self.actions,
+        }
+    }
+    fn number_mut(&mut self, kind: EntityKind) -> &mut u64 {
+        match kind {
+            EntityKind::Folder => &mut self.folders,
+            EntityKind::Button => &mut self.buttons,
+            EntityKind::Action => &mut self.actions,
+        }
+    }
+    pub fn contains(self, other: Self) -> bool {
+        self.folders >= other.folders
+            && self.buttons >= other.buttons
+            && self.actions >= other.actions
+            && self.serial >= other.serial
+    }
+}
+impl IdentityRegistry {
+    pub fn counters(&self) -> IdentityCounters {
+        self.counters
+    }
+    /// Reconstruct a pruned ledger only alongside its integrity-checked durable counters.
+    pub fn from_records_with_counters(
+        installation: u128,
+        records: impl IntoIterator<Item = IdentityRecord>,
+        counters: IdentityCounters,
+    ) -> Result<Self, IdentityError> {
+        let mut registry = Self::from_records(installation, records)?;
+        if !counters.contains(registry.counters) {
+            return Err(IdentityError::InvalidValue);
+        }
+        registry.counters = counters;
+        Ok(registry)
+    }
+    pub fn reserve_counters(&mut self, counters: IdentityCounters) {
+        self.counters.folders = self.counters.folders.max(counters.folders);
+        self.counters.buttons = self.counters.buttons.max(counters.buttons);
+        self.counters.actions = self.counters.actions.max(counters.actions);
+        self.counters.serial = self.counters.serial.max(counters.serial);
+    }
+    /// Retired assignments outlive only their history/revision/export roots.
+    pub fn retain_bindings(&mut self, roots: &std::collections::BTreeSet<EntityIdentity>) {
+        self.records
+            .retain(|_, r| !r.retired || roots.contains(&r.binding.identity));
+        self.identities
+            .retain(|_, short| self.records.contains_key(short));
     }
 }

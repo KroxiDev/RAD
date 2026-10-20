@@ -80,3 +80,7 @@ impl Controller {
 pub mod status;
 
 pub mod plugins;
+
+pub mod preferences;
+
+pub mod dependencies;

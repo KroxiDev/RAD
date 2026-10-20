@@ -224,7 +224,7 @@ fn media_is_owned_deduplicated_and_committed_with_configuration() {
     std::fs::remove_file(path).unwrap();
 }
 #[test]
-fn garbage_collection_retains_previous_and_explicit_roots_but_never_deletes_ids() {
+fn garbage_collection_retains_previous_and_explicit_identity_roots() {
     use rad_core::configuration::{Appearance, Edit, Origin};
     let path = path("gc");
     let initial = Configuration::prepare_new(&IdentityRegistry::new(7).unwrap()).unwrap();
@@ -349,7 +349,7 @@ fn absent_incomplete_and_future_databases_are_not_new_installations() {
     std::fs::remove_file(&path).unwrap();
     drop(Store::create(&path, &initial).unwrap());
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch("PRAGMA user_version=2").unwrap();
+    db.execute_batch("PRAGMA user_version=999").unwrap();
     drop(db);
     assert!(Store::open(&path).is_err());
     assert!(path.exists());
@@ -488,10 +488,10 @@ fn with_retired(count: u64) -> rad_core::configuration::Candidate {
         .unwrap()
 }
 #[test]
-fn ledger_capacity_preserves_tombstones_and_still_allows_edits_without_new_ids() {
+fn retired_ledger_has_no_permanent_capacity_ceiling() {
     use rad_core::configuration::{Edit, Origin};
     use rad_core::permissions::Permissions;
-    use rad_store::{CommitOutcome, StoreError};
+    use rad_store::CommitOutcome;
     let initial = with_retired(10_000);
     let path = path("capacity");
     let start = std::time::Instant::now();
@@ -527,11 +527,11 @@ fn ledger_capacity_preserves_tombstones_and_still_allows_edits_without_new_ids()
             },
         )
         .unwrap();
-    assert_eq!(
+    assert!(matches!(
         store.commit(&added),
-        CommitOutcome::NotApplied(StoreError::Capacity)
-    );
-    assert_eq!(store.load().unwrap().registry.records().count(), 10_000);
+        CommitOutcome::Applied { .. }
+    ));
+    assert_eq!(store.load().unwrap().registry.records().count(), 10_001);
     println!(
         "integrated ledger10000 create_us={} load_us={} commit_us={} db_bytes={}",
         created.as_micros(),
@@ -541,11 +541,7 @@ fn ledger_capacity_preserves_tombstones_and_still_allows_edits_without_new_ids()
     );
     drop(store);
     std::fs::remove_file(&path).unwrap();
-    assert!(matches!(
-        Store::create(&path, &with_retired(10_001)),
-        Err(StoreError::Capacity)
-    ));
-    assert!(!path.exists());
+    assert!(Store::create(&path, &with_retired(10_001)).is_ok());
 }
 #[test]
 fn reopening_existing_state_uses_a_real_changed_barrier_not_only_a_read() {

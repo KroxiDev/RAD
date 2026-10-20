@@ -11,13 +11,11 @@ fn complete_settings_roundtrip_with_zero_sleep_max_durations_and_language() {
             brightness_percent: 0,
             sleep_ms: 0,
             press_threshold_ms: u64::MAX,
-            gui_language: Language::Es,
         },
         SettingsData {
             brightness_percent: 100,
             sleep_ms: u64::MAX,
             press_threshold_ms: 0,
-            gui_language: Language::En,
         },
     ] {
         let c = c
@@ -32,7 +30,7 @@ fn complete_settings_roundtrip_with_zero_sleep_max_durations_and_language() {
             *c.configuration()
         );
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["version"], 1);
+        assert_eq!(value["version"], 2);
         assert!(value["settings"]["sleep_ms"].is_string());
         assert!(value["settings"]["press_threshold_ms"].is_string());
         assert_eq!(bytes, encode(c.configuration()).unwrap());
@@ -55,12 +53,7 @@ fn single_v1_requires_settings_and_never_fills_missing_or_null_fields() {
         decode_data(&serde_json::to_vec(&null).unwrap()),
         Err(CodecError::InvalidDocument)
     );
-    for field in [
-        "brightness_percent",
-        "sleep_ms",
-        "press_threshold_ms",
-        "gui_language",
-    ] {
+    for field in ["brightness_percent", "sleep_ms", "press_threshold_ms"] {
         let mut absent = original.clone();
         absent["settings"].as_object_mut().unwrap().remove(field);
         assert_eq!(
@@ -108,12 +101,7 @@ fn strict_settings_reject_duplicates_unknown_fields_nulls_and_noncanonical_durat
     let bytes = encode(c.configuration()).unwrap();
     let json = String::from_utf8(bytes.clone()).unwrap();
     let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    for field in [
-        "brightness_percent",
-        "sleep_ms",
-        "press_threshold_ms",
-        "gui_language",
-    ] {
+    for field in ["brightness_percent", "sleep_ms", "press_threshold_ms"] {
         let encoded = serde_json::to_string(&original["settings"][field]).unwrap();
         let pair = format!("\"{field}\":{encoded}");
         let duplicated = json.replacen(&pair, &format!("{pair},{pair}"), 1);
@@ -172,7 +160,7 @@ fn strict_settings_reject_duplicates_unknown_fields_nulls_and_noncanonical_durat
         assert!(decode_data(&serde_json::to_vec(&bad).unwrap()).is_err());
     }
     let mut future = original;
-    future["version"] = serde_json::json!(2);
+    future["version"] = serde_json::json!(3);
     assert_eq!(
         decode_data(&serde_json::to_vec(&future).unwrap()),
         Err(CodecError::UnsupportedVersion)
@@ -186,7 +174,6 @@ fn settings_and_tree_share_one_document_and_restore_candidate() {
         brightness_percent: 33,
         sleep_ms: 0,
         press_threshold_ms: 999,
-        gui_language: Language::Es,
     };
     let c = c
         .configuration()

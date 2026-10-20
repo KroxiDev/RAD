@@ -50,8 +50,7 @@ impl Port for Script {
 }
 #[test]
 fn unchanged_status_does_not_reload_deck_and_changed_board_is_complete() {
-    let status =
-        json!({"view_revision":"2","active_folder_id":"f1","settings":{"gui_language":"en"}});
+    let status = json!({"view_revision":"2","active_folder_id":"f1","grid":{"columns":8,"rows":4}});
     let mut slots = vec![Value::Null; 32];
     slots[3] = json!({"visibility":"visible","id":"b8"});
     let folder = json!({"id":"f1","kind":"folder","fields":{"slots":slots},"view_revision":"2"});
@@ -112,7 +111,7 @@ fn board_loads_text_and_owned_image_reference_for_rendering() {
     let mut slots = vec![Value::Null; 32];
     slots[0] = json!({"visibility":"visible","id":"b1"});
     let mut s=Session::new(Script([
-        ("status",json!({"view_revision":"2","active_folder_id":"f1"})),
+        ("status",json!({"view_revision":"2","active_folder_id":"f1","grid":{"columns":8,"rows":4}})),
         ("get",json!({"id":"f1","view_revision":"2","fields":{"slots":slots}})),
         ("get",json!({"id":"b1","view_revision":"2","fields":{"name":"App"}})),
         ("get_section",json!({"view_revision":"2","items":[{"name":"text","value":"Go"},{"name":"image","value":"owned-media"},{"name":"text_position","value":"bottom"}],"next_cursor":null})),
@@ -158,4 +157,68 @@ fn inspector_accepts_twenty_actions_and_rejects_twenty_one() {
     };
     assert_eq!(inspect(20).unwrap(), 20);
     assert!(inspect(21).is_err());
+}
+
+#[test]
+fn refresh_rejects_missing_or_unsupported_grid_before_showing_board() {
+    for grid in [Value::Null, json!({"columns":5,"rows":3}), json!([8, 4])] {
+        let slots = vec![Value::Null; 32];
+        let mut s = Session::new(Script(
+            [
+                (
+                    "status",
+                    json!({"view_revision":"2","active_folder_id":"f1","grid":grid}),
+                ),
+                (
+                    "get",
+                    json!({"id":"f1","view_revision":"2","fields":{"slots":slots}}),
+                ),
+            ]
+            .into(),
+        ));
+        assert!(
+            s.refresh(false).is_err(),
+            "unsupported grid was accepted: {grid}"
+        );
+    }
+}
+
+struct Refused(&'static str);
+impl Port for Refused {
+    fn request(&mut self, _: &str, _: Value) -> Result<Response, Failure> {
+        Ok(Response {
+            v: 1,
+            id: Some("1".into()),
+            session_id: None,
+            status: rad_client::response::Status::Error,
+            data: Value::Null,
+            error: Some(rad_client::response::Error {
+                code: "resource_exhausted".into(),
+                message: "Limit".into(),
+                details: json!({"cause":self.0}),
+                outcome: Some(Outcome::NotApplied),
+            }),
+        })
+    }
+}
+#[test]
+fn capacity_failure_retains_wire_cause_without_replaying_mutation() {
+    for cause in [
+        "entity_limit",
+        "identity_counter_exhausted",
+        "document_limit",
+        "storage_capacity",
+    ] {
+        let mut s = Session::new(Refused(cause));
+        let error = s
+            .request(Request::new("create_button", json!({})))
+            .unwrap_err();
+        assert_eq!(error.code, "resource_exhausted");
+        assert!(!error.unknown);
+        assert_eq!(error.cause.as_deref(), Some(cause));
+        let message = rad_editor::status::describe_failure(&error, false);
+        assert_ne!(message, "Limit reached");
+        assert_ne!(message, rad_editor::status::describe_failure(&error, true));
+        assert!(s.is_open());
+    }
 }

@@ -293,7 +293,7 @@ fn administrative_tree_settings_and_permissions_use_domain_commands() {
     apply(
         &mut a,
         "set_settings",
-        json!({"changes":{"brightness_percent":0,"sleep_ms":"0","press_threshold_ms":"18446744073709551615","gui_language":"es"}}),
+        json!({"changes":{"brightness_percent":0,"sleep_ms":"0","press_threshold_ms":"18446744073709551615"}}),
     );
     apply(
         &mut a,
@@ -308,7 +308,7 @@ fn administrative_tree_settings_and_permissions_use_domain_commands() {
         "not_found"
     );
     let s = response(call(&mut a, Origin::Editor, "status", json!({})));
-    assert_eq!(s.data["settings"]["gui_language"], "es");
+    assert!(s.data["settings"].get("gui_language").is_none());
     apply(
         &mut a,
         "move_folder",
@@ -1438,4 +1438,190 @@ fn credential_ipc_preserves_empty_and_fully_escaped_values_but_rejects_overlong_
             "invalid_request"
         );
     }
+}
+
+#[test]
+fn status_exposes_grid_without_editor_language() {
+    let mut a = actor();
+    let status = response(call(&mut a, Origin::Editor, "status", json!({})));
+    assert_eq!(status.data["grid"], json!({"columns":8,"rows":4}));
+    assert!(status.data["settings"].get("gui_language").is_none());
+    let rejected = response(call(
+        &mut a,
+        Origin::Editor,
+        "set_settings",
+        json!({"changes":{"gui_language":"es"}}),
+    ));
+    assert_eq!(rejected.error.unwrap().code, "invalid_request");
+}
+
+#[test]
+fn exhausted_identity_response_preserves_machine_readable_cause() {
+    let mut a = actor();
+    let ticket = a.reserve(4, Origin::Editor).unwrap();
+    let request = ticket.request();
+    let effect = rad_authority::Effect::Rejected {
+        request,
+        reason: rad_authority::Rejection::Configuration(
+            rad_core::configuration::ConfigurationError::Identity(
+                rad_core::identity::IdentityError::ShortIdExhausted,
+            ),
+        ),
+    };
+    let response = Protocol::new(NonZeroU128::new(7).unwrap())
+        .response_for(
+            &a,
+            IncomingContext {
+                request_id: 2,
+                connection: 4,
+                origin: Origin::Editor,
+            },
+            request,
+            &effect,
+        )
+        .unwrap();
+    let error = response.error.unwrap();
+    assert_eq!(error.code, "resource_exhausted");
+    assert_eq!(error.details["cause"], "identity_counter_exhausted");
+}
+
+#[test]
+fn plugin_dependencies_are_editor_only_and_paginated() {
+    let mut a = actor();
+    let page = response(call(
+        &mut a,
+        Origin::Editor,
+        "plugin_dependencies",
+        json!({"cursor":null}),
+    ));
+    assert!(page.error.is_none(), "{page:?}");
+    assert_eq!(page.data["items"], json!([]));
+    assert!(page.data["next_cursor"].is_null());
+    let forbidden = response(call(
+        &mut a,
+        Origin::Automation,
+        "plugin_dependencies",
+        json!({"cursor":null}),
+    ));
+    assert_eq!(forbidden.error.unwrap().code, "permission_denied");
+}
+
+#[test]
+fn oversized_document_reports_resource_exhausted_with_document_cause() {
+    use rad_core::configuration::PluginSettings;
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(9).unwrap()).unwrap();
+    let mut data = initial.configuration().data().clone();
+    for i in 0..140 {
+        data.plugin_settings.insert(
+            format!("plugin{i}"),
+            PluginSettings::new(vec![0xff; 4095]).unwrap(),
+        );
+    }
+    let mut a = actor();
+    let ticket = a.reserve(4, Origin::Editor).unwrap();
+    let request = ticket.request();
+    let effects = a.submit(
+        ticket,
+        rad_authority::Command::Restore {
+            data,
+            confirmed: true,
+        },
+    );
+    let effect = effects
+        .iter()
+        .find(|e| matches!(e, rad_authority::Effect::Rejected { .. }))
+        .unwrap();
+    let response = Protocol::new(NonZeroU128::new(7).unwrap())
+        .response_for(
+            &a,
+            IncomingContext {
+                request_id: 2,
+                connection: 4,
+                origin: Origin::Editor,
+            },
+            request,
+            effect,
+        )
+        .unwrap();
+    let error = response.error.unwrap();
+    assert_eq!(error.code, "resource_exhausted");
+    assert_eq!(error.details["cause"], "document_limit");
+}
+
+#[test]
+fn large_dependency_list_fits_real_frames_without_losing_tail_and_cursor_expires() {
+    use rad_core::configuration::{Edit, PluginDependency, PluginSettings, SettingsData};
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(9).unwrap()).unwrap();
+    let mut data = initial.configuration().data().clone();
+    for n in 0..40 {
+        let id = format!("plugin-{n:02}");
+        data.plugin_settings
+            .insert(id.clone(), PluginSettings::new(vec![]).unwrap());
+        data.plugin_dependencies.insert(
+            id,
+            PluginDependency {
+                version: None,
+                origin: Some("x".repeat(8190)),
+            },
+        );
+    }
+    let candidate = initial
+        .configuration()
+        .prepare_restore(initial.registry(), Origin::Editor, true, data)
+        .unwrap();
+    let mut a = Authority::new(candidate, 1, NonZeroU128::new(7).unwrap());
+    let protocol = Protocol::new(NonZeroU128::new(7).unwrap());
+    let mut cursor = Value::Null;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut old_cursor = Value::Null;
+    loop {
+        let page = response(call(
+            &mut a,
+            Origin::Editor,
+            "plugin_dependencies",
+            json!({"cursor":cursor}),
+        ));
+        assert!(page.error.is_none(), "{page:?}");
+        let encoded = protocol.encode_response(&page).unwrap();
+        assert!(encoded.len() <= 65536);
+        for item in page.data["items"].as_array().unwrap() {
+            assert!(seen.insert(item["id"].as_str().unwrap().to_owned()));
+            assert!(item["needs_credentials"].is_null());
+        }
+        cursor = page.data["next_cursor"].clone();
+        if cursor.is_null() {
+            break;
+        }
+        old_cursor = cursor.clone();
+    }
+    assert_eq!(seen.len(), 40);
+    let ticket = a.reserve(4, Origin::Editor).unwrap();
+    let effects = a.submit(
+        ticket,
+        vec![Edit::SetSettings(SettingsData {
+            brightness_percent: 12,
+            ..Default::default()
+        })],
+    );
+    let id = effects
+        .iter()
+        .find_map(|e| match e {
+            rad_authority::Effect::Persist { id, .. } => Some(*id),
+            _ => None,
+        })
+        .unwrap();
+    a.complete(
+        id,
+        rad_authority::Outcome::Applied {
+            revision: 2,
+            changed: true,
+        },
+    );
+    let page = response(call(
+        &mut a,
+        Origin::Editor,
+        "plugin_dependencies",
+        json!({"cursor":old_cursor}),
+    ));
+    assert_eq!(page.error.unwrap().code, "cursor_expired");
 }

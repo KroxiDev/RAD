@@ -1151,3 +1151,27 @@ fn admission_during_normal_stop_waits_for_new_generation_without_rebinding_old_w
     a.begin_plugin_stop("fixture", 42).unwrap();
     assert_eq!(a.plugin_manifests().next().unwrap().1, selection);
 }
+
+#[test]
+fn credential_requirements_use_installed_slots_and_never_expose_values() {
+    let mut a = Authority::new(fixture(), 1, std::num::NonZeroU128::new(772).unwrap());
+    assert!(a.plugin_credential_status("fixture").is_empty());
+    a.install_plugin(credential_manifest(), 1, "x86_64-unknown-linux-gnu")
+        .unwrap();
+    assert_eq!(
+        a.plugin_credential_status("fixture"),
+        vec![("password".into(), false)]
+    );
+    a.publish_plugin_credentials("fixture", 1, 1, credential_values("private-canary"))
+        .unwrap();
+    assert_eq!(
+        a.plugin_credential_status("fixture"),
+        vec![("password".into(), true)]
+    );
+    assert!(!format!("{:?}", a.plugin_credential_status("fixture")).contains("private-canary"));
+    a.invalidate_plugin_credentials("fixture", 1).unwrap();
+    assert_eq!(
+        a.plugin_credential_status("fixture"),
+        vec![("password".into(), false)]
+    );
+}

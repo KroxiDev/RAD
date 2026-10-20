@@ -8,6 +8,10 @@ use std::collections::BTreeMap;
 pub(super) struct PluginUi {
     pub catalog: Vec<CatalogEntry>,
     pub status: Value,
+    pub dependencies: crate::dependencies::Dependencies,
+    dependency_page: usize,
+    pub dependency_credentials: Option<String>,
+    pub dependency_status_due: bool,
     pub due: u64,
     pub section_open: bool,
     pub catalog_loaded: bool,
@@ -26,6 +30,24 @@ pub(super) struct PluginUi {
     status_page: usize,
 }
 impl PluginUi {
+    pub fn reconnect(&mut self) {
+        self.dependencies.reset();
+        self.dependency_status_due = true;
+        self.status = Value::Null;
+        self.catalog_loaded = false;
+        self.trusted = false;
+        self.source.clear();
+        self.selected.clear();
+        self.source_edited = true;
+        self.dependency_credentials = None;
+    }
+    pub fn restore_result(&mut self, status: rad_client::response::Status) -> bool {
+        if status != rad_client::response::Status::Applied {
+            return false;
+        }
+        self.reconnect();
+        true
+    }
     pub fn wants_status(&self, settings_open: bool) -> bool {
         (settings_open && self.section_open)
             || self.admin_pending
@@ -178,8 +200,164 @@ fn plugin_status_list(ui: &mut egui::Ui, plugins: &mut PluginUi, idle: bool, es:
     }
     true
 }
+/// Conservative public-source projection; the runtime still validates the package and source.
+fn installation_source(origin: &str) -> Option<String> {
+    if origin.len() > 1024 {
+        return None;
+    }
+    let path = origin
+        .strip_prefix("https://github.com/")?
+        .trim_end_matches('/');
+    let parts: Vec<_> = path.split('/').collect();
+    let component = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 128
+            && s != "."
+            && s != ".."
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    };
+    if !matches!(parts.len(), 2..=5)
+        || !parts.iter().all(|p| component(p))
+        || parts.len() >= 3 && parts[2] != "releases"
+        || parts.len() == 4 && parts[3] != "latest"
+        || parts.len() == 5 && parts[3] != "tag"
+    {
+        return None;
+    }
+    let repository = parts[1].strip_suffix(".git").unwrap_or(parts[1]);
+    if !component(repository) {
+        return None;
+    }
+    let base = format!("https://github.com/{}/{repository}", parts[0]);
+    Some(
+        parts
+            .get(4)
+            .map_or(base.clone(), |tag| format!("{base}/releases/tag/{tag}")),
+    )
+}
+
+/// Shows eight published dependencies per frame, including an explicit tail navigator.
+/// Imported metadata is only a suggestion; preparing never submits an install or trusts it.
+fn dependency_list(
+    ui: &mut egui::Ui,
+    plugins: &mut PluginUi,
+    idle: bool,
+    es: bool,
+) -> Option<(String, Vec<String>)> {
+    let Some(items) = plugins.dependencies.items() else {
+        if plugins.dependencies.failed() {
+            ui.label(tr(
+                es,
+                "Could not read required plugins — retry",
+                "No se pudieron leer los plugins necesarios — reintenta",
+            ));
+            if ui.button(tr(es, "Retry", "Reintentar")).clicked() {
+                plugins.dependencies.reset();
+            }
+        } else {
+            ui.label(tr(
+                es,
+                "Checking required plugins…",
+                "Consultando los plugins necesarios…",
+            ));
+        }
+        return None;
+    };
+    if items.is_empty() {
+        return None;
+    }
+    let Some(installed) = plugins.status["items"]
+        .as_array()
+        .filter(|items| items.len() <= 32)
+    else {
+        ui.label(tr(
+            es,
+            "Checking installed plugins…",
+            "Consultando los plugins instalados…",
+        ));
+        return None;
+    };
+    ui.heading(tr(
+        es,
+        "Plugins used by this configuration",
+        "Plugins que usa esta configuración",
+    ));
+    let pages = items.len().div_ceil(8);
+    plugins.dependency_page = plugins.dependency_page.min(pages - 1);
+    let mut source = None;
+    let mut credentials = None;
+    for item in items.iter().skip(plugins.dependency_page * 8).take(8) {
+        let id = item["id"].as_str().unwrap_or("");
+        ui.push_id(("dependency", id), |ui| {
+            ui.label(id);
+            ui.label(if item["version"].is_null() {
+                tr(es,"Version unknown","Versión desconocida").to_owned()
+            } else { version(&item["version"]) });
+            if let Some(local) = installed.iter().find(|local| local["id"] == id) {
+                if local["needs_credentials"] == true {
+                    ui.label(tr(es,"Needs password","Necesita la contraseña"));
+                    let slots: Vec<String> = item["credential_slots"].as_array().into_iter().flatten()
+                        .filter_map(|v|v.as_str().map(str::to_owned)).collect();
+                    if idle && !slots.is_empty() && ui.button(tr(es,"Enter password","Escribir la contraseña")).clicked() {
+                        credentials = Some((id.to_owned(),slots));
+                    }
+                }
+            } else {
+                ui.label(tr(es,"Not installed","No instalado"));
+                if let Some(origin) = item["origin"].as_str().and_then(installation_source) {
+                    ui.label(&origin);
+                    if idle && ui.button(tr(es,"Prepare installation","Preparar instalación")).clicked() {
+                        source = Some(origin);
+                    }
+                } else {
+                    ui.label(tr(es,"Source unknown or unsupported — obtain a trusted public GitHub link","Origen desconocido o no admitido — consigue un enlace público GitHub de confianza"));
+                }
+            }
+        });
+        ui.add_space(4.);
+    }
+    if pages > 1 {
+        ui.horizontal(|ui| {
+            ui.label(format!(
+                "{} {}/{} · {} plugins",
+                tr(es, "Page", "Página"),
+                plugins.dependency_page + 1,
+                pages,
+                items.len()
+            ));
+            if plugins.dependency_page > 0 && ui.button(tr(es, "Previous", "Anterior")).clicked() {
+                plugins.dependency_page -= 1;
+            }
+            if plugins.dependency_page + 1 < pages
+                && ui.button(tr(es, "Next", "Siguiente")).clicked()
+            {
+                plugins.dependency_page += 1;
+            }
+        });
+    }
+    if let Some(source) = source {
+        plugins.source = source;
+        plugins.selected.clear();
+        plugins.source_edited = true;
+        plugins.trusted = false;
+    }
+    ui.separator();
+    credentials
+}
 impl App {
     pub(super) fn poll_plugins(&mut self, now: u64, visible: bool) -> bool {
+        // Establish installed state first: its initial arrival must not discard a fully loaded list.
+        if self.plugins.dependency_status_due {
+            if self.worker.submit(Job::Plugins).is_ok() {
+                self.plugins.dependency_status_due = false;
+            }
+            return true;
+        }
+        if let Some(request) = self.plugins.dependencies.request() {
+            let _ = self.worker.submit(Job::Request(request));
+            return true;
+        }
         if !self.plugins.catalog_loaded {
             if self.worker.submit(Job::PluginCatalog).is_ok() {
                 self.plugins.catalog_loaded = true;
@@ -227,6 +405,7 @@ impl App {
             target,
         }) {
             self.credentials.clear();
+            self.plugins.dependency_credentials = None;
             self.plugins.form = None;
             self.plugins.form_loading = true;
         }
@@ -239,6 +418,39 @@ impl App {
             ui.label(label(&state, self.es));
         }
         let idle = self.plugins.can_administer(self.connected);
+        if let Some((id, slots)) = dependency_list(ui, &mut self.plugins, idle, self.es) {
+            self.plugins.form = None;
+            self.credentials.bind(
+                &format!("dependency:{id}"),
+                &format!("{id}:credentials"),
+                &slots,
+            );
+            self.plugins.dependency_credentials = Some(id);
+        }
+        if self
+            .plugins
+            .dependency_credentials
+            .as_ref()
+            .is_some_and(|id| {
+                self.plugins.status["items"]
+                    .as_array()
+                    .is_none_or(|items| !items.iter().any(|item| item["id"] == *id))
+            })
+        {
+            self.plugins.dependency_credentials = None;
+            self.credentials.clear();
+        }
+        if self.plugins.dependency_credentials.is_some() {
+            self.credentials
+                .show(ui, &mut self.credential_worker, self.connected, self.es);
+            if ui
+                .button(tr(self.es, "Close credentials", "Cerrar contraseñas"))
+                .clicked()
+            {
+                self.credentials.clear();
+                self.plugins.dependency_credentials = None;
+            }
+        }
         if self.plugins.status["locked"] == true {
             ui.label(tr(
                 self.es,
@@ -296,7 +508,8 @@ impl App {
             ),
         );
         let selected = self.plugins.selected_item();
-        let source_ok = self.plugins.trusted && !self.plugins.source.trim().is_empty();
+        let source_ok =
+            self.plugins.trusted && installation_source(self.plugins.source.trim()).is_some();
         let operations = [
             ("install", "Install", "Instalar", source_ok),
             (
@@ -305,7 +518,7 @@ impl App {
                 "Actualizar",
                 selected.is_some()
                     && self.plugins.trusted_update()
-                    && !self.plugins.source.trim().is_empty(),
+                    && installation_source(self.plugins.source.trim()).is_some(),
             ),
             (
                 "reinstall",
@@ -423,7 +636,9 @@ impl App {
     }
     pub(super) fn plugin_form_window(&mut self, ctx: &egui::Context) {
         let Some((target, mut loaded)) = self.plugins.form.take() else {
-            self.credentials.clear();
+            if self.plugins.dependency_credentials.is_none() {
+                self.credentials.clear();
+            }
             return;
         };
         if let Some(form) = &loaded.form {
@@ -873,5 +1088,182 @@ mod credential_tests {
         assert!(texts.contains(&"Credentials — saved separately"));
         assert!(texts.contains(&"password"));
         assert_eq!(form.publish().unwrap().unwrap()["values"], json!({}));
+    }
+}
+
+#[cfg(test)]
+mod dependency_tests {
+    use super::*;
+    fn dependency_frame(
+        ctx: &egui::Context,
+        plugins: &mut PluginUi,
+        click: Option<egui::Pos2>,
+    ) -> Vec<(String, egui::Rect)> {
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900., 800.),
+            )),
+            ..Default::default()
+        };
+        if let Some(pos) = click {
+            input.events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        let output = ctx.run_ui(input, |ui| {
+            dependency_list(ui, plugins, true, false);
+        });
+        output
+            .shapes
+            .into_iter()
+            .filter_map(|s| {
+                if let egui::epaint::Shape::Text(text) = s.shape {
+                    let rect = text.galley.rect.translate(text.pos.to_vec2());
+                    Some((text.galley.job.text.clone(), rect))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn password_badge_requires_installed_status_and_slots_never_imported_hints() {
+        let ctx = egui::Context::default();
+        let mut plugins = PluginUi {
+            status: json!({"items":[],"state":"idle"}),
+            ..Default::default()
+        };
+        plugins.dependencies.accept(json!({"view_revision":"1","items":[{"id":"p","version":null,"origin":null,"credential_slots":["password"],"needs_credentials":true}],"next_cursor":null})).unwrap();
+        let text = dependency_frame(&ctx, &mut plugins, None);
+        assert!(
+            !text
+                .iter()
+                .any(|(text, _)| text == "Needs password" || text == "Enter password")
+        );
+        plugins.status = json!({"items":[{"id":"p","needs_credentials":false}],"state":"idle"});
+        let text = dependency_frame(&ctx, &mut plugins, None);
+        assert!(!text.iter().any(|(text, _)| text == "Needs password"));
+        plugins.status["items"][0]["needs_credentials"] = json!(true);
+        let text = dependency_frame(&ctx, &mut plugins, None);
+        assert!(text.iter().any(|(text, _)| text == "Needs password"));
+        assert!(text.iter().any(|(text, _)| text == "Enter password"));
+    }
+
+    #[test]
+    fn every_missing_dependency_is_offered_with_explicit_untrusted_source() {
+        let ctx = egui::Context::default();
+        let mut plugins = PluginUi {
+            status: json!({"items":[],"state":"idle"}),
+            trusted: true,
+            ..Default::default()
+        };
+        let items: Vec<_> = (0..33).map(|i|json!({"id":format!("missing{i}"),"version":null,"origin":if i == 0 {Some("https://github.com/example/plugin")}else{None},"credential_slots":[],"needs_credentials":null})).collect();
+        plugins
+            .dependencies
+            .accept(json!({"view_revision":"1","items":items[..32],"next_cursor":"next"}))
+            .unwrap();
+        plugins
+            .dependencies
+            .accept(json!({"view_revision":"1","items":items[32..],"next_cursor":null}))
+            .unwrap();
+        let mut text = dependency_frame(&ctx, &mut plugins, None);
+        assert!(
+            text.iter().any(|(s, _)| s == "missing0"),
+            "missing plugin not offered"
+        );
+        let install = text
+            .iter()
+            .find(|(s, _)| s == "Prepare installation")
+            .unwrap()
+            .1
+            .center();
+        dependency_frame(&ctx, &mut plugins, Some(install));
+        assert_eq!(plugins.source, "https://github.com/example/plugin");
+        assert!(!plugins.trusted);
+        assert!(plugins.source_edited);
+        for first in [0, 8, 16, 24, 32] {
+            text = dependency_frame(&ctx, &mut plugins, None);
+            for i in first..(first + 8).min(33) {
+                assert!(text.iter().any(|(s, _)| s == &format!("missing{i}")));
+            }
+            assert!(text.iter().any(|(s, _)| s.contains("Version unknown")));
+            assert!(!text.iter().any(|(s, _)| s == "Needs password"));
+            if first < 32 {
+                let next = text.iter().find(|(s, _)| s == "Next").unwrap().1.center();
+                dependency_frame(&ctx, &mut plugins, Some(next));
+            }
+        }
+        assert!(!text.iter().any(|(s, _)| s == "Prepare installation"));
+        assert!(text.iter().any(|(s, _)| s.contains("Source unknown")));
+    }
+}
+
+#[cfg(test)]
+mod restored_tests {
+    use super::*;
+    #[test]
+    fn only_applied_restore_and_reconnect_reload_published_dependencies_without_reusing_trust() {
+        let mut p = PluginUi {
+            source: "https://github.com/example/old".into(),
+            trusted: true,
+            ..Default::default()
+        };
+        p.dependencies
+            .accept(json!({"view_revision":"1","items":[],"next_cursor":null}))
+            .unwrap();
+        assert!(!p.restore_result(rad_client::response::Status::Ok));
+        assert!(!p.restore_result(rad_client::response::Status::Error));
+        assert!(p.dependencies.request().is_none());
+        assert!(p.restore_result(rad_client::response::Status::Applied));
+        assert_eq!(
+            p.dependencies.request().unwrap().operation,
+            "plugin_dependencies"
+        );
+        assert!(!p.trusted);
+        assert!(p.source.is_empty());
+        p.dependencies
+            .accept(json!({"view_revision":"2","items":[],"next_cursor":null}))
+            .unwrap();
+        p.reconnect();
+        assert_eq!(
+            p.dependencies.request().unwrap().arguments,
+            json!({"cursor":null})
+        );
+        assert!(p.dependency_status_due);
+    }
+    #[test]
+    fn imported_sources_are_only_supported_public_links_normalized_without_execution() {
+        for unsupported in [
+            "",
+            "file:///tmp/plugin",
+            "https://evil.test/o/r",
+            "https://github.com/o/r?secret=x",
+            "https://github.com/o/../releases",
+            "https://github.com/o/r/releases/tag/x/y",
+        ] {
+            assert!(installation_source(unsupported).is_none());
+        }
+        assert_eq!(
+            installation_source("https://github.com/o/r.git/releases/latest/").as_deref(),
+            Some("https://github.com/o/r")
+        );
+        assert_eq!(
+            installation_source("https://github.com/o/r/releases/tag/v2/").as_deref(),
+            Some("https://github.com/o/r/releases/tag/v2")
+        );
     }
 }

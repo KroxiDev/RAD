@@ -1,0 +1,62 @@
+//! Temporary fixture generator; preserved as documentation after generation.
+use rad_core::configuration::{Configuration, Origin};
+use rad_media::{MediaEntry, MediaReadError, MediaSource, NormalizedImage};
+use rad_package::{ExportSnapshot, export};
+use rad_store::Store;
+use std::{io::Write, path::Path};
+
+struct Empty;
+impl MediaSource for Empty {
+    fn catalog(&self) -> &[MediaEntry] {
+        &[]
+    }
+    fn read(&mut self, _: &[u8; 32]) -> Result<NormalizedImage, MediaReadError> {
+        Err(MediaReadError::Invalid)
+    }
+}
+
+#[test]
+fn generate_current_v2_fixtures() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let temporary = root.join(format!("target/phase1-golden-v2-{}", std::process::id()));
+    std::fs::create_dir(&temporary).unwrap();
+    let source = temporary.join("source.sqlite3");
+    std::fs::copy(root.join("docs/fixtures/v1/profile.sqlite3"), &source).unwrap();
+    let source = Store::open(&source).unwrap();
+    let original = source.load().unwrap();
+    let bytes = std::fs::read(root.join("docs/fixtures/v2/profile.json")).unwrap();
+    let configuration =
+        Configuration::from_data(rad_codec::decode_data(&bytes).unwrap(), &original.registry)
+            .unwrap();
+    let candidate = configuration
+        .prepare_restore(
+            &original.registry,
+            Origin::Editor,
+            true,
+            configuration.data().clone(),
+        )
+        .unwrap();
+    assert_eq!(rad_codec::encode(candidate.configuration()).unwrap(), bytes);
+    let store = Store::create(&root.join("docs/fixtures/v2/profile.sqlite3"), &candidate).unwrap();
+    let loaded = store.load().unwrap();
+    let mut package = Vec::new();
+    export(
+        ExportSnapshot {
+            configuration: &loaded.configuration,
+            registry: &loaded.registry,
+            media: &mut Empty,
+        },
+        &mut package,
+    )
+    .unwrap();
+    assert_eq!(&package[8..10], &2u16.to_be_bytes());
+    assert_eq!(&package[26..28], &48u16.to_be_bytes());
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(root.join("docs/fixtures/v2/profile.radpkg"))
+        .unwrap();
+    file.write_all(&package).unwrap();
+    file.sync_all().unwrap();
+    drop(store);
+}

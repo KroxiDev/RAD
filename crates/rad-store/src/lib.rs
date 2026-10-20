@@ -1,13 +1,16 @@
 //! Synchronous persistence only. The caller owns authorization and publication.
 mod source;
-pub use source::{MediaEntry, MediaReadError, MediaSource};
+pub use rad_media::{MediaEntry, MediaReadError, MediaSource};
 mod recovery;
 pub use recovery::RecoveryHold;
+mod adoption;
 mod commit;
+mod counters;
 mod database;
 mod gc;
 mod ledger;
 mod media;
+mod migration;
 mod reconciliation;
 use rad_core::{
     configuration::{Candidate, Configuration},
@@ -24,6 +27,7 @@ pub enum StoreError {
     Sql,
     Invalid,
     Corrupt,
+    UnsupportedVersion,
     Capacity,
     Uncertain,
     ReadOnly,
@@ -91,7 +95,7 @@ impl Store {
         let document =
             rad_codec::encode(initial.configuration()).map_err(|_| StoreError::Invalid)?;
         let bindings = ledger::bindings(initial.registry());
-        if bindings.len() > ledger::CAP {
+        if ledger::active(initial.configuration().data()).len() > 10_000 {
             return Err(StoreError::Capacity);
         }
         let file = std::fs::OpenOptions::new()
@@ -111,6 +115,11 @@ impl Store {
         let work = (|| -> Result<(), StoreError> {
             let refs = media::prepare(&tx, initial.configuration(), source)?;
             ledger::insert(&tx, &bindings)?;
+            counters::write(
+                &tx,
+                initial.registry().installation(),
+                initial.registry().counters(),
+            )?;
             tx.execute("INSERT INTO meta(singleton,installation,ledger_count,ledger_digest) VALUES(1,?1,?2,?3)",params![initial.registry().installation().to_be_bytes().as_slice(),bindings.len() as i64,ledger::checksum(initial.registry().installation(),&bindings)])?;
             tx.execute(
                 "INSERT INTO revisions VALUES(1,?1,?2)",
@@ -140,11 +149,17 @@ impl Store {
         })
     }
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let mut connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         let application: i64 = connection.query_row("PRAGMA application_id", [], |r| r.get(0))?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if application != 1380009025 || version != 1 {
+        if application != 1380009025 || version < 1 {
             return Err(StoreError::Corrupt);
+        }
+        if version > 2 {
+            return Err(StoreError::UnsupportedVersion);
+        }
+        if version == 1 {
+            migration::migrate(path, &mut connection)?;
         }
         database::configure(&connection)?;
         let mut store = Self {
@@ -210,6 +225,10 @@ impl Store {
             Ok(v) => digest(&v),
             Err(_) => return CommitOutcome::NotApplied(StoreError::Invalid),
         };
+        let committed_bindings = match ledger::committed_bindings(&loaded.registry, candidate) {
+            Ok(bindings) => bindings,
+            Err(error) => return CommitOutcome::NotApplied(error),
+        };
         let result = commit::apply(&mut self.connection, candidate, source);
         #[cfg(test)]
         let result =
@@ -239,9 +258,13 @@ impl Store {
                     current: revision,
                     previous: Some(valid_previous),
                     document,
+                    counters: counters::checksum(
+                        candidate.registry().installation(),
+                        candidate.registry().counters(),
+                    ),
                     ledger: ledger::checksum(
                         candidate.registry().installation(),
-                        &ledger::bindings(candidate.registry()),
+                        &committed_bindings,
                     ),
                 },
                 error,
@@ -261,12 +284,13 @@ impl Store {
             return Err(StoreError::Corrupt);
         }
         let before = Stamp::read(&self.connection)?;
-        let result = gc::collect(&mut self.connection, roots);
+        let mut after = before.clone();
+        let result = gc::collect(&mut self.connection, roots, &mut after);
         if result == Err(StoreError::Uncertain) {
             self.uncertain = true;
             self.pending = Some(Pending {
                 before: before.clone(),
-                after: before,
+                after,
                 error: StoreError::Sql,
             });
         }
@@ -353,17 +377,13 @@ impl Store {
         if digest(&bytes) != hash {
             return Err(StoreError::Corrupt);
         }
-        let data = rad_codec::decode_data(&bytes).map_err(|_| StoreError::Corrupt)?;
-        let active: Vec<_> = data
-            .folders
-            .iter()
-            .map(|f| f.binding)
-            .chain(data.buttons.iter().flat_map(|b| {
-                std::iter::once(b.binding).chain(b.actions.iter().map(|a| a.binding))
-            }))
-            .collect();
+        let data = rad_codec::decode_data(&bytes).map_err(|error| match error {
+            rad_codec::CodecError::UnsupportedVersion => StoreError::UnsupportedVersion,
+            _ => StoreError::Corrupt,
+        })?;
+        let active = ledger::active(&data);
         let known = ledger::bindings(registry);
-        if active.iter().any(|b| !known.contains(b)) {
+        if !ledger::contains_all(&known, &active) {
             return Err(StoreError::Corrupt);
         }
         let registry = registry.restore(&active).map_err(|_| StoreError::Corrupt)?;

@@ -20,6 +20,23 @@ sobre otro botón. Con la regla, un script antiguo, del destino o del backup, fa
 con «no encontrado». «Nunca editada» se define por contadores: un destino editado y
 deshecho hasta quedar vacío cuenta como destino con contenido.
 
+### Precisión aceptada · 2026-10-20
+
+Una copia del vacío inicial exportada localmente antes de adoptar una copia
+extranjera también debe poder restaurarse después en la misma instalación. Solo
+para esa copia se admite reasignar la raíz vacía original si su binding `f1` choca
+o fue desplazado: contadores de origen `(1,0,0,1)`, única carpeta `f1` con identidad
+`(instalación de origen,1)`, sin padre, 32 posiciones vacías y sin botones ni
+carpetas hijas. Se restaura su contenido, incluidos ajustes y dependencias no
+secretos; si el binding exacto sigue retenido (vigente o retirado), no hace falta
+remapearlo. Si ya no está, incluso por poda, se asigna la raíz nueva.
+
+La nueva raíz se asigna normalmente por encima de los rangos reservados. No se
+reutiliza la adopción de un destino inicial: el `f1` extranjero permanece retirado
+para deshacer. Ninguna entidad de botón cambia. Esta excepción no autoriza
+remapear una copia local con contenido o historia, ni debilita la no reutilización
+de IDs para scripts.
+
 Una copia lleva la configuración del deck, incluidos los ajustes no secretos de los
 plugins ([ADR 0005](0005-tres-tipos-de-ajustes.md)), los medios referenciados, los
 contadores de identidad y la lista de plugins usados (id, versión y origen). Quedan

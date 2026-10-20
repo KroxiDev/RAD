@@ -1,5 +1,5 @@
 //! Blocking transfer services for the single Store worker, never the actor.
-use rad_core::configuration::{Candidate, ConfigurationData, Origin};
+use rad_core::configuration::{Candidate, Origin};
 use rad_package::{PreparedMedia, PreparedRestore, RestoreSummary, StagingArea};
 use rad_store::{CommitOutcome, Store, StoreError};
 use std::{
@@ -25,6 +25,8 @@ pub enum Error {
     Io,
     Busy,
     ConfirmationRequired,
+    UnsupportedVersion,
+    DocumentLimit,
 }
 #[derive(Debug, Clone, Copy)]
 pub struct Context {
@@ -43,6 +45,7 @@ pub enum Operation {
         kind: Kind,
         size: Option<u64>,
         export_revision: Option<i64>,
+        export_snapshot: Option<Candidate>,
     },
     Write {
         transfer_id: String,
@@ -106,7 +109,7 @@ pub enum Output {
         eof: bool,
     },
     RestoreData {
-        data: ConfigurationData,
+        data: rad_package::VerifiedRestore,
     },
     Reaped,
 }
@@ -253,8 +256,12 @@ impl Transfers {
                 kind,
                 size,
                 export_revision,
+                export_snapshot,
             } => {
-                if kind == Kind::Export && (export_revision.is_none() || size.is_some()) {
+                if (kind == Kind::Export
+                    && (export_revision.is_none() || export_snapshot.is_none() || size.is_some()))
+                    || (kind != Kind::Export && export_snapshot.is_some())
+                {
                     return Err(Error::Invalid);
                 }
                 let out = self.begin(context, kind, size, export_revision)?;
@@ -265,6 +272,7 @@ impl Transfers {
                     match export::write(
                         store,
                         export_revision.unwrap(),
+                        export_snapshot.as_ref().expect("export snapshot validated"),
                         &mut deadline::Timed {
                             inner: &mut t.file.file,
                             end,
@@ -568,9 +576,13 @@ impl Transfers {
                 &area,
             ) {
                 Ok(p) => p,
-                Err(_) => {
+                Err(error) => {
                     t.body = Body::Empty;
-                    return Err(Error::Invalid);
+                    return Err(if error == rad_package::PackageError::UnsupportedVersion {
+                        Error::UnsupportedVersion
+                    } else {
+                        Error::Invalid
+                    });
                 }
             };
             let summary = prepared.summary();
@@ -641,4 +653,27 @@ impl Transfers {
         t.pending = false;
         self.release(transfer_id)
     }
+}
+
+/// Capture this alongside the export lease, before yielding to any worker or plugin selection.
+/// Installed metadata overrides portable hints; missing plugins keep their restored hints.
+pub fn export_snapshot(
+    base: &Candidate,
+    installed: BTreeMap<String, rad_core::configuration::PluginDependency>,
+) -> Result<Candidate, rad_core::configuration::ConfigurationError> {
+    let mut data = base.configuration().data().clone();
+    data.plugin_dependencies = rad_package::referenced_plugins(base.configuration())
+        .into_iter()
+        .map(|reference| {
+            let dependency = installed.get(&reference.id).cloned().unwrap_or(
+                rad_core::configuration::PluginDependency {
+                    version: reference.version,
+                    origin: reference.origin,
+                },
+            );
+            (reference.id, dependency)
+        })
+        .collect();
+    base.configuration()
+        .prepare_restore(base.registry(), Origin::Editor, true, data)
 }

@@ -13,8 +13,7 @@ pub(crate) fn apply(
         Ok(v) => v,
         Err(_) => return CommitOutcome::NotApplied(StoreError::Invalid),
     };
-    let bindings = ledger::bindings(candidate.registry());
-    if bindings.len() > ledger::CAP {
+    if ledger::active(candidate.configuration().data()).len() > 10_000 {
         return CommitOutcome::NotApplied(StoreError::Capacity);
     }
     let tx = match connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate) {
@@ -25,8 +24,9 @@ pub(crate) fn apply(
     let prepared = (|| -> Result<bool, StoreError> {
         let old = ledger::read(&tx)?;
         let known = ledger::bindings(&old);
+        let bindings = ledger::committed_bindings(&old, candidate)?;
         if old.installation() != candidate.registry().installation()
-            || known.iter().any(|b| !bindings.contains(b))
+            || !crate::counters::covers(candidate.registry().counters(), old.counters())
         {
             return Err(StoreError::Invalid);
         }
@@ -44,13 +44,21 @@ pub(crate) fn apply(
         if !loaded.recovered_previous
             && loaded.configuration == *candidate.configuration()
             && known == bindings
+            && old.counters() == candidate.registry().counters()
         {
             revision = current;
             return Ok(false);
         }
+        let comparison = crate::adoption::prepare(&tx, &old, candidate)?;
+        let additions = ledger::additions(&comparison, &bindings)?;
         let max: i64 = tx.query_row("SELECT max(id) FROM revisions", [], |r| r.get(0))?;
         revision = max.checked_add(1).ok_or(StoreError::Capacity)?;
-        ledger::insert(&tx, &bindings)?;
+        ledger::insert(&tx, &additions)?;
+        crate::counters::write(
+            &tx,
+            candidate.registry().installation(),
+            candidate.registry().counters(),
+        )?;
         #[cfg(test)]
         fault_tests::checkpoint("ledger");
         tx.execute(

@@ -88,3 +88,15 @@ fn a_plugin_that_does_not_answer_a_list_in_time_reads_as_a_sentence_in_both_lang
         "El plugin no respondió a tiempo; vuelve a intentarlo"
     );
 }
+
+#[test]
+fn future_backup_requires_updating_rad_in_both_languages() {
+    assert_eq!(
+        rad_editor::status::describe_error("unsupported_version", false),
+        "Update RAD to open this backup"
+    );
+    assert_eq!(
+        rad_editor::status::describe_error("unsupported_version", true),
+        "Actualiza RAD para abrir esta copia"
+    );
+}

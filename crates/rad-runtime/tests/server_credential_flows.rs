@@ -545,13 +545,19 @@ fn assert_private_surfaces(editor: &mut Client, runtime: &Path) {
     }
     private_bytes(&package, &key[8..]);
     assert_eq!(&package[..8], b"RADPKG\r\n");
+    assert_eq!(u16::from_be_bytes(package[8..10].try_into().unwrap()), 2);
     let document_len = u32::from_be_bytes(package[20..24].try_into().unwrap()) as usize;
     let resources = u16::from_be_bytes(package[24..26].try_into().unwrap());
     assert_eq!(resources, 0, "no credential archive resources allowed");
+    let metadata_len = u16::from_be_bytes(package[26..28].try_into().unwrap()) as usize;
+    assert_eq!(
+        metadata_len, 48,
+        "identity metadata has a fixed, non-secret layout"
+    );
     assert_eq!(
         package.len(),
-        92 + document_len,
-        "package contains only configuration and digest, no vault/key"
+        92 + document_len + metadata_len,
+        "package contains only configuration, identity metadata and digest, no vault/key"
     );
     let config: Value = serde_json::from_slice(&package[60..60 + document_len]).unwrap();
     assert!(!config.to_string().contains("master.key"));

@@ -1,6 +1,8 @@
 //! Configuration document codec. Decoded data is UNTRUSTED, not Configuration.
 use rad_core::{configuration::*, identity, permissions};
 mod document;
+mod v1;
+mod v1_document;
 use document as d;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecError {
@@ -9,13 +11,36 @@ pub enum CodecError {
     InvalidValue,
     TooLarge,
 }
-/// Encode the single complete prerelease JSONv1, including mandatory settings.
+/// Encode the canonical v2 deck document.
 /// No historical ledger, media bytes or runtime state.
 pub fn encode(config: &Configuration) -> Result<Vec<u8>, CodecError> {
     let data = config.data();
     let doc = d::Document {
         settings: write_settings(data.settings),
-        version: 1,
+        version: 2,
+        grid: [data.grid.columns(), data.grid.rows()],
+        plugin_dependencies: data
+            .plugin_dependencies
+            .iter()
+            .map(|(id, p)| {
+                (
+                    id.clone(),
+                    d::PluginDependency {
+                        version: p.version.map(|v| d::PluginVersion {
+                            major: v.major,
+                            minor: v.minor,
+                            patch: v.patch,
+                        }),
+                        origin: p.origin.clone(),
+                    },
+                )
+            })
+            .collect(),
+        plugin_settings: data
+            .plugin_settings
+            .iter()
+            .map(|(id, s)| (id.clone(), hex(s.bytes())))
+            .collect(),
         principal: write_identity(data.principal),
         global_permissions: write_permissions(data.global_permissions),
         folders: data
@@ -35,19 +60,52 @@ pub fn encode(config: &Configuration) -> Result<Vec<u8>, CodecError> {
     Ok(writer.0)
 }
 /// Caller MUST use Configuration::from_data or prepare_restore before publication.
-/// Incomplete prerelease documents are rejected; there is no historical reader
-/// or migration that supplies missing settings.
+/// Version 1 is read only through the isolated importer; future versions fail explicitly.
 pub fn decode_data(bytes: &[u8]) -> Result<ConfigurationData, CodecError> {
     if bytes.len() > 1024 * 1024 {
         return Err(CodecError::TooLarge);
     }
-    let doc: d::Document =
-        serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?;
-    check_strings(&doc)?;
-    if doc.version != 1 {
-        return Err(CodecError::UnsupportedVersion);
+    #[derive(serde::Deserialize)]
+    struct Version {
+        version: u64,
     }
+    let version: Version =
+        serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?;
+    let doc: d::Document = match version.version {
+        1 => v1::import(bytes)?,
+        2 => serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?,
+        _ => return Err(CodecError::UnsupportedVersion),
+    };
+    check_strings(&doc)?;
     Ok(ConfigurationData {
+        grid: Grid::new(doc.grid[0], doc.grid[1]).map_err(|_| CodecError::InvalidValue)?,
+        plugin_dependencies: doc
+            .plugin_dependencies
+            .into_iter()
+            .map(|(id, p)| {
+                (
+                    id,
+                    PluginDependency {
+                        version: p.version.map(|v| PluginVersion {
+                            major: v.major,
+                            minor: v.minor,
+                            patch: v.patch,
+                        }),
+                        origin: p.origin,
+                    },
+                )
+            })
+            .collect(),
+        plugin_settings: doc
+            .plugin_settings
+            .into_iter()
+            .map(|(id, v)| {
+                Ok((
+                    id,
+                    PluginSettings::new(unhex(&v)?).map_err(|_| CodecError::InvalidValue)?,
+                ))
+            })
+            .collect::<Result<_, CodecError>>()?,
         settings: read_settings(doc.settings)?,
         principal: read_identity(doc.principal)?,
         global_permissions: read_permissions(doc.global_permissions)?,
@@ -218,17 +276,9 @@ fn write_button(v: &ButtonData) -> d::Button {
                 },
             })
             .collect(),
-        pauses_ms: None,
     }
 }
 fn read_button(v: d::Button) -> Result<ButtonData, CodecError> {
-    // An earlier document reads the same only if none of its gaps was ever set: a gap that
-    // was cannot be honoured any more, and is refused rather than silently dropped.
-    for gap in v.pauses_ms.iter().flatten() {
-        if decimal::<u64>(gap)? != 0 {
-            return Err(CodecError::InvalidValue);
-        }
-    }
     Ok(ButtonData {
         binding: read_binding(v.binding)?,
         name: v.name,
@@ -326,6 +376,21 @@ fn text(value: &str) -> Result<(), CodecError> {
     Ok(())
 }
 fn check_strings(doc: &d::Document) -> Result<(), CodecError> {
+    for (id, p) in &doc.plugin_dependencies {
+        text(id)?;
+        ExternalType::new(id.clone(), "settings".into()).map_err(|_| CodecError::InvalidValue)?;
+        if let Some(origin) = &p.origin {
+            text(origin)?;
+            if origin.is_empty() || origin.chars().any(char::is_control) {
+                return Err(CodecError::InvalidValue);
+            }
+        }
+    }
+    for (id, value) in &doc.plugin_settings {
+        text(id)?;
+        text(value)?;
+        ExternalType::new(id.clone(), "settings".into()).map_err(|_| CodecError::InvalidValue)?;
+    }
     let type_key = |t: &d::ExternalType| -> Result<(), CodecError> {
         text(&t.plugin)?;
         text(&t.name)
@@ -366,10 +431,6 @@ fn write_settings(s: SettingsData) -> d::Settings {
         brightness_percent: s.brightness_percent,
         sleep_ms: s.sleep_ms.to_string(),
         press_threshold_ms: s.press_threshold_ms.to_string(),
-        gui_language: match s.gui_language {
-            Language::En => "en".into(),
-            Language::Es => "es".into(),
-        },
     }
 }
 fn read_settings(s: d::Settings) -> Result<SettingsData, CodecError> {
@@ -377,11 +438,6 @@ fn read_settings(s: d::Settings) -> Result<SettingsData, CodecError> {
         brightness_percent: s.brightness_percent,
         sleep_ms: decimal(&s.sleep_ms)?,
         press_threshold_ms: decimal(&s.press_threshold_ms)?,
-        gui_language: match s.gui_language.as_str() {
-            "en" => Language::En,
-            "es" => Language::Es,
-            _ => return Err(CodecError::InvalidValue),
-        },
     };
     Settings::from_data(data)
         .map(|s| s.data())

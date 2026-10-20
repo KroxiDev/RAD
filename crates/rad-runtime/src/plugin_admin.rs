@@ -353,6 +353,27 @@ impl Admin {
             break;
         }
     }
+    pub fn export_dependencies(
+        &self,
+    ) -> std::collections::BTreeMap<String, rad_core::configuration::PluginDependency> {
+        self.installed
+            .iter()
+            .map(|item| {
+                let v = item.manifest.version;
+                (
+                    item.manifest.id.clone(),
+                    rad_core::configuration::PluginDependency {
+                        version: Some(rad_core::configuration::PluginVersion {
+                            major: v.major,
+                            minor: v.minor,
+                            patch: v.patch,
+                        }),
+                        origin: item.source.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
     pub fn status(&self, host: &Host) -> Value {
         let items: Vec<_> = self
             .installed

@@ -39,10 +39,14 @@ impl App {
                 self.settings_tabs(ui);
                 ui.separator();
                 ui.add_space(4.);
-                ui.add_enabled_ui(self.connected, |ui| match self.settings_tab {
+                ui.add_enabled_ui(self.connected || self.settings_tab == Tab::General, |ui| match self.settings_tab {
                     Tab::General => self.device(ui, look),
                     Tab::Backup => self.backup(ui, look),
-                    Tab::Plugins => self.plugin_settings(ui),
+                    Tab::Plugins => {
+                        egui::ScrollArea::vertical()
+                            .max_height(ui.ctx().content_rect().height() * 0.7)
+                            .show(ui, |ui| self.plugin_settings(ui));
+                    },
                     Tab::Permissions => {
                         ui.label(look.muted_text(tr(
                             self.es,
@@ -62,6 +66,11 @@ impl App {
         // Plugin status is asked for only while its tab is in view.
         self.plugins.section_open = self.settings_tab == Tab::Plugins;
         self.settings_open &= open;
+        if (!self.settings_open || self.settings_tab != Tab::Plugins)
+            && self.plugins.dependency_credentials.take().is_some()
+        {
+            self.credentials.clear();
+        }
     }
     fn settings_tabs(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
@@ -87,53 +96,86 @@ impl App {
         );
     }
     fn device(&mut self, ui: &mut egui::Ui, look: &Look) {
-        ui.label(look.section(tr(self.es, "Stream Deck", "Stream Deck")));
-        ui.horizontal(|ui| {
-            Self::setting_label(ui, look, tr(self.es, "Brightness", "Brillo"));
-            let mut brightness = self.settings["brightness_percent"]
-                .as_u64()
-                .unwrap_or(100)
-                .min(100) as u8;
-            ui.add(egui::Slider::new(&mut brightness, 0..=100).suffix(" %"));
-            self.settings["brightness_percent"] = json!(brightness);
-        });
-        for (key, en, es, unit_en, unit_es) in [
-            (
-                "sleep_ms",
-                "Sleep after",
-                "Reposo tras",
-                "ms · 0 = never",
-                "ms · 0 = nunca",
-            ),
-            (
-                "press_threshold_ms",
-                "Hold to press",
-                "Mantener para pulsar",
-                "ms",
-                "ms",
-            ),
-        ] {
+        ui.add_enabled_ui(self.connected, |ui| {
+            ui.label(look.section(tr(self.es, "Stream Deck", "Stream Deck")));
             ui.horizontal(|ui| {
-                Self::setting_label(ui, look, tr(self.es, en, es));
-                let mut value = string(&self.settings[key]);
-                ui.add(look.field(&mut value, "").desired_width(110.));
-                ui.label(look.muted_text(tr(self.es, unit_en, unit_es)));
-                self.settings[key] = json!(value);
+                Self::setting_label(ui, look, tr(self.es, "Brightness", "Brillo"));
+                let mut brightness = self.settings["brightness_percent"]
+                    .as_u64()
+                    .unwrap_or(100)
+                    .min(100) as u8;
+                ui.add(egui::Slider::new(&mut brightness, 0..=100).suffix(" %"));
+                self.settings["brightness_percent"] = json!(brightness);
             });
-        }
+            for (key, en, es, unit_en, unit_es) in [
+                (
+                    "sleep_ms",
+                    "Sleep after",
+                    "Reposo tras",
+                    "ms · 0 = never",
+                    "ms · 0 = nunca",
+                ),
+                (
+                    "press_threshold_ms",
+                    "Hold to press",
+                    "Mantener para pulsar",
+                    "ms",
+                    "ms",
+                ),
+            ] {
+                ui.horizontal(|ui| {
+                    Self::setting_label(ui, look, tr(self.es, en, es));
+                    let mut value = string(&self.settings[key]);
+                    ui.add(look.field(&mut value, "").desired_width(110.));
+                    ui.label(look.muted_text(tr(self.es, unit_en, unit_es)));
+                    self.settings[key] = json!(value);
+                });
+            }
+        });
         ui.add_space(6.);
         ui.label(look.section(tr(self.es, "Window", "Ventana")));
         ui.horizontal(|ui| {
             Self::setting_label(ui, look, tr(self.es, "Language", "Idioma"));
-            let mut language = string(&self.settings["gui_language"]);
-            ui.selectable_value(&mut language, "en".into(), "English");
-            ui.selectable_value(&mut language, "es".into(), "Español");
-            self.settings["gui_language"] = json!(language);
+            use crate::preferences::Language;
+            let mut language = self.preferences.language;
+            let changed = ui
+                .selectable_value(&mut language, None, tr(self.es, "System", "Sistema"))
+                .changed()
+                | ui.selectable_value(&mut language, Some(Language::En), "English")
+                    .changed()
+                | ui.selectable_value(&mut language, Some(Language::Es), "Español")
+                    .changed();
+            if changed {
+                let preferences = crate::preferences::Preferences { language };
+                let result = self
+                    .preferences_path
+                    .as_deref()
+                    .ok_or_else(|| std::io::Error::other("preferences path unavailable"))
+                    .and_then(|path| preferences.save(path));
+                match result {
+                    Ok(()) => {
+                        self.preferences = preferences;
+                        self.es = preferences.language(&crate::preferences::system_locale())
+                            == Language::Es;
+                    }
+                    Err(error) => {
+                        self.warn(tr(
+                            self.es,
+                            "Language not saved — try again",
+                            "Idioma no guardado — vuelve a intentarlo",
+                        ));
+                        self.message_code = error.to_string();
+                    }
+                }
+            }
         });
         ui.add_space(8.);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             if ui
-                .add(look.primary(tr(self.es, "Save settings", "Guardar ajustes")))
+                .add_enabled(
+                    self.connected,
+                    look.primary(tr(self.es, "Save settings", "Guardar ajustes")),
+                )
                 .clicked()
             {
                 self.send(Request::new(

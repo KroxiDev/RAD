@@ -34,6 +34,7 @@ pub(crate) fn initialize_schema(connection: &Connection) -> rusqlite::Result<()>
     let tx = connection.unchecked_transaction()?;
     tx.execute_batch(include_str!("schema.sql"))?;
     tx.execute_batch(include_str!("recovery.sql"))?;
+    tx.execute_batch(include_str!("counters.sql"))?;
     tx.commit()
 }
 

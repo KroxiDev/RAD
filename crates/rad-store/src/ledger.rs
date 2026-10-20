@@ -2,7 +2,6 @@ use crate::{StoreError, digest};
 use rad_core::identity::*;
 use rusqlite::{Connection, params};
 
-pub(crate) const CAP: usize = 10_000;
 pub(crate) fn bindings(registry: &IdentityRegistry) -> Vec<Binding> {
     let mut bindings: Vec<_> = registry.records().map(|r| r.binding()).collect();
     bindings.sort_by_key(|b| b.short());
@@ -27,8 +26,7 @@ fn kind(kind: EntityKind) -> u8 {
     }
 }
 pub(crate) fn insert(connection: &Connection, bindings: &[Binding]) -> Result<(), StoreError> {
-    let mut statement =
-        connection.prepare("INSERT OR IGNORE INTO identities VALUES (?1,?2,?3,?4)")?;
+    let mut statement = connection.prepare("INSERT INTO identities VALUES (?1,?2,?3,?4)")?;
     for b in bindings {
         statement.execute(params![
             kind(b.short().kind()),
@@ -40,15 +38,22 @@ pub(crate) fn insert(connection: &Connection, bindings: &[Binding]) -> Result<()
     Ok(())
 }
 pub(crate) fn read(connection: &Connection) -> Result<IdentityRegistry, StoreError> {
+    let registry = read_legacy(connection)?;
+    let counters = crate::counters::read(connection, registry.installation())?;
+    IdentityRegistry::from_records_with_counters(
+        registry.installation(),
+        registry.records(),
+        counters,
+    )
+    .map_err(|_| StoreError::Corrupt)
+}
+pub(crate) fn read_legacy(connection: &Connection) -> Result<IdentityRegistry, StoreError> {
     let (installation, count, hash): (Vec<u8>, i64, Vec<u8>) = connection.query_row(
         "SELECT installation,ledger_count,ledger_digest FROM meta WHERE singleton=1",
         [],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
     let count = usize::try_from(count).map_err(|_| StoreError::Corrupt)?;
-    if count > CAP {
-        return Err(StoreError::Capacity);
-    }
     let actual: i64 = connection.query_row("SELECT count(*) FROM identities", [], |r| r.get(0))?;
     if count as i64 != actual {
         return Err(StoreError::Corrupt);
@@ -83,4 +88,92 @@ pub(crate) fn read(connection: &Connection) -> Result<IdentityRegistry, StoreErr
 }
 fn array<const N: usize>(v: Vec<u8>) -> Result<[u8; N], StoreError> {
     v.try_into().map_err(|_| StoreError::Corrupt)
+}
+
+/// Sorted merge: validates existing bindings and returns only genuinely new rows.
+pub(crate) fn additions(
+    known: &[Binding],
+    proposed: &[Binding],
+) -> Result<Vec<Binding>, StoreError> {
+    let mut old = known.iter().peekable();
+    let mut added = Vec::new();
+    for binding in proposed {
+        match old.peek() {
+            Some(previous) if previous.short() < binding.short() => {
+                return Err(StoreError::Invalid);
+            }
+            Some(previous) if previous.short() == binding.short() => {
+                if **previous != *binding {
+                    return Err(StoreError::Invalid);
+                }
+                old.next();
+            }
+            _ => added.push(*binding),
+        }
+    }
+    if old.next().is_some() {
+        return Err(StoreError::Invalid);
+    }
+    Ok(added)
+}
+pub(crate) fn contains_all(known: &[Binding], subset: &[Binding]) -> bool {
+    let mut known = known.iter().peekable();
+    for binding in subset {
+        while known.peek().is_some_and(|v| v.short() < binding.short()) {
+            known.next();
+        }
+        if known.next() != Some(binding) {
+            return false;
+        }
+    }
+    true
+}
+pub(crate) fn active(data: &rad_core::configuration::ConfigurationData) -> Vec<Binding> {
+    let mut bindings: Vec<_> =
+        data.folders
+            .iter()
+            .map(|f| f.binding)
+            .chain(data.buttons.iter().flat_map(|b| {
+                std::iter::once(b.binding).chain(b.actions.iter().map(|a| a.binding))
+            }))
+            .collect();
+    bindings.sort_by_key(|b| b.short());
+    bindings
+}
+
+/// Retired candidate rows unknown to Store have no retained revision and must not
+/// resurrect after GC. Allocation high-water marks are persisted independently.
+pub(crate) fn committed_bindings(
+    old: &IdentityRegistry,
+    candidate: &rad_core::configuration::Candidate,
+) -> Result<Vec<Binding>, StoreError> {
+    let known = if candidate.root_adoption().is_some() {
+        Vec::new()
+    } else {
+        bindings(old)
+    };
+    let mut incoming = active(candidate.configuration().data());
+    if let Some(adoption) = candidate.root_adoption() {
+        incoming.push(adoption.replacement);
+        incoming.sort_by_key(|b| b.short());
+    }
+    let mut result = Vec::with_capacity(known.len() + incoming.len());
+    let mut left = known.into_iter().peekable();
+    let mut right = incoming.into_iter().peekable();
+    while let (Some(a), Some(b)) = (left.peek(), right.peek()) {
+        match a.short().cmp(&b.short()) {
+            std::cmp::Ordering::Less => result.push(left.next().unwrap()),
+            std::cmp::Ordering::Greater => result.push(right.next().unwrap()),
+            std::cmp::Ordering::Equal => {
+                if a != b {
+                    return Err(StoreError::Invalid);
+                }
+                result.push(left.next().unwrap());
+                right.next();
+            }
+        }
+    }
+    result.extend(left);
+    result.extend(right);
+    Ok(result)
 }

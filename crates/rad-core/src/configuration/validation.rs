@@ -4,7 +4,27 @@ pub(super) fn validate_data(
     data: &ConfigurationData,
     registry: &IdentityRegistry,
 ) -> Result<(), ConfigurationError> {
+    // Old valid documents can exceed the new assignment ceiling. Reconstruct them
+    // without truncation; only growing edits are subject to the smaller ceiling.
+    if data.entity_count() > 10_000 {
+        return Err(ConfigurationError::ResourceExhausted);
+    }
     Settings::from_data(data.settings)?;
+    for id in data
+        .plugin_settings
+        .keys()
+        .chain(data.plugin_dependencies.keys())
+    {
+        ExternalType::new(id.clone(), "settings".into())?;
+    }
+    if data
+        .plugin_dependencies
+        .values()
+        .filter_map(|p| p.origin.as_ref())
+        .any(|o| o.is_empty() || o.len() > 8190 || o.chars().any(char::is_control))
+    {
+        return Err(ConfigurationError::InvalidValue);
+    }
     let principal = data
         .folders
         .iter()
@@ -15,7 +35,9 @@ pub(super) fn validate_data(
     }
     let mut bindings = Vec::new();
     for folder in &data.folders {
-        if folder.slots.len() != 32 || folder.binding.short().kind() != EntityKind::Folder {
+        if folder.slots.len() != data.grid.key_count()
+            || folder.binding.short().kind() != EntityKind::Folder
+        {
             return Err(ConfigurationError::InvalidTree);
         }
         bindings.push(folder.binding);

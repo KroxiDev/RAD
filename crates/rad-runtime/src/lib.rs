@@ -15,3 +15,5 @@ mod plugin_visuals;
 mod plugin_admin;
 
 mod credential_worker;
+
+pub mod machine_settings;

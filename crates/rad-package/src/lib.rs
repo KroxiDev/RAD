@@ -4,13 +4,18 @@
 //! Read/Write, the global export+restore admission limit and the per-connection quota.
 //! A successful export receipt is not permission to publish a partial destination file.
 //! No package payload is interpreted as a path, command or installed plugin.
+mod metadata;
 mod restore;
+pub use metadata::IdentityMetadata;
 mod staging;
-pub use restore::{PreparedMedia, PreparedRestore, RestoreSummary, prepare};
+pub use restore::{
+    PluginReference, PreparedMedia, PreparedRestore, RestoreSummary, VerifiedRestore, prepare,
+    referenced_plugins,
+};
 pub use staging::StagingArea;
 mod format;
 use rad_core::configuration::Configuration;
-use rad_store::MediaSource;
+use rad_media::MediaSource;
 use sha2::{Digest, Sha256};
 use std::io::Write;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +23,7 @@ pub enum PackageError {
     InvalidPackage,
     UnsupportedVersion,
     LimitExceeded,
+    DocumentLimit,
     InvalidConfiguration,
     IdentityCollision,
     Io,
@@ -36,39 +42,46 @@ pub struct ExportReceipt {
 /// No SQLite transaction may be held while Write waits on a client.
 pub struct ExportSnapshot<'a> {
     pub configuration: &'a Configuration,
+    pub registry: &'a rad_core::identity::IdentityRegistry,
     pub media: &'a mut dyn MediaSource,
 }
 pub fn export(
     snapshot: ExportSnapshot<'_>,
     out: &mut impl Write,
 ) -> Result<ExportReceipt, PackageError> {
-    let document = rad_codec::encode(snapshot.configuration)
+    Configuration::from_data(snapshot.configuration.data().clone(), snapshot.registry)
         .map_err(|_| PackageError::InvalidConfiguration)?;
+    let metadata = IdentityMetadata::encode(snapshot.registry);
+    let document = rad_codec::encode(snapshot.configuration).map_err(|error| match error {
+        rad_codec::CodecError::TooLarge => PackageError::DocumentLimit,
+        _ => PackageError::InvalidConfiguration,
+    })?;
     let catalog = format::catalog(snapshot.configuration, snapshot.media)?;
     let original = snapshot.media.catalog().to_vec();
     let total_len =
-        92 + document.len() as u64 + catalog.iter().map(|e| 36 + e.length as u64).sum::<u64>();
+        140 + document.len() as u64 + catalog.iter().map(|e| 36 + e.length as u64).sum::<u64>();
     if total_len > format::PACKAGE {
         return Err(PackageError::LimitExceeded);
     }
     let mut header = Vec::with_capacity(60);
     header.extend_from_slice(b"RADPKG\r\n");
-    header.extend_from_slice(&1u16.to_be_bytes());
+    header.extend_from_slice(&2u16.to_be_bytes());
     header.extend_from_slice(&0u16.to_be_bytes());
     header.extend_from_slice(&total_len.to_be_bytes());
     header.extend_from_slice(&(document.len() as u32).to_be_bytes());
     header.extend_from_slice(&(catalog.len() as u16).to_be_bytes());
-    header.extend_from_slice(&0u16.to_be_bytes());
+    header.extend_from_slice(&48u16.to_be_bytes());
     header.extend_from_slice(&format::digest(&document));
     let mut hash = Sha256::new();
     format::emit(out, &mut hash, &header)?;
     format::emit(out, &mut hash, &document)?;
+    format::emit(out, &mut hash, &metadata)?;
     for entry in catalog {
         if snapshot.media.catalog() != original {
             return Err(PackageError::InvalidPackage);
         }
         let image = snapshot.media.read(&entry.digest).map_err(|e| match e {
-            rad_store::MediaReadError::Io => PackageError::Io,
+            rad_media::MediaReadError::Io => PackageError::Io,
             _ => PackageError::InvalidPackage,
         })?;
         if snapshot.media.catalog() != original

@@ -301,6 +301,10 @@ impl Persistence {
                 (Active::Authority { commit, .. }, ResultValue::Commit(outcome)) => {
                     actor.complete(commit, outcome_from_store(outcome))
                 }
+                (
+                    Active::Authority { commit, .. },
+                    ResultValue::Collected { outcome, registry },
+                ) => actor.collected(commit, outcome_from_store(outcome), registry),
                 (Active::Authority { commit, .. }, ResultValue::Revision(data)) => {
                     actor.loaded(commit, data.map_err(|_| ()))
                 }
@@ -339,6 +343,9 @@ impl Persistence {
 fn outcome_from_store(value: CommitOutcome) -> Outcome {
     match value {
         CommitOutcome::Applied { revision, changed } => Outcome::Applied { revision, changed },
+        CommitOutcome::NotApplied(rad_store::StoreError::Capacity) => {
+            Outcome::ResourceExhausted(rad_authority::ResourceLimit::StorageCapacity)
+        }
         CommitOutcome::NotApplied(_) => Outcome::NotApplied,
         CommitOutcome::Uncertain { .. } => Outcome::Uncertain,
     }
@@ -409,6 +416,18 @@ mod tests {
                 .submit(ticket, vec![Edit::SetSettings(SettingsData::default())])
                 .iter()
                 .any(|e| matches!(e, Effect::Persist { .. }))
+        );
+    }
+}
+
+#[cfg(test)]
+mod capacity_contract {
+    use super::*;
+    #[test]
+    fn storage_capacity_preserves_resource_cause() {
+        assert_eq!(
+            outcome_from_store(CommitOutcome::NotApplied(rad_store::StoreError::Capacity)),
+            Outcome::ResourceExhausted(rad_authority::ResourceLimit::StorageCapacity)
         );
     }
 }

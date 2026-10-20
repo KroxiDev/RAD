@@ -1,0 +1,48 @@
+// TEMPORARY fixture generator: run once against baseline 41b7f761.
+use rad_core::{configuration::*, identity::*};
+use rad_package::{export, ExportSnapshot};
+use rad_store::{MediaEntry, MediaReadError, MediaSource, Store};
+struct Empty;
+impl MediaSource for Empty {
+ fn catalog(&self)-> &[MediaEntry] { &[] }
+ fn read(&mut self,_:&[u8;32])->Result<rad_media::NormalizedImage,MediaReadError>{panic!("empty")}
+}
+#[test]
+fn generate_original_v1_fixture() {
+ let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/fixtures/v1");
+ std::fs::create_dir_all(&root).unwrap();
+ let c=Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
+ let mut store=Store::create(&root.join("profile.sqlite3"),&c).unwrap();
+ let c=c.configuration().prepare_edit(c.registry(),Origin::Editor,Edit::CreateButton{folder:c.configuration().data().principal,position:0,name:"Fixture launch".into()}).unwrap();
+ assert!(matches!(store.commit(&c),rad_store::CommitOutcome::Applied{..}));
+ let button=c.configuration().data().buttons[0].binding.identity();
+ let c=c.configuration().prepare_edit(c.registry(),Origin::Editor,Edit::AddAction{button,kind:ActionKind::Launcher(DesktopEntry::new("fixture.desktop".into()).unwrap())}).unwrap();
+ assert!(matches!(store.commit(&c),rad_store::CommitOutcome::Applied{..}));
+ let c=c.configuration().prepare_edit(c.registry(),Origin::Editor,Edit::CreateButton{folder:c.configuration().data().principal,position:1,name:"Retired fixture".into()}).unwrap();
+ assert!(matches!(store.commit(&c),rad_store::CommitOutcome::Applied{..}));
+ let retired=c.configuration().data().buttons[1].binding.identity();
+ let c=c.configuration().prepare_edit(c.registry(),Origin::Editor,Edit::DeleteButton{button:retired}).unwrap();
+ assert!(matches!(store.commit(&c),rad_store::CommitOutcome::Applied{..}));
+ std::fs::write(root.join("profile.json"),rad_codec::encode(c.configuration()).unwrap()).unwrap();
+ let mut bytes=Vec::new();
+ export(ExportSnapshot{configuration:c.configuration(),media:&mut Empty},&mut bytes).unwrap();
+ std::fs::write(root.join("profile.radpkg"),bytes).unwrap();
+ drop(store);
+}
+#[test]
+fn measure_v1_ledger() {
+ let initial=Configuration::prepare_new(&IdentityRegistry::new(88).unwrap()).unwrap();
+ let mut registry=initial.registry().clone();
+ for _ in 1..10000 { registry.allocate(EntityKind::Button).unwrap(); }
+ let registry=registry.restore(&[initial.configuration().data().folders[0].binding]).unwrap();
+ let c=initial.configuration().prepare_restore(&registry,Origin::Editor,true,initial.configuration().data().clone()).unwrap();
+ let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/phase1-baseline.sqlite3");
+ let mut store=Store::create(&root,&c).unwrap();
+ let start=std::time::Instant::now();
+ let mut c=c;
+ for brightness in 0..10 {
+  c=c.configuration().prepare_edit(c.registry(),Origin::Editor,Edit::SetSettings(SettingsData{brightness_percent:brightness,..SettingsData::default()})).unwrap();
+  assert!(matches!(store.commit(&c),rad_store::CommitOutcome::Applied{..}));
+ }
+ println!("baseline 10000 retained identities, 10 commits: {:?}",start.elapsed());
+}

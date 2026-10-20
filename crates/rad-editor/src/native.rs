@@ -118,6 +118,7 @@ pub struct OptionsEvent {
 pub struct Event {
     pub plugin_apply: bool,
     pub plugin_admin: bool,
+    pub plugin_dependencies: bool,
     pub plugin_form: bool,
     pub plugin_visual: bool,
     pub connected: bool,
@@ -288,6 +289,8 @@ pub fn start(runtime: PathBuf, theme: PathBuf) -> Worker<Job, Event> {
     Worker::spawn(move |job| {
         let plugin_apply = matches!(&job, Job::PluginApply(_));
         let plugin_admin = matches!(&job,Job::Request(r) if r.operation=="plugin_admin");
+        let plugin_dependencies =
+            matches!(&job,Job::Request(r) if r.operation=="plugin_dependencies");
         let plugin_form = matches!(&job, Job::PluginForm { .. });
         let plugin_visual = matches!(&job, Job::PluginVisuals { .. });
         let transfer_job = matches!(job, Job::Transfer { .. } | Job::TransferStep);
@@ -308,6 +311,7 @@ pub fn start(runtime: PathBuf, theme: PathBuf) -> Worker<Job, Event> {
                         session = None;
                         Err(Error {
                             code: e.code.into(),
+                            cause: None,
                             unknown: false,
                         })
                     }
@@ -316,6 +320,7 @@ pub fn start(runtime: PathBuf, theme: PathBuf) -> Worker<Job, Event> {
             other => match session.as_mut() {
                 None => Err(Error {
                     code: "runtime_unavailable".into(),
+                    cause: None,
                     unknown: false,
                 }),
                 Some(s) => match other {
@@ -340,6 +345,7 @@ pub fn start(runtime: PathBuf, theme: PathBuf) -> Worker<Job, Event> {
                                 } else {
                                     Err(Error {
                                         code: "operation_not_allowed".into(),
+                                        cause: None,
                                         unknown: false,
                                     })
                                 }
@@ -390,6 +396,7 @@ pub fn start(runtime: PathBuf, theme: PathBuf) -> Worker<Job, Event> {
                         if active.is_some() {
                             Err(Error {
                                 code: "busy".into(),
+                                cause: None,
                                 unknown: false,
                             })
                         } else {
@@ -413,6 +420,7 @@ pub fn start(runtime: PathBuf, theme: PathBuf) -> Worker<Job, Event> {
         Event {
             plugin_apply,
             plugin_admin,
+            plugin_dependencies,
             plugin_form,
             plugin_visual,
             connected: session.as_ref().is_some_and(Session::is_open),
@@ -466,6 +474,7 @@ fn options_session<'a>(
         *connection = None;
         let client = Client::connect(runtime, Endpoint::Editor).map_err(|e| Error {
             code: e.code.into(),
+            cause: None,
             unknown: false,
         })?;
         *connection = Some((Session::new(client), Instant::now()));

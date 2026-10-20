@@ -7,7 +7,7 @@
 use crate::identity::{Binding, EntityKind};
 
 /// XL input report width; fixed arrays make out-of-range positions unrepresentable.
-pub const KEY_COUNT: usize = 32;
+pub const KEY_COUNT: usize = crate::configuration::Grid::XL.key_count();
 /// Ordered external observations/settings; none represent a CLI or Probar invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[expect(

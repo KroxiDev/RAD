@@ -153,6 +153,7 @@ pub(super) fn start(runtime: std::path::PathBuf) -> CredentialWorker {
             let client = Client::connect(&runtime, Endpoint::Editor).map_err(|error| {
                 crate::session::Error {
                     code: error.code.into(),
+                    cause: None,
                     unknown: false,
                 }
             })?;
@@ -188,6 +189,7 @@ fn decode_state(
 ) -> Result<State, crate::session::Error> {
     let error = || crate::session::Error {
         code: "invalid_request".into(),
+        cause: None,
         unknown: mutating,
     };
     if status != rad_client::response::Status::Ok
@@ -348,6 +350,7 @@ impl Panel {
                             field.requested = true;
                             field.error = Some(crate::session::Error {
                                 code: "runtime_unavailable".into(),
+                                cause: None,
                                 unknown: false,
                             });
                         }

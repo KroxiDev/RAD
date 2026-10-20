@@ -107,3 +107,27 @@ impl Authority {
             .collect()
     }
 }
+
+impl Authority {
+    /// Names and presence only, derived exclusively from installed manifests and vault publication.
+    pub fn plugin_credential_status(&self, id: &str) -> Vec<(String, bool)> {
+        let Some(plugin) = self.plugins.get(id) else {
+            return vec![];
+        };
+        plugin
+            .manifest
+            .credential_slots()
+            .into_iter()
+            .map(|slot| {
+                let present = plugin.credentials.as_ref().is_some_and(|snapshot| {
+                    snapshot
+                        .values()
+                        .as_slice()
+                        .iter()
+                        .any(|value| value.slot == slot && !value.value.is_empty())
+                });
+                (slot.to_owned(), present)
+            })
+            .collect()
+    }
+}

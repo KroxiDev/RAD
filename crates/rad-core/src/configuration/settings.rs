@@ -1,17 +1,11 @@
 //! Persistible settings only: no clocks, timers, hardware or locale probing.
 use super::ConfigurationError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Language {
-    En,
-    Es,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Untrusted reconstruction/edit input. Defaults are for new configurations only.
 pub struct SettingsData {
     pub brightness_percent: u8,
     pub sleep_ms: u64,
     pub press_threshold_ms: u64,
-    pub gui_language: Language,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Validated complete settings; no universal mutable setters.
@@ -41,9 +35,6 @@ impl Settings {
     pub fn press_threshold_ms(self) -> u64 {
         self.data.press_threshold_ms
     }
-    pub fn gui_language(self) -> Language {
-        self.data.gui_language
-    }
     /// Zero explicitly disables sleep, rather than denoting an infinite deadline.
     pub fn sleep_enabled(self) -> bool {
         self.data.sleep_ms != 0
@@ -56,7 +47,6 @@ impl Default for Settings {
                 brightness_percent: 100,
                 sleep_ms: 300_000,
                 press_threshold_ms: 0,
-                gui_language: Language::En,
             },
         }
     }

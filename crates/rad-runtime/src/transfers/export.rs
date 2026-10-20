@@ -1,5 +1,5 @@
 use super::*;
-use rad_store::{MediaEntry, MediaReadError, MediaSource};
+use rad_media::{MediaEntry, MediaReadError, MediaSource};
 use std::collections::BTreeSet;
 struct Source<'a> {
     store: &'a Store,
@@ -16,10 +16,16 @@ impl MediaSource for Source<'_> {
         self.store.image(&key(d)).map_err(|_| MediaReadError::Io)
     }
 }
-pub(super) fn write(store: &Store, revision: i64, out: &mut impl Write) -> Result<u64, Error> {
-    let loaded = store.revision(revision).map_err(|_| Error::NotFound)?;
-    let refs: BTreeSet<_> = loaded
-        .configuration
+pub(super) fn write(
+    store: &Store,
+    revision: i64,
+    snapshot: &Candidate,
+    out: &mut impl Write,
+) -> Result<u64, Error> {
+    store.revision(revision).map_err(|_| Error::NotFound)?;
+    let configuration = snapshot.configuration();
+    let registry = snapshot.registry();
+    let refs: BTreeSet<_> = configuration
         .data()
         .buttons
         .iter()
@@ -45,11 +51,15 @@ pub(super) fn write(store: &Store, revision: i64, out: &mut impl Write) -> Resul
     let mut source = Source { store, entries };
     rad_package::export(
         rad_package::ExportSnapshot {
-            configuration: &loaded.configuration,
+            configuration,
+            registry,
             media: &mut source,
         },
         out,
     )
     .map(|r| r.total_len)
-    .map_err(|_| Error::Io)
+    .map_err(|error| match error {
+        rad_package::PackageError::DocumentLimit => Error::DocumentLimit,
+        _ => Error::Io,
+    })
 }

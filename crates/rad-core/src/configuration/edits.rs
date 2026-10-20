@@ -307,7 +307,7 @@ impl Configuration {
                     let back = registry.allocate(EntityKind::Button)?;
                     let back_action = registry.allocate(EntityKind::Action)?;
                     data.folders[folder_index].slots[*position] = Some(entry.identity());
-                    let mut slots = vec![None; 32];
+                    let mut slots = vec![None; data.grid.key_count()];
                     slots[0] = Some(back.identity());
                     data.folders.push(FolderData {
                         binding: folder,
@@ -350,11 +350,17 @@ impl Configuration {
                 }
             }
         }
+        if data.entity_count() > MAX_LIVE_IDENTITIES
+            && data.entity_count() > self.data.entity_count()
+        {
+            return Err(ConfigurationError::ResourceExhausted);
+        }
         let active = active_bindings(&data);
         let registry = registry.restore(&active)?;
         Ok(Candidate {
-            configuration: Self::from_data(data, &registry)?,
+            configuration: Box::new(Self::from_data(data, &registry)?),
             registry,
+            root_adoption: None,
         })
     }
 }
@@ -396,7 +402,7 @@ fn is_navigation(button: &ButtonData) -> bool {
         .any(|a| matches!(a.kind, ActionKind::EnterFolder(_) | ActionKind::Return))
 }
 
-fn active_bindings(data: &ConfigurationData) -> Vec<Binding> {
+pub(super) fn active_bindings(data: &ConfigurationData) -> Vec<Binding> {
     data.folders
         .iter()
         .map(|f| f.binding)
@@ -554,8 +560,9 @@ impl Configuration {
         validate_data(&self.data, registry)?;
         let registry = registry.restore(&active_bindings(&data))?;
         Ok(Candidate {
-            configuration: Self::from_data(data, &registry)?,
+            configuration: Box::new(Self::from_data(data, &registry)?),
             registry,
+            root_adoption: None,
         })
     }
 }

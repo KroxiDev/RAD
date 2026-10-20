@@ -467,3 +467,26 @@ fn dynamic(
         subject,
     })
 }
+
+pub(super) fn dependencies(
+    a: &Authority,
+    c: IncomingContext,
+    args: &Map<String, Value>,
+) -> Checked<Value> {
+    let references = a.plugin_dependencies(c.origin).ok_or("permission_denied")?;
+    closed(args, &["cursor"])?;
+    let items=references.into_iter().map(|(id,dependency)| {
+        let slots=a.plugin_credential_status(&id);
+        let installed=a.plugin_manifests().any(|(manifest,_,_)|manifest.id==id);
+        let needs=installed.then(||slots.iter().any(|(_,present)|!present));
+        json!({"id":id,"version":dependency.version.map(|v|json!({"major":v.major,"minor":v.minor,"patch":v.patch})),"origin":dependency.origin,"credential_slots":slots.iter().map(|(slot,_)|slot).collect::<Vec<_>>(),"needs_credentials":needs})
+    }).collect();
+    let mut result = page(a, c, "plugin_dependencies", args, items)?;
+    result["view_revision"] = json!(
+        a.view_revision(c.origin)
+            .ok_or("resource_exhausted")?
+            .value()
+            .to_string()
+    );
+    Ok(result)
+}

@@ -171,6 +171,7 @@ fn panel_confirms_only_ack_and_discards_unsubmitted_drafts_on_context_change() {
     answer
         .send(Err(crate::session::Error {
             code: "storage_uncertain".into(),
+            cause: None,
             unknown: true,
         }))
         .unwrap();
@@ -445,6 +446,7 @@ fn saved_hint_pending_and_error_never_expose_or_claim_saved_bytes() {
     field.state = None;
     field.error = Some(crate::session::Error {
         code: "storage_uncertain".into(),
+        cause: None,
         unknown: true,
     });
     let failed = frame(&ctx, &mut field, vec![]);
@@ -522,6 +524,7 @@ fn credential_confirmation_does_not_dispatch_product_shortcuts() {
         Event {
             plugin_apply: false,
             plugin_admin: false,
+            plugin_dependencies: false,
             plugin_form: false,
             plugin_visual: false,
             connected: false,

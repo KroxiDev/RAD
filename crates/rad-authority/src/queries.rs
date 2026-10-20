@@ -403,6 +403,7 @@ pub struct FolderView {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusView {
+    pub grid: rad_core::configuration::Grid,
     pub revision: Option<ViewRevision>,
     pub active: Option<Binding>,
 }
@@ -414,6 +415,7 @@ impl Authority {
             self.automation_active
         };
         StatusView {
+            grid: self.published.configuration().data().grid,
             revision: self.view_revision(origin),
             active,
         }
@@ -659,5 +661,45 @@ impl Authority {
     pub fn global_permissions(&self, origin: Origin) -> Option<Permissions> {
         (origin == Origin::Editor)
             .then_some(self.published.configuration().data().global_permissions)
+    }
+}
+
+impl Authority {
+    /// Portable references, not installed packages. Editor only: opaque plugin settings stay private.
+    pub fn plugin_dependencies(
+        &self,
+        origin: Origin,
+    ) -> Option<BTreeMap<String, rad_core::configuration::PluginDependency>> {
+        if origin != Origin::Editor {
+            return None;
+        }
+        let data = self.published.configuration().data();
+        let mut ids: std::collections::BTreeSet<String> =
+            data.plugin_settings.keys().cloned().collect();
+        for button in &data.buttons {
+            if let rad_core::configuration::VisualSource::External { type_key, .. } = &button.visual
+            {
+                ids.insert(type_key.plugin().into());
+            }
+            for action in &button.actions {
+                if let rad_core::configuration::ActionKind::External { type_key, .. } = &action.kind
+                {
+                    ids.insert(type_key.plugin().into());
+                }
+            }
+        }
+        Some(
+            ids.into_iter()
+                .map(|id| {
+                    let dependency = data.plugin_dependencies.get(&id).cloned().unwrap_or(
+                        rad_core::configuration::PluginDependency {
+                            version: None,
+                            origin: None,
+                        },
+                    );
+                    (id, dependency)
+                })
+                .collect(),
+        )
     }
 }

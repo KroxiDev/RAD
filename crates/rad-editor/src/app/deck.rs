@@ -8,15 +8,14 @@ use crate::Request;
 use eframe::egui::{self, CornerRadius, Stroke, StrokeKind};
 use serde_json::json;
 
-const COLUMNS: usize = 8;
-const ROWS: usize = 4;
+use crate::session::Grid;
 const GAP: f32 = 12.;
 const KEY_RANGE: std::ops::RangeInclusive<f32> = 52.0..=104.;
 /// Room between the keys and the edge of the deck body drawn around them.
 const BEZEL: f32 = 14.;
 const MARGIN: f32 = BEZEL + 12.;
 const fn height_for(key: f32) -> f32 {
-    key * ROWS as f32 + GAP * (ROWS - 1) as f32 + 2. * MARGIN
+    key * Grid::XL.rows() as f32 + GAP * (Grid::XL.rows() - 1) as f32 + 2. * MARGIN
 }
 /// Height that shows all four rows at the smallest key size, without scrolling.
 pub(super) const MIN_HEIGHT: f32 = height_for(*KEY_RANGE.start());
@@ -138,19 +137,24 @@ pub(super) fn drag_ghost(ctx: &egui::Context, look: &Look) {
 
 impl App {
     pub(super) fn deck(&mut self, ui: &mut egui::Ui, look: &Look) {
+        let Some(model) = self.board.as_ref().map(|board| board.grid) else {
+            return;
+        };
+        let columns = model.columns();
+        let rows = model.rows();
         // A tiled window can be narrower than the grid; every key must stay reachable.
         egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
             let available = ui.available_size();
             let fit = |space: f32, count: usize| {
                 (space - 2. * MARGIN - GAP * (count - 1) as f32) / count as f32
             };
-            let key = fit(available.x, COLUMNS)
-                .min(fit(available.y, ROWS))
+            let key = fit(available.x, columns)
+                .min(fit(available.y, rows))
                 .clamp(*KEY_RANGE.start(), *KEY_RANGE.end())
                 .floor();
             let grid = egui::vec2(
-                key * COLUMNS as f32 + GAP * (COLUMNS - 1) as f32,
-                key * ROWS as f32 + GAP * (ROWS - 1) as f32,
+                key * columns as f32 + GAP * (columns - 1) as f32,
+                key * rows as f32 + GAP * (rows - 1) as f32,
             );
             let area = (grid + egui::Vec2::splat(2. * MARGIN)).max(available);
             let (rect, _) = ui.allocate_exact_size(area, egui::Sense::hover());
@@ -164,10 +168,10 @@ impl App {
                 Stroke::new(1., look.line),
                 StrokeKind::Inside,
             );
-            for position in 0..COLUMNS * ROWS {
+            for position in 0..columns * rows {
                 let cell = egui::vec2(
-                    (position % COLUMNS) as f32 * (key + GAP),
-                    (position / COLUMNS) as f32 * (key + GAP),
+                    (position % columns) as f32 * (key + GAP),
+                    (position / columns) as f32 * (key + GAP),
                 );
                 let key_rect = egui::Rect::from_min_size(origin + cell, egui::Vec2::splat(key));
                 self.key(ui, look, position, key_rect);

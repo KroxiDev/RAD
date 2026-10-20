@@ -104,6 +104,16 @@ impl Server {
                             kind,
                             size,
                             export_revision: Some(lease.revision()),
+                            export_snapshot: Some(
+                                crate::transfers::export_snapshot(
+                                    lease.snapshot(),
+                                    self.plugin_admin
+                                        .as_ref()
+                                        .map(|admin| admin.export_dependencies())
+                                        .unwrap_or_default(),
+                                )
+                                .map_err(|_| RuntimeError::Protocol)?,
+                            ),
                         },
                         FlightKind::Export(lease),
                     )
@@ -113,6 +123,7 @@ impl Server {
                             kind,
                             size,
                             export_revision: None,
+                            export_snapshot: None,
                         },
                         reply(true),
                     )
@@ -302,7 +313,13 @@ impl Server {
                     self.actor.release_export(lease);
                 }
                 if let Some((key, c)) = flight.target {
-                    return self.respond(key, self.error(c, code(error), mutation));
+                    let mut response = self.error(c, code(error), mutation);
+                    if error == crate::transfers::Error::DocumentLimit
+                        && let Some(error) = response.error.as_mut()
+                    {
+                        error.details = json!({"cause":"document_limit"});
+                    }
+                    return self.respond(key, response);
                 }
                 return Ok(());
             }
@@ -338,7 +355,10 @@ impl Server {
                 transfer_id,
                 summary,
             } => {
-                json!({"transfer_id":transfer_id,"summary":{"entities":summary.entities,"media_count":summary.media_count,"media_bytes":summary.media_bytes,"document_bytes":summary.document_bytes}})
+                let plugins:Vec<_> = summary.plugins.iter().map(|p|json!({"id":p.id,"version":p.version.map(|v|json!({"major":v.major,"minor":v.minor,"patch":v.patch})),"origin":p.origin})).collect();
+                let complete = plugins.len() <= 32
+                    && serde_json::to_vec(&plugins).is_ok_and(|bytes| bytes.len() <= 32 * 1024);
+                json!({"transfer_id":transfer_id,"summary":{"entities":summary.entities,"media_count":summary.media_count,"media_bytes":summary.media_bytes,"document_bytes":summary.document_bytes,"plugins_count":plugins.len(),"plugins_complete":complete,"plugins":if complete {plugins} else {vec![]}}})
             }
             Output::ExportReady { transfer_id, size } => {
                 json!({"transfer_id":transfer_id,"size":size.to_string()})
@@ -364,8 +384,10 @@ impl Server {
                 return self.submit_command(
                     key,
                     c,
-                    Command::Restore {
-                        data,
+                    Command::RestorePortable {
+                        installation: data.identity.installation,
+                        counters: data.identity.counters,
+                        data: data.data,
                         confirmed: true,
                     },
                     Some(token),
@@ -467,9 +489,10 @@ fn code(e: crate::transfers::Error) -> &'static str {
     match e {
         NotAllowed => "permission_denied",
         NotFound => "not_found",
-        Capacity | Busy => "resource_exhausted",
+        Capacity | Busy | DocumentLimit => "resource_exhausted",
         Expired => "deadline_exceeded",
         Io => "storage_error",
+        UnsupportedVersion => "unsupported_version",
         Invalid | ConfirmationRequired => "invalid_request",
     }
 }

@@ -225,3 +225,27 @@ fn redo_branch_survives_noop_failure_and_rejects_automation_history() {
     ));
     assert_eq!(a.editor_view(Origin::Editor).unwrap().history_operations, 1);
 }
+
+#[test]
+fn identical_portable_document_still_persists_higher_identity_counters() {
+    let mut a = actor();
+    let base = initial();
+    let mut counters = base.registry().counters();
+    counters.buttons = 7;
+    counters.serial = 8;
+    let effects = submit(
+        &mut a,
+        Command::RestorePortable {
+            data: base.configuration().data().clone(),
+            installation: base.registry().installation(),
+            counters,
+            confirmed: true,
+        },
+    );
+    assert!(
+        effects.iter().any(|e| matches!(e, Effect::Persist { .. })),
+        "{effects:?}"
+    );
+    let (_, candidate) = persist(&effects);
+    assert_eq!(candidate.registry().counters().buttons, 7);
+}

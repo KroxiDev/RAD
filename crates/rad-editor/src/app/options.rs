@@ -64,6 +64,7 @@ impl PluginUi {
             // The worker is gone: say so on the list rather than leave it loading forever.
             let lost = Error {
                 code: "runtime_unavailable".into(),
+                cause: None,
                 unknown: false,
             };
             form.accept_answer(ticket, Err(lost));
@@ -271,6 +272,7 @@ mod tests {
             })),
             Err(code) => Err(Error {
                 code: code.into(),
+                cause: None,
                 unknown: false,
             }),
         };

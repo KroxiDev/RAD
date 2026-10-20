@@ -147,6 +147,7 @@ fn started_persist_waits_for_active_transfer_without_rejection_or_second_queue()
                 kind: Kind::ImageImport,
                 size: Some(1),
                 export_revision: None,
+                export_snapshot: None,
             },
         )
         .unwrap();
@@ -243,6 +244,7 @@ fn import(
             kind: Kind::ImageImport,
             size: Some(PNG.len() as u64),
             export_revision: None,
+            export_snapshot: None,
         },
     ) {
         Output::Begun { transfer_id } => transfer_id,
@@ -411,6 +413,7 @@ fn pinned_export_prepare_restore_publishes_only_after_same_worker_commit() {
             kind: Kind::Export,
             size: None,
             export_revision: Some(lease.revision()),
+            export_snapshot: Some(lease.snapshot().clone()),
         },
     ) {
         Output::Begun { transfer_id } => transfer_id,
@@ -448,6 +451,7 @@ fn pinned_export_prepare_restore_publishes_only_after_same_worker_commit() {
             kind: Kind::Restore,
             size: Some(bytes.len() as u64),
             export_revision: None,
+            export_snapshot: None,
         },
     ) {
         Output::Begun { transfer_id } => transfer_id,
@@ -507,8 +511,10 @@ fn pinned_export_prepare_restore_publishes_only_after_same_worker_commit() {
     p.bind_media(request, 1, id.clone()).unwrap();
     let effects = actor.submit(
         ticket,
-        Command::Restore {
-            data,
+        Command::RestorePortable {
+            installation: data.identity.installation,
+            counters: data.identity.counters,
+            data: data.data,
             confirmed: true,
         },
     );
@@ -560,4 +566,289 @@ fn unbound_retained_preflight_releases_on_worker_and_readiness_is_not_busy_polli
     assert!(p.can_submit_transfer());
     drop(p);
     std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn portable_restore_virgin_has_one_undo_and_exact_redo_after_real_commit() {
+    let file = Fixture(std::env::temp_dir().join(format!(
+        "rad-portable-publication-{}.sqlite3",
+        std::process::id()
+    )));
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(544).unwrap()).unwrap();
+    let source = Configuration::prepare_new(&IdentityRegistry::new(966).unwrap()).unwrap();
+    let source = source
+        .configuration()
+        .prepare_edit(
+            source.registry(),
+            Origin::Editor,
+            Edit::CreateButton {
+                folder: source.configuration().data().principal,
+                position: 0,
+                name: "portable".into(),
+            },
+        )
+        .unwrap();
+    let store = Store::create(&file.0, &initial).unwrap();
+    let mut actor = Authority::new(initial, 1, NonZeroU128::new(99).unwrap());
+    let mut poll = mio::Poll::new().unwrap();
+    let wake = Arc::new(mio::Waker::new(poll.registry(), mio::Token(9)).unwrap());
+    let mut persistence = Persistence::new(store, wake).unwrap();
+    for (command, count) in [
+        (
+            Command::RestorePortable {
+                data: source.configuration().data().clone(),
+                installation: 966,
+                counters: source.registry().counters(),
+                confirmed: true,
+            },
+            1,
+        ),
+        (Command::Undo, 0),
+        (Command::Redo, 1),
+    ] {
+        let ticket = actor.reserve(1, Origin::Editor).unwrap();
+        let request = ticket.request();
+        let effects = actor.submit(ticket, command);
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::Rejected { .. })),
+            "{effects:?}"
+        );
+        persistence.route(&mut actor, effects);
+        settle(&mut actor, &mut persistence, &mut poll, request);
+        let loaded = Store::open(&file.0).unwrap().load().unwrap();
+        assert_eq!(loaded.configuration.data().buttons.len(), count);
+        if count == 1 {
+            assert_eq!(loaded.configuration, *source.configuration());
+        }
+    }
+}
+
+#[test]
+fn collection_prunes_actor_registry_and_next_commit_does_not_resurrect_retired_ids() {
+    let file = Fixture(
+        std::env::temp_dir().join(format!("rad-portable-gc-{}.sqlite3", std::process::id())),
+    );
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(544).unwrap()).unwrap();
+    let root = initial.configuration().data().principal;
+    let store = Store::create(&file.0, &initial).unwrap();
+    let mut actor = Authority::new(initial, 1, NonZeroU128::new(99).unwrap());
+    let mut poll = mio::Poll::new().unwrap();
+    let wake = Arc::new(mio::Waker::new(poll.registry(), mio::Token(9)).unwrap());
+    let mut persistence = Persistence::new(store, wake).unwrap();
+    for i in 0..30 {
+        let edit = if i == 0 {
+            Edit::CreateButton {
+                folder: root,
+                position: 0,
+                name: "retired".into(),
+            }
+        } else if i == 1 {
+            let loaded = Store::open(&file.0).unwrap().load().unwrap();
+            Edit::DeleteButton {
+                button: loaded.configuration.data().buttons[0].binding.identity(),
+            }
+        } else {
+            Edit::SetSettings(SettingsData {
+                brightness_percent: i,
+                ..Default::default()
+            })
+        };
+        let ticket = actor.reserve(1, Origin::Editor).unwrap();
+        let request = ticket.request();
+        let effects = actor.submit(ticket, vec![edit]);
+        persistence.route(&mut actor, effects);
+        settle(&mut actor, &mut persistence, &mut poll, request);
+    }
+    let effects = actor.collect().unwrap();
+    persistence.route(&mut actor, effects);
+    let end = Instant::now() + Duration::from_secs(3);
+    loop {
+        if persistence.poll(&mut actor).iter().any(|e| {
+            matches!(
+                e,
+                Effect::CollectionFinished {
+                    outcome: rad_authority::Outcome::Applied { .. }
+                }
+            )
+        }) {
+            break;
+        }
+        assert!(Instant::now() < end);
+        poll.poll(
+            &mut mio::Events::with_capacity(4),
+            Some(Duration::from_millis(30)),
+        )
+        .unwrap();
+    }
+    let lease = actor.pin_export(1, Origin::Editor).unwrap();
+    assert_eq!(
+        lease.snapshot().registry().records().count(),
+        1,
+        "actor must release retired identities after confirmed collection"
+    );
+    actor.release_export(lease);
+    let ticket = actor.reserve(1, Origin::Editor).unwrap();
+    let request = ticket.request();
+    let effects = actor.submit(
+        ticket,
+        vec![Edit::CreateButton {
+            folder: root,
+            position: 0,
+            name: "next".into(),
+        }],
+    );
+    persistence.route(&mut actor, effects);
+    settle(&mut actor, &mut persistence, &mut poll, request);
+    let loaded = Store::open(&file.0).unwrap().load().unwrap();
+    assert_eq!(loaded.registry.records().count(), 2);
+    assert_eq!(
+        loaded.configuration.data().buttons[0]
+            .binding
+            .short()
+            .number(),
+        2
+    );
+}
+
+#[test]
+fn counters_only_restore_survives_worker_commit_reopen_and_next_allocation() {
+    let file = Fixture(std::env::temp_dir().join(format!(
+        "rad-counter-restore-{}.sqlite3",
+        std::process::id()
+    )));
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(544).unwrap()).unwrap();
+    let mut counters = initial.registry().counters();
+    counters.buttons = 7;
+    counters.serial = 8;
+    let data = initial.configuration().data().clone();
+    let root = data.principal;
+    let store = Store::create(&file.0, &initial).unwrap();
+    let mut actor = Authority::new(initial, 1, NonZeroU128::new(99).unwrap());
+    let mut poll = mio::Poll::new().unwrap();
+    let wake = Arc::new(mio::Waker::new(poll.registry(), mio::Token(9)).unwrap());
+    let mut persistence = Persistence::new(store, wake).unwrap();
+    let ticket = actor.reserve(1, Origin::Editor).unwrap();
+    let request = ticket.request();
+    let effects = actor.submit(
+        ticket,
+        Command::RestorePortable {
+            data,
+            installation: 544,
+            counters,
+            confirmed: true,
+        },
+    );
+    assert!(effects.iter().any(|e| matches!(e, Effect::Persist { .. })));
+    persistence.route(&mut actor, effects);
+    settle(&mut actor, &mut persistence, &mut poll, request);
+    let loaded = Store::open(&file.0).unwrap().load().unwrap();
+    assert_eq!(loaded.registry.counters(), counters);
+    let next = loaded
+        .configuration
+        .prepare_edit(
+            &loaded.registry,
+            Origin::Editor,
+            Edit::CreateButton {
+                folder: root,
+                position: 0,
+                name: "after reserve".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        next.configuration().data().buttons[0]
+            .binding
+            .short()
+            .number(),
+        8
+    );
+}
+
+#[test]
+fn original_empty_backup_after_adoption_has_exact_undo_redo_and_reopens() {
+    let file = Fixture(std::env::temp_dir().join(format!(
+        "rad-initial-root-publication-{}.sqlite3",
+        std::process::id()
+    )));
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(544).unwrap()).unwrap();
+    let backup = initial
+        .configuration()
+        .prepare_edit(
+            initial.registry(),
+            Origin::Editor,
+            Edit::SetSettings(SettingsData {
+                brightness_percent: 30,
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+    let foreign = Configuration::prepare_new(&IdentityRegistry::new(966).unwrap()).unwrap();
+    let foreign = foreign
+        .configuration()
+        .prepare_edit(
+            foreign.registry(),
+            Origin::Editor,
+            Edit::CreateButton {
+                folder: foreign.configuration().data().principal,
+                position: 0,
+                name: "foreign".into(),
+            },
+        )
+        .unwrap();
+    let store = Store::create(&file.0, &backup).unwrap();
+    let mut actor = Authority::new(backup.clone(), 1, NonZeroU128::new(99).unwrap());
+    let mut poll = mio::Poll::new().unwrap();
+    let wake = Arc::new(mio::Waker::new(poll.registry(), mio::Token(9)).unwrap());
+    let mut persistence = Persistence::new(store, wake).unwrap();
+    let mut restored = None;
+    for (step, command) in [
+        Command::RestorePortable {
+            data: foreign.configuration().data().clone(),
+            installation: 966,
+            counters: foreign.registry().counters(),
+            confirmed: true,
+        },
+        Command::RestorePortable {
+            data: backup.configuration().data().clone(),
+            installation: 544,
+            counters: backup.registry().counters(),
+            confirmed: true,
+        },
+        Command::Undo,
+        Command::Redo,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let ticket = actor.reserve(1, Origin::Editor).unwrap();
+        let request = ticket.request();
+        let effects = actor.submit(ticket, command);
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::Rejected { .. })),
+            "{effects:?}"
+        );
+        persistence.route(&mut actor, effects);
+        settle(&mut actor, &mut persistence, &mut poll, request);
+        let loaded = Store::open(&file.0).unwrap().load().unwrap();
+        match step {
+            0 | 2 => assert_eq!(loaded.configuration, *foreign.configuration()),
+            1 => {
+                let root = loaded.configuration.data().folders[0].binding;
+                assert!(root.short().number() > 2);
+                assert_eq!(root.identity().installation(), 544);
+                let mut expected = backup.configuration().data().clone();
+                expected.principal = root.identity();
+                expected.folders[0].binding = root;
+                assert_eq!(loaded.configuration.data(), &expected);
+                restored = Some(loaded.configuration);
+            }
+            3 => assert_eq!(Some(loaded.configuration), restored),
+            _ => unreachable!(),
+        }
+    }
+    drop(persistence);
+    assert_eq!(
+        Some(Store::open(&file.0).unwrap().load().unwrap().configuration),
+        restored
+    );
 }

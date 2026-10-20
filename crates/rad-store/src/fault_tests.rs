@@ -412,10 +412,10 @@ fn gc_rollback_failure_is_uncertain_and_cannot_erase_published_roots() {
     assert_eq!(store.collect(&[]), Err(StoreError::Uncertain));
     assert!(store.load().is_err());
     vfs.state.disarm();
-    assert!(matches!(
+    assert_eq!(
         store.reconcile(),
-        CommitOutcome::Applied { changed: false, .. }
-    ));
+        CommitOutcome::NotApplied(StoreError::Sql)
+    );
     assert_eq!(store.load().unwrap().configuration, *next.configuration());
     store.collect(&[]).unwrap();
     drop(store);
@@ -729,7 +729,10 @@ fn recovery_discard_sync_failure_blocks_gc_and_reconciles_without_replay() {
             )
             .unwrap();
         assert_eq!(retained, held);
-        assert_eq!(store.load().unwrap().registry.records().count(), 2);
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.registry.records().count(), if held { 2 } else { 1 });
+        assert_eq!(loaded.registry.counters().buttons, 1);
+        assert_eq!(loaded.registry.counters().serial, 2);
         drop(store);
         drop(vfs);
         let store = Store::open(&path).unwrap();
@@ -808,4 +811,102 @@ fn streaming_preflight_error_in_recovery_performs_no_dml() {
     assert!(store.load().unwrap().recovered_previous);
     drop(store);
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn crash_migration_child() {
+    let Ok(path) = std::env::var("RAD_STORE_MIGRATION_PATH") else {
+        return;
+    };
+    let _ = Store::open(Path::new(&path));
+    panic!("requested migration checkpoint not hit");
+}
+#[test]
+fn migration_crash_retries_preserve_original_and_all_revisions() {
+    let original = include_bytes!("../../../docs/fixtures/v1/profile.sqlite3");
+    for stage in [
+        "migration-backup-staged",
+        "migration-backup-published",
+        "migration-tuple",
+        "migration-committed",
+    ] {
+        let path = path();
+        std::fs::write(&path, original).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "fault_tests::crash_migration_child",
+                "--nocapture",
+            ])
+            .env("RAD_STORE_MIGRATION_PATH", &path)
+            .env("RAD_STORE_CRASH_STAGE", stage)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(77), "{stage}");
+        let store = Store::open(&path).unwrap_or_else(|error| panic!("{stage}: {error:?}"));
+        assert_eq!(store.load().unwrap().revision, 5);
+        for revision in 1..=5 {
+            assert!(
+                store.revision(revision).is_ok(),
+                "{stage}: revision {revision}"
+            );
+        }
+        let backup = std::path::PathBuf::from(format!("{}.v1-backup", path.display()));
+        assert_eq!(std::fs::read(backup).unwrap(), original, "{stage}");
+    }
+}
+
+#[test]
+fn adoption_reconciles_complete_before_or_after_history_without_losing_counters() {
+    for rollback in [true, false] {
+        let path = path();
+        let target = Configuration::prepare_new(&IdentityRegistry::new(88).unwrap()).unwrap();
+        let mut store = Store::create(&path, &target).unwrap();
+        let source = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
+        let source = next(&source);
+        let portable = target
+            .configuration()
+            .prepare_portable_restore(
+                target.registry(),
+                Origin::Editor,
+                true,
+                source.configuration().data().clone(),
+                77,
+                source.registry().counters(),
+            )
+            .unwrap();
+        if rollback {
+            FAIL_BEFORE_COMMIT.with(|flag| flag.set(true));
+        } else {
+            store.fail_return = true;
+        }
+        assert!(matches!(
+            store.commit(&portable.candidate),
+            CommitOutcome::Uncertain { .. }
+        ));
+        let outcome = store.reconcile();
+        if rollback {
+            assert!(matches!(outcome, CommitOutcome::NotApplied(_)));
+            assert_eq!(store.load().unwrap().configuration, *target.configuration());
+            assert_eq!(
+                store.revision(1).unwrap().configuration,
+                *target.configuration()
+            );
+            assert_eq!(
+                store.load().unwrap().registry.counters(),
+                target.registry().counters()
+            );
+        } else {
+            assert!(matches!(outcome, CommitOutcome::Applied { .. }));
+            assert_eq!(store.load().unwrap().configuration, *source.configuration());
+            assert_eq!(
+                store.revision(1).unwrap().configuration.data(),
+                portable.history_base.as_ref().unwrap()
+            );
+            assert_eq!(
+                store.load().unwrap().registry.counters(),
+                portable.candidate.registry().counters()
+            );
+        }
+    }
 }

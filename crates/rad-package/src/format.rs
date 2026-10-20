@@ -1,6 +1,6 @@
 use crate::PackageError as Error;
 use rad_core::configuration::Configuration;
-use rad_store::{MediaEntry, MediaSource};
+use rad_media::{MediaEntry, MediaSource};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, io::Write};
 pub(crate) const PACKAGE: u64 = 256 * 1024 * 1024;

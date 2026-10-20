@@ -36,6 +36,10 @@ pub enum Job {
 }
 pub enum ResultValue {
     Commit(CommitOutcome),
+    Collected {
+        outcome: CommitOutcome,
+        registry: Option<rad_core::identity::IdentityRegistry>,
+    },
     Revision(Result<ConfigurationData, StoreError>),
     Transfer(Result<transfers::Output, transfers::Error>),
     Released(Result<(), transfers::Error>),
@@ -85,6 +89,7 @@ impl StorageWorker {
             .spawn(move || {
                 let _on_exit = WakeOnExit(wake.clone());
                 let mut uncertain_media: Option<String> = None;
+                let mut uncertain_collection = false;
                 while let Ok((id, job)) = commands.recv() {
                     let result = match job {
                         Job::Commit(candidate) => ResultValue::Commit(store.commit(&candidate)),
@@ -137,16 +142,25 @@ impl StorageWorker {
                             if !matches!(outcome, CommitOutcome::Uncertain { .. }) {
                                 uncertain_media = None;
                             }
-                            ResultValue::Commit(outcome)
+                            if uncertain_collection {
+                                let result = collection_result(&store, outcome);
+                                uncertain_collection = matches!(
+                                    &result,
+                                    ResultValue::Collected {
+                                        outcome: CommitOutcome::Uncertain { .. },
+                                        ..
+                                    }
+                                );
+                                result
+                            } else {
+                                ResultValue::Commit(outcome)
+                            }
                         }
                         Job::Collect(roots) => {
                             let outcome = match store.collect(&roots) {
-                                Ok(()) => match store.load() {
-                                    Ok(l) => CommitOutcome::Applied {
-                                        revision: l.revision,
-                                        changed: false,
-                                    },
-                                    Err(error) => CommitOutcome::Uncertain { revision: 0, error },
+                                Ok(()) => CommitOutcome::Applied {
+                                    revision: 0,
+                                    changed: false,
                                 },
                                 Err(StoreError::Uncertain) => CommitOutcome::Uncertain {
                                     revision: 0,
@@ -154,7 +168,15 @@ impl StorageWorker {
                                 },
                                 Err(error) => CommitOutcome::NotApplied(error),
                             };
-                            ResultValue::Commit(outcome)
+                            let result = collection_result(&store, outcome);
+                            uncertain_collection = matches!(
+                                &result,
+                                ResultValue::Collected {
+                                    outcome: CommitOutcome::Uncertain { .. },
+                                    ..
+                                }
+                            );
+                            result
                         }
                     };
                     let metadata = transfers.as_ref().map(Transfers::metadata);
@@ -231,5 +253,28 @@ impl StorageWorker {
     }
     pub fn take_released(&mut self) -> Vec<String> {
         std::mem::take(&mut self.released)
+    }
+}
+
+fn collection_result(store: &Store, outcome: CommitOutcome) -> ResultValue {
+    if matches!(outcome, CommitOutcome::Applied { .. }) {
+        match store.load() {
+            Ok(loaded) => ResultValue::Collected {
+                outcome: CommitOutcome::Applied {
+                    revision: loaded.revision,
+                    changed: false,
+                },
+                registry: Some(loaded.registry),
+            },
+            Err(error) => ResultValue::Collected {
+                outcome: CommitOutcome::Uncertain { revision: 0, error },
+                registry: None,
+            },
+        }
+    } else {
+        ResultValue::Collected {
+            outcome,
+            registry: None,
+        }
     }
 }

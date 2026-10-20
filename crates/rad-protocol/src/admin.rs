@@ -108,15 +108,7 @@ pub(super) fn command(op: &str, m: &Map<String, Value>) -> Checked<Command> {
                 .get("changes")
                 .and_then(Value::as_object)
                 .ok_or("invalid_request")?;
-            closed(
-                m,
-                &[
-                    "brightness_percent",
-                    "sleep_ms",
-                    "press_threshold_ms",
-                    "gui_language",
-                ],
-            )?;
+            closed(m, &["brightness_percent", "sleep_ms", "press_threshold_ms"])?;
             if m.is_empty() {
                 return Err("invalid_request");
             };
@@ -137,14 +129,6 @@ pub(super) fn command(op: &str, m: &Map<String, Value>) -> Checked<Command> {
                 .get("press_threshold_ms")
                 .map(|v| decimal(v.as_str().ok_or("invalid_request")?))
                 .transpose()?;
-            let language = m
-                .get("gui_language")
-                .map(|v| match v.as_str() {
-                    Some("en") => Ok(Language::En),
-                    Some("es") => Ok(Language::Es),
-                    _ => Err("invalid_request"),
-                })
-                .transpose()?;
             Ok(Command::PrepareEdits(vec![Box::new(move |cfg| {
                 let mut s = cfg.settings().data();
                 if let Some(n) = brightness {
@@ -155,9 +139,6 @@ pub(super) fn command(op: &str, m: &Map<String, Value>) -> Checked<Command> {
                 }
                 if let Some(n) = threshold {
                     s.press_threshold_ms = n
-                }
-                if let Some(n) = language {
-                    s.gui_language = n
                 }
                 Ok(vec![Edit::SetSettings(s)])
             })]))

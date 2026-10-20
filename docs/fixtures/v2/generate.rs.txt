@@ -1,0 +1,14 @@
+// TEMPORARY canonical fixture writer, retired once frozen.
+use rad_core::{configuration::*,identity::*};
+#[test]
+fn generate_v2() {
+ let mut data=rad_codec::decode_data(include_bytes!("../../../docs/fixtures/v1/profile.json")).unwrap();
+ data.plugin_settings.insert("fixture.plugin".into(),PluginSettings::new(vec![0,255,42]).unwrap());
+ data.plugin_dependencies.insert("fixture.plugin".into(),PluginDependency{version:Some(PluginVersion{major:1,minor:2,patch:3}),origin:Some("fixture/plugin".into())});
+ let bindings=data.folders.iter().map(|f|f.binding).chain(data.buttons.iter().flat_map(|b|std::iter::once(b.binding).chain(b.actions.iter().map(|a|a.binding))));
+ let registry=IdentityRegistry::from_records(77,bindings.map(|b|IdentityRecord::new(b,false))).unwrap();
+ let config=Configuration::from_data(data,&registry).unwrap();
+ let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/fixtures/v2");
+ std::fs::create_dir_all(&root).unwrap();
+ std::fs::write(root.join("profile.json"),rad_codec::encode(&config).unwrap()).unwrap();
+}

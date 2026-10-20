@@ -18,7 +18,13 @@ pub struct RequestId {
     sequence: u64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceLimit {
+    DocumentBytes,
+    StorageCapacity,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
+    ResourceExhausted(ResourceLimit),
     Applied { revision: i64, changed: bool },
     NotApplied,
     Uncertain,
@@ -139,6 +145,12 @@ pub enum Command {
     Run {
         target: Target,
     },
+    RestorePortable {
+        data: ConfigurationData,
+        installation: u128,
+        counters: rad_core::identity::IdentityCounters,
+        confirmed: bool,
+    },
     Restore {
         data: ConfigurationData,
         confirmed: bool,
@@ -155,6 +167,7 @@ impl std::fmt::Debug for Command {
             Self::Undo => "Command::Undo",
             Self::Redo => "Command::Redo",
             Self::Restore { .. } => "Command::Restore",
+            Self::RestorePortable { .. } => "Command::RestorePortable",
         })
     }
 }
@@ -394,6 +407,7 @@ impl Authority {
         request: RequestId,
         candidate: Candidate,
         cursor: Option<usize>,
+        reserve_counters: bool,
     ) -> Vec<Effect> {
         if self.plugin_barrier.is_some() {
             return vec![self.reject(request, Rejection::PublicationPending)];
@@ -404,11 +418,21 @@ impl Authority {
         {
             return vec![self.reject(request, Rejection::Invalid)];
         }
-        if candidate.configuration() == self.published.configuration() {
+        if candidate.configuration() == self.published.configuration()
+            && (!reserve_counters
+                || candidate.registry().counters() == self.published.registry().counters())
+        {
             return vec![self.reply(request, false)];
         }
-        let Ok(document) = rad_codec::encode(candidate.configuration()) else {
-            return vec![self.reject(request, Rejection::Invalid)];
+        let document = match rad_codec::encode(candidate.configuration()) {
+            Ok(document) => document,
+            Err(rad_codec::CodecError::TooLarge) => {
+                return vec![self.reject(
+                    request,
+                    Rejection::ResourceExhausted(ResourceLimit::DocumentBytes),
+                )];
+            }
+            Err(_) => return vec![self.reject(request, Rejection::Invalid)],
         };
         let Some(id) = self.command_id() else {
             return vec![self.reject(request, Rejection::Capacity)];
@@ -441,6 +465,28 @@ impl Authority {
                 Command::Run { .. } | Command::RunId { .. } => {
                     effects.push(self.reject(request, Rejection::Invalid))
                 }
+                Command::RestorePortable {
+                    data,
+                    confirmed,
+                    installation,
+                    counters,
+                } => {
+                    match self.published.configuration().prepare_portable_restore(
+                        self.published.registry(),
+                        origin,
+                        confirmed,
+                        data,
+                        installation,
+                        counters,
+                    ) {
+                        Ok(restored) => {
+                            effects.extend(self.persist(request, restored.candidate, None, true))
+                        }
+                        Err(error) => {
+                            effects.push(self.reject(request, Rejection::Configuration(error)))
+                        }
+                    }
+                }
                 Command::Restore { data, confirmed } => {
                     match self.published.configuration().prepare_restore(
                         self.published.registry(),
@@ -448,7 +494,9 @@ impl Authority {
                         confirmed,
                         data,
                     ) {
-                        Ok(candidate) => effects.extend(self.persist(request, candidate, None)),
+                        Ok(candidate) => {
+                            effects.extend(self.persist(request, candidate, None, false))
+                        }
                         Err(error) => {
                             effects.push(self.reject(request, Rejection::Configuration(error)))
                         }
@@ -471,7 +519,7 @@ impl Authority {
                             if self.validate_plugin_changes(&candidate).is_err() {
                                 effects.push(self.reject(request, Rejection::Invalid));
                             } else {
-                                effects.extend(self.persist(request, candidate, None));
+                                effects.extend(self.persist(request, candidate, None, false));
                             }
                         }
                         Err(error) => {
@@ -489,7 +537,7 @@ impl Authority {
                             if self.validate_plugin_changes(&candidate).is_err() {
                                 effects.push(self.reject(request, Rejection::Invalid));
                             } else {
-                                effects.extend(self.persist(request, candidate, None));
+                                effects.extend(self.persist(request, candidate, None, false));
                             }
                         }
                         Err(error) => {
@@ -587,9 +635,13 @@ impl Authority {
         }
         self.state = StorageState::Ready;
         self.awaiting = false;
-        if outcome == Outcome::NotApplied {
+        if matches!(outcome, Outcome::NotApplied | Outcome::ResourceExhausted(_)) {
             self.pending = None;
-            let mut e = vec![self.reject(request, Rejection::Persistence)];
+            let reason = match outcome {
+                Outcome::ResourceExhausted(limit) => Rejection::ResourceExhausted(limit),
+                _ => Rejection::Persistence,
+            };
+            let mut e = vec![self.reject(request, reason)];
             e.extend(self.drain());
             return e;
         }
@@ -709,6 +761,7 @@ pub enum Rejection {
     Configuration(ConfigurationError),
     Execution(ExecutionError),
     Persistence,
+    ResourceExhausted(ResourceLimit),
     Invalid,
     StorageUncertain,
     Expired,
@@ -752,7 +805,7 @@ impl Authority {
                 .ok()
         });
         let mut e = match candidate {
-            Some(candidate) => self.persist(pending.request, candidate, pending.cursor),
+            Some(candidate) => self.persist(pending.request, candidate, pending.cursor, false),
             None => vec![self.reject(pending.request, Rejection::Persistence)],
         };
         e.extend(self.drain());
@@ -1108,10 +1161,14 @@ impl Authority {
 }
 #[derive(Debug)]
 pub struct ExportLease {
+    snapshot: Candidate,
     id: CommitId,
     revision: i64,
 }
 impl ExportLease {
+    pub fn snapshot(&self) -> &Candidate {
+        &self.snapshot
+    }
     pub fn revision(&self) -> i64 {
         self.revision
     }
@@ -1144,6 +1201,7 @@ impl Authority {
             },
         );
         Ok(ExportLease {
+            snapshot: self.published.clone(),
             id,
             revision: self.revision,
         })
@@ -1265,3 +1323,51 @@ impl Authority {
 pub mod plugins;
 
 mod plugin_credentials;
+
+impl Authority {
+    /// Store's confirmed collection returns the surviving ledger before queued edits resume.
+    pub fn collected(
+        &mut self,
+        id: CommitId,
+        outcome: Outcome,
+        registry: Option<rad_core::identity::IdentityRegistry>,
+    ) -> Vec<Effect> {
+        if self.collection != Some(id) || !self.awaiting {
+            return vec![];
+        }
+        if let Outcome::Applied {
+            revision,
+            changed: false,
+        } = outcome
+        {
+            let candidate = registry
+                .filter(|r| {
+                    r.installation() == self.published.registry().installation()
+                        && r.counters() == self.published.registry().counters()
+                })
+                .and_then(|registry| {
+                    Configuration::from_data(
+                        self.published.configuration().data().clone(),
+                        &registry,
+                    )
+                    .ok()
+                    .map(|configuration| (configuration, registry))
+                })
+                .and_then(|(configuration, registry)| {
+                    configuration
+                        .prepare_restore(
+                            &registry,
+                            Origin::Editor,
+                            true,
+                            configuration.data().clone(),
+                        )
+                        .ok()
+                });
+            match candidate {
+                Some(candidate) if revision == self.revision => self.published = candidate,
+                _ => return self.complete(id, Outcome::RecoveryRequired),
+            }
+        }
+        self.complete(id, outcome)
+    }
+}

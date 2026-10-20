@@ -68,6 +68,11 @@ in the runtime's terminal requests shutdown.
 Data lives in `$XDG_DATA_HOME/rad` or `~/.local/share/rad`; local sockets live
 under `$XDG_RUNTIME_DIR/rad`.
 
+Existing v1 data migrates to v2 while keeping the original as `.v1-backup`.
+Backups are portable between installations; editor preferences stay local in
+`$XDG_CONFIG_HOME/rad/editor.json` (or `~/.config/rad/editor.json`). See the
+[data formats](docs/formats.md) reference for compatibility and limits.
+
 ## Plugins
 
 Official plugins and releases: [KroxiDev/rad-plugins](https://github.com/KroxiDev/rad-plugins).

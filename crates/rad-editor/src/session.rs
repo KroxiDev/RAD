@@ -8,12 +8,14 @@ use serde_json::{Value, json};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
     pub code: String,
+    pub cause: Option<String>,
     pub unknown: bool,
 }
 impl Error {
     pub fn protocol() -> Self {
         Self {
             code: "invalid_request".into(),
+            cause: None,
             unknown: false,
         }
     }
@@ -46,6 +48,7 @@ impl<P: Port> Session<P> {
         if self.closed {
             return Err(Error {
                 code: "runtime_unavailable".into(),
+                cause: None,
                 unknown: false,
             });
         }
@@ -54,6 +57,7 @@ impl<P: Port> Session<P> {
                 self.closed = true;
                 Err(Error {
                     code: e.code.into(),
+                    cause: None,
                     unknown: e.outcome == Some(Outcome::Unknown),
                 })
             }
@@ -61,6 +65,7 @@ impl<P: Port> Session<P> {
                 let e = r.error.ok_or_else(Error::protocol)?;
                 Err(Error {
                     code: e.code,
+                    cause: e.details["cause"].as_str().map(str::to_owned),
                     unknown: e.outcome == Some(Outcome::Unknown),
                 })
             }
@@ -73,8 +78,40 @@ pub struct KeyView {
     pub entity: Value,
     pub appearance: Value,
 }
+/// Client projection of the only currently supported model, never domain state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Grid {
+    columns: usize,
+    rows: usize,
+}
+impl Grid {
+    pub const XL: Self = Self {
+        columns: 8,
+        rows: 4,
+    };
+    pub fn from_status(status: &Value) -> Result<Self, Error> {
+        let grid = &status["grid"];
+        if grid["columns"].as_u64() == Some(Self::XL.columns as u64)
+            && grid["rows"].as_u64() == Some(Self::XL.rows as u64)
+        {
+            Ok(Self::XL)
+        } else {
+            Err(Error::protocol())
+        }
+    }
+    pub const fn columns(self) -> usize {
+        self.columns
+    }
+    pub const fn rows(self) -> usize {
+        self.rows
+    }
+    pub const fn key_count(self) -> usize {
+        self.columns * self.rows
+    }
+}
 #[derive(Debug, Clone)]
 pub struct Board {
+    pub grid: Grid,
     pub folder: Value,
     pub buttons: Vec<KeyView>,
 }
@@ -86,6 +123,7 @@ pub struct Refresh {
 impl<P: Port> Session<P> {
     pub fn refresh(&mut self, force: bool) -> Result<Refresh, Error> {
         let status = self.request(Request::new("status", json!({})))?.data;
+        let grid = Grid::from_status(&status)?;
         let revision = status["view_revision"]
             .as_str()
             .ok_or_else(Error::protocol)?
@@ -103,7 +141,7 @@ impl<P: Port> Session<P> {
         same_revision(&folder, &revision)?;
         let slots = folder["fields"]["slots"]
             .as_array()
-            .filter(|s| s.len() == 32)
+            .filter(|s| s.len() == grid.key_count())
             .ok_or_else(Error::protocol)?;
         let mut buttons = Vec::new();
         for slot in slots {
@@ -146,7 +184,11 @@ impl<P: Port> Session<P> {
         self.revision = Some(revision);
         Ok(Refresh {
             status,
-            board: Some(Board { folder, buttons }),
+            board: Some(Board {
+                grid,
+                folder,
+                buttons,
+            }),
         })
     }
 }
@@ -155,6 +197,7 @@ fn same_revision(data: &Value, revision: &str) -> Result<(), Error> {
     if data["view_revision"].as_str() != Some(revision) {
         return Err(Error {
             code: "cursor_expired".into(),
+            cause: None,
             unknown: false,
         });
     }

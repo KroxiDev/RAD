@@ -54,6 +54,7 @@ impl<R: Read> Upload<R> {
 pub fn io_error() -> Error {
     Error {
         code: "file_error".into(),
+        cause: None,
         unknown: false,
     }
 }
