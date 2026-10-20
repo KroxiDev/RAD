@@ -1,0 +1,12 @@
+[package]
+name = "rad-deck"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rad-media = { path = "../rad-media" }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
+epaint = { version = "=0.36.2", default-features = false, features = ["default_fonts"] }
+libc = "=0.2.190"
+mio = { version = "=1.2.4", features = ["os-poll", "os-ext"] }

@@ -1,0 +1,38 @@
+[package]
+name = "rad-plugin-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[dependencies]
+zeroize = "=1.9.1"
+rad-plugin-contract = { path = "../rad-plugin-contract" }
+serde_json = "=1.0.154"
+libc = "=0.2.190"
+[features]
+fixture-tests = []
+[[bin]]
+name = "rad-plugin-fixture-v1"
+path = "fixture/src/v1.rs"
+required-features = ["fixture-tests"]
+[[bin]]
+name = "rad-plugin-fixture-v2"
+path = "fixture/src/v2.rs"
+required-features = ["fixture-tests"]
+[[bin]]
+name = "rad-plugin-options-fixture"
+path = "test-plugins/options.rs"
+required-features = ["fixture-tests"]
+[[test]]
+name = "process"
+required-features = ["fixture-tests"]
+[[test]]
+name = "options"
+required-features = ["fixture-tests"]
+
+[[bin]]
+name = "rad-plugin-credentials-fixture"
+path = "test-plugins/credentials.rs"
+required-features = ["fixture-tests"]
+[[test]]
+name = "credentials"
+required-features = ["fixture-tests"]

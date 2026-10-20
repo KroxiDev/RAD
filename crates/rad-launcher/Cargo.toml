@@ -1,0 +1,31 @@
+[package]
+name = "rad-launcher"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+publish = false
+
+[dependencies]
+rad-core = { path = "../rad-core" }
+rad-media = { path = "../rad-media" }
+glib = { version = "=0.22.10", default-features = false }
+gio = { version = "=0.22.10", default-features = false, features = ["v2_60"] }
+gio-unix = { version = "=0.22.8", default-features = false }
+libc = "=0.2.190"
+serde_json = "=1.0.154"
+
+[features]
+fixture-tests = []
+
+[[bin]]
+name = "rad-launcher-fixture"
+path = "tests/support/fixture.rs"
+required-features = ["fixture-tests"]
+
+[[test]]
+name = "launcher"
+path = "tests/launcher.rs"
+required-features = ["fixture-tests"]
+
+[dev-dependencies]
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }

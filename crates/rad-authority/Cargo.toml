@@ -1,0 +1,9 @@
+[package]
+name = "rad-authority"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[dependencies]
+rad-plugin-contract = { path = "../rad-plugin-contract" }
+rad-core = { path = "../rad-core" }
+rad-codec = { path = "../rad-codec" }

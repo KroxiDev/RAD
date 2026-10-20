@@ -1,0 +1,155 @@
+use rad_client::connection::{Client, Endpoint};
+use rad_runtime::server::Server;
+use std::{
+    num::NonZeroU128,
+    os::unix::fs::PermissionsExt,
+    sync::mpsc,
+    time::{Duration, Instant},
+};
+struct Directory(std::path::PathBuf);
+impl Drop for Directory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+#[test]
+fn editor_can_close_while_runtime_still_serves_the_automation_endpoint() {
+    let directory = Directory(
+        std::env::temp_dir().join(format!("rad-server-integration-{}", std::process::id())),
+    );
+    std::fs::create_dir(&directory.0).unwrap();
+    std::fs::set_permissions(&directory.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut server = Server::new(
+        &directory.0,
+        &directory.0.join("data"),
+        NonZeroU128::new(378).unwrap(),
+    )
+    .unwrap();
+    for endpoint in [Endpoint::Editor, Endpoint::Automation] {
+        let (send, receive) = mpsc::sync_channel(1);
+        let root = directory.0.clone();
+        let client = std::thread::spawn(move || {
+            let result = Client::connect(&root, endpoint).map(|mut client| {
+                let status = client.request("status", serde_json::json!({})).unwrap();
+                if endpoint == Endpoint::Editor {
+                    assert_eq!(status.data["deck_state"], "disabled");
+                    assert_eq!(status.data["recovered_previous"], false);
+                } else {
+                    assert!(status.data.get("recovered_previous").is_none());
+                }
+            });
+            send.send(result).unwrap();
+        });
+        let end = Instant::now() + Duration::from_secs(3);
+        loop {
+            server.turn().unwrap();
+            if let Ok(result) = receive.try_recv() {
+                result.expect("same runtime must negotiate both endpoints after GUI closes");
+                break;
+            }
+            assert!(
+                Instant::now() < end,
+                "runtime must answer bounded client handshake"
+            );
+            server.wait(Duration::from_millis(20)).unwrap();
+        }
+        client.join().unwrap();
+    }
+    assert!(directory.0.join("data/state.sqlite3").exists());
+}
+
+#[test]
+fn editor_and_automation_share_durable_configuration_and_history_across_restart() {
+    use serde_json::json;
+    let directory =
+        Directory(std::env::temp_dir().join(format!("rad-server-edit-{}", std::process::id())));
+    std::fs::create_dir(&directory.0).unwrap();
+    std::fs::set_permissions(&directory.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut server = Server::new(
+        &directory.0,
+        &directory.0.join("data"),
+        NonZeroU128::new(379).unwrap(),
+    )
+    .unwrap();
+    let root = directory.0.clone();
+    let (send, receive) = mpsc::sync_channel(1);
+    let client = std::thread::spawn(move || {
+        let mut editor = Client::connect(&root, Endpoint::Editor).unwrap();
+        let principal =
+            editor.request("status", json!({})).unwrap().data["active_folder_id"].clone();
+        let created = editor
+            .request(
+                "create_button",
+                json!({"folder_id":principal,"position":0,"name":"Shared"}),
+            )
+            .unwrap();
+        assert_eq!(created.status, rad_client::response::Status::Applied);
+        let mut cli = Client::connect(&root, Endpoint::Automation).unwrap();
+        assert_eq!(
+            cli.request("get", json!({"id":"b1"})).unwrap().data["fields"]["name"],
+            "Shared"
+        );
+        assert_eq!(
+            cli.request(
+                "edit",
+                json!({"changes":[{"kind":"set","id":"b1","field":"name","value":"CLI"}]})
+            )
+            .unwrap()
+            .status,
+            rad_client::response::Status::Applied
+        );
+        assert_eq!(
+            editor.request("get", json!({"id":"b1"})).unwrap().data["fields"]["name"],
+            "CLI"
+        );
+        for (op, expected) in [("undo", "Shared"), ("redo", "CLI")] {
+            assert_eq!(
+                editor.request(op, json!({})).unwrap().status,
+                rad_client::response::Status::Applied
+            );
+            assert_eq!(
+                cli.request("get", json!({"id":"b1"})).unwrap().data["fields"]["name"],
+                expected
+            );
+        }
+        send.send(()).unwrap();
+    });
+    let end = Instant::now() + Duration::from_secs(5);
+    while receive.try_recv().is_err() {
+        server
+            .turn()
+            .expect("commands must flow through the one Authority and real Store worker");
+        assert!(
+            Instant::now() < end,
+            "shared edit/history flow must complete"
+        );
+        server.wait(Duration::from_millis(10)).unwrap();
+    }
+    client.join().unwrap();
+    drop(server);
+    let mut restarted = Server::new(
+        &directory.0,
+        &directory.0.join("data"),
+        NonZeroU128::new(380).unwrap(),
+    )
+    .unwrap();
+    let root = directory.0.clone();
+    let (send, receive) = mpsc::sync_channel(1);
+    let client = std::thread::spawn(move || {
+        let mut cli = Client::connect(&root, Endpoint::Automation).unwrap();
+        let v = cli.request("get", json!({"id":"b1"})).unwrap();
+        assert_eq!(v.data["fields"]["name"], "CLI");
+        assert_eq!(
+            v.session_id.as_deref(),
+            Some("0000000000000000000000000000017c")
+        );
+        send.send(()).unwrap();
+    });
+    let end = Instant::now() + Duration::from_secs(3);
+    while receive.try_recv().is_err() {
+        restarted.turn().unwrap();
+        assert!(Instant::now() < end);
+        restarted.wait(Duration::from_millis(10)).unwrap();
+    }
+    client.join().unwrap();
+}

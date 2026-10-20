@@ -1,0 +1,9 @@
+[package]
+name = "rad-codec"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[dependencies]
+rad-core = { path = "../rad-core" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"

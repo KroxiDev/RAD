@@ -1,0 +1,22 @@
+fn main() -> Result<(), eframe::Error> {
+    use std::path::PathBuf;
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let theme = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join(".local/state/omarchy/current/theme");
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Glow,
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_inner_size([1180., 780.])
+            .with_min_inner_size([980., 680.]),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "RAD",
+        options,
+        Box::new(move |_| Ok(Box::new(rad_editor::app::App::new(runtime, theme)))),
+    )
+}

@@ -1,0 +1,52 @@
+[package]
+name = "rad-runtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[dependencies]
+rad-credentials = { path = "../rad-credentials" }
+rad-plugin-manager = { path = "../rad-plugin-manager" }
+rad-plugin-contract = { path = "../rad-plugin-contract" }
+rad-plugin-host = { path = "../rad-plugin-host" }
+rad-core = { path = "../rad-core" }
+rad-store = { path = "../rad-store" }
+mio = { version = "=1.2.4", default-features = false, features = ["os-poll", "net", "os-ext"] }
+rad-authority = { path = "../rad-authority" }
+getrandom = "=0.4.3"
+libc = "=0.2.190"
+rad-launcher = { path = "../rad-launcher" }
+rad-transport = { path = "../rad-transport" }
+rad-protocol = { path = "../rad-protocol" }
+rad-wire = { path = "../rad-wire" }
+serde_json = "=1.0.154"
+rad-deck = { path = "../rad-deck" }
+rad-media = { path = "../rad-media" }
+rad-package = { path = "../rad-package" }
+[dev-dependencies]
+rad-plugin-package = { path = "../rad-plugin-package" }
+rad-client = { path = "../rad-client" }
+[features]
+fixture-tests = ["rad-plugin-host/fixture-tests", "rad-plugin-manager/fixture-tests"]
+[[test]]
+name = "native"
+path = "tests/native.rs"
+required-features = ["fixture-tests"]
+[[test]]
+name = "server_native"
+path = "tests/server_native.rs"
+required-features = ["fixture-tests"]
+
+[[test]]
+name = "server_options"
+path = "tests/server_options.rs"
+required-features = ["fixture-tests"]
+
+[[example]]
+name = "plugin-integration-fixture"
+path = "examples/plugin_integration_fixture.rs"
+required-features = ["fixture-tests"]
+
+[[test]]
+name = "server_credential_flows"
+path = "tests/server_credential_flows.rs"
+required-features = ["fixture-tests"]

@@ -1,0 +1,11 @@
+[package]
+name = "metrics-conformance-fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+rad-plugin-sdk = { path = "../../../../plugins/sdk" }
+rad-plugin-metrics = { path = "../../../../plugins/metrics", features = ["test-support"] }

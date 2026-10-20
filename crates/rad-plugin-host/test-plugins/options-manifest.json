@@ -1,0 +1,68 @@
+{
+  "contract": 1,
+  "id": "org.rad.test.options",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "host_min": 2,
+  "host_max": 2,
+  "targets": ["x86_64-unknown-linux-gnu"],
+  "actions": [
+    {
+      "id": "pick",
+      "label": "Pick",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "scenario",
+            "label": "Scenario",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": ["normal", "empty", "unavailable", "slow", "crash", "late", "invalid"]
+            }
+          },
+          {
+            "id": "group",
+            "label": "Group",
+            "required": true,
+            "kind": { "type": "dynamic_choice", "depends_on": ["scenario"] }
+          },
+          {
+            "id": "member",
+            "label": "Member",
+            "required": false,
+            "kind": { "type": "dynamic_choice", "depends_on": ["scenario", "group"] }
+          }
+        ]
+      },
+      "credential_slots": []
+    }
+  ],
+  "visuals": [
+    {
+      "id": "probe",
+      "label": "Probe",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "scenario",
+            "label": "Scenario",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": ["normal", "empty", "unavailable", "slow", "crash", "late", "invalid"]
+            }
+          },
+          {
+            "id": "group",
+            "label": "Group",
+            "required": false,
+            "kind": { "type": "dynamic_choice", "depends_on": ["scenario"] }
+          }
+        ]
+      },
+      "credential_slots": []
+    }
+  ]
+}

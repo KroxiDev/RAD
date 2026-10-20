@@ -1,0 +1,23 @@
+[package]
+name = "rad-editor"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+zeroize = "=1.9.1"
+rad-plugin-contract = { path = "../rad-plugin-contract" }
+rad-client = { path = "../rad-client" }
+serde_json = "=1.0.154"
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+eframe = { version = "=0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland"], optional = true }
+toml = { version = "=1.1.8", default-features = false, features = ["parse", "serde", "std"] }
+
+[features]
+default = ["gui"]
+gui = ["dep:eframe"]
+
+[[bin]]
+name = "rad-editor"
+path = "src/main.rs"
+required-features = ["gui"]

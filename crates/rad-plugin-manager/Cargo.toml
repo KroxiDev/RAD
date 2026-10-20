@@ -1,0 +1,17 @@
+[package]
+name = "rad-plugin-manager"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rad-plugin-contract = { path = "../rad-plugin-contract", version = "=0.1.0" }
+rad-plugin-package = { path = "../rad-plugin-package", version = "=0.1.0" }
+libc = "=0.2.190"
+serde_json = "=1.0.154"
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+log = { version = "=0.4.34", features = ["max_level_info"] }
+
+[features]
+fixture-tests = []

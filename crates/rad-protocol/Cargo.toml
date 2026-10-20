@@ -1,0 +1,11 @@
+[package]
+name = "rad-protocol"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[dependencies]
+rad-plugin-contract = { path = "../rad-plugin-contract" }
+rad-authority = { path = "../rad-authority" }
+rad-core = { path = "../rad-core" }
+rad-wire = { path = "../rad-wire" }
+serde_json = "=1.0.154"

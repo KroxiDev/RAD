@@ -1,0 +1,877 @@
+//! Plugin presentation only; publication/activation belong to the runtime.
+use super::{App, Job, Request, look::Look, string, tr};
+use crate::plugins::{CatalogEntry, FormDraft, FormTarget, LoadedForm, Visual};
+use eframe::egui;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+#[derive(Default)]
+pub(super) struct PluginUi {
+    pub catalog: Vec<CatalogEntry>,
+    pub status: Value,
+    pub due: u64,
+    pub section_open: bool,
+    pub catalog_loaded: bool,
+    pub visual_due: u64,
+    pub form: Option<(FormTarget, LoadedForm)>,
+    pub visuals: BTreeMap<String, Face>,
+    pub admin_pending: bool,
+    pub form_pending: bool,
+    pub form_loading: bool,
+    /// Last ticket given to a question about a list, so no answer is taken for another's.
+    pub tickets: u64,
+    source: String,
+    trusted: bool,
+    source_edited: bool,
+    selected: String,
+    status_page: usize,
+}
+impl PluginUi {
+    pub fn wants_status(&self, settings_open: bool) -> bool {
+        (settings_open && self.section_open)
+            || self.admin_pending
+            || matches!(
+                self.status["state"].as_str(),
+                Some("preparing" | "committing" | "activating")
+            )
+    }
+
+    fn can_administer(&self, connected: bool) -> bool {
+        connected
+            && !self.admin_pending
+            && self.status["locked"] != true
+            && matches!(self.status["state"].as_str(), Some("idle" | "failed"))
+    }
+    fn select(&mut self, id: &str) {
+        self.selected = id.into();
+        self.source_edited = false;
+        self.source = self
+            .selected_item()
+            .and_then(|v| v["source"].as_str())
+            .unwrap_or("")
+            .into();
+        self.trusted = false;
+    }
+    fn selected_item(&self) -> Option<&Value> {
+        self.status["items"]
+            .as_array()?
+            .iter()
+            .find(|v| v["id"] == self.selected)
+    }
+    fn trusted_update(&self) -> bool {
+        self.trusted
+            || (!self.source_edited
+                && self.selected_item().is_some_and(|v| {
+                    v["source_trusted"] == true && v["source"].as_str() == Some(self.source.trim())
+                }))
+    }
+}
+pub(super) struct Face {
+    pub revision: String,
+    pub state: String,
+    pub text: Option<String>,
+    pub position: String,
+    pub color: Option<[u8; 4]>,
+    pub texture: Option<egui::TextureHandle>,
+}
+fn label(code: &str, es: bool) -> &str {
+    match code {
+        "starting" => tr(es, "Starting", "Iniciando"),
+        "idle" => tr(es, "Idle", "Sin operación"),
+        "preparing" => tr(es, "Preparing", "Preparando"),
+        "committing" => tr(es, "Saving selection", "Guardando selección"),
+        "activating" => tr(es, "Activating", "Activando"),
+        "failed" => tr(es, "Failed", "Fallido"),
+        "uncertain" => tr(es, "Outcome uncertain", "Resultado incierto"),
+        "ready" => tr(es, "Ready", "Listo"),
+        "residual" => tr(es, "Residual resources", "Recursos residuales"),
+        "absent" => tr(es, "Not running", "No iniciado"),
+        "plugin_in_use" => tr(
+            es,
+            "Plugin in use — retry manually later",
+            "Plugin en uso — vuelve a intentarlo manualmente",
+        ),
+        "plugin_residual" => tr(
+            es,
+            "Waiting for real termination",
+            "Esperando terminación real",
+        ),
+        "current" => tr(es, "Current", "Actual"),
+        "stale" => tr(es, "Stale", "Desactualizado"),
+        "unavailable" => tr(es, "Unavailable", "No disponible"),
+        _ => crate::status::describe_error(code, es),
+    }
+}
+fn version(v: &Value) -> String {
+    if v.is_null() {
+        return "—".into();
+    }
+    format!("{}.{}.{}", v["major"], v["minor"], v["patch"])
+}
+/// The manager admits at most 32 installed plugins. Page controls never hide a tail.
+fn plugin_status_list(ui: &mut egui::Ui, plugins: &mut PluginUi, idle: bool, es: bool) -> bool {
+    const PAGE_SIZE: usize = 8;
+    const MAX_PLUGINS: usize = 32;
+    let items = plugins.status["items"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if items.len() > MAX_PLUGINS {
+        ui.label(tr(
+            es,
+            "Invalid plugin status: more than 32 entries",
+            "Estado de plugins inválido: más de 32 entradas",
+        ));
+        return false;
+    }
+    let pages = items.len().div_ceil(PAGE_SIZE).max(1);
+    plugins.status_page = plugins.status_page.min(pages - 1);
+    let mut selected_id = None;
+    for item in items
+        .iter()
+        .skip(plugins.status_page * PAGE_SIZE)
+        .take(PAGE_SIZE)
+    {
+        let id = string(&item["id"]);
+        if idle {
+            if ui.selectable_label(plugins.selected == id, &id).clicked() {
+                selected_id = Some(id.clone());
+            }
+        } else {
+            ui.label(&id);
+        }
+        let selected = tr(es, "Selected", "Seleccionada");
+        let previous = tr(es, "Previous", "Anterior");
+        let host = label(item["host"].as_str().unwrap_or("absent"), es);
+        ui.label(format!(
+            "{selected} {} · {previous} {} · {host}",
+            version(&item["selected"]),
+            version(&item["previous"])
+        ));
+        if let Some(code) = item["diagnostic"].as_str().filter(|code| {
+            matches!(
+                *code,
+                "protocol" | "pipe" | "deadline" | "exited" | "backpressure"
+            )
+        }) {
+            ui.label(label(code, es));
+        }
+    }
+    if pages > 1 {
+        ui.horizontal(|ui| {
+            ui.label(format!(
+                "{} {}/{} · {} plugins",
+                tr(es, "Page", "Página"),
+                plugins.status_page + 1,
+                pages,
+                items.len()
+            ));
+            if plugins.status_page > 0 && ui.button(tr(es, "Previous", "Anterior")).clicked() {
+                plugins.status_page -= 1;
+            }
+            if plugins.status_page + 1 < pages && ui.button(tr(es, "Next", "Siguiente")).clicked() {
+                plugins.status_page += 1;
+            }
+        });
+    }
+    if let Some(id) = selected_id {
+        plugins.select(&id);
+    }
+    true
+}
+impl App {
+    pub(super) fn poll_plugins(&mut self, now: u64, visible: bool) -> bool {
+        if !self.plugins.catalog_loaded {
+            if self.worker.submit(Job::PluginCatalog).is_ok() {
+                self.plugins.catalog_loaded = true;
+            }
+            return true;
+        }
+        if self.plugins.wants_status(self.settings_open) && now >= self.plugins.due {
+            let _ = self.worker.submit(Job::Plugins);
+            self.plugins.due = now + 1000;
+            return true;
+        }
+        if now < self.plugins.visual_due {
+            return false;
+        }
+        let ids: Vec<_> = self
+            .board
+            .iter()
+            .flat_map(|b| &b.buttons)
+            .filter(|b| b.appearance["visual_type"].is_string())
+            .map(|b| string(&b.entity["id"]))
+            .collect();
+        if ids.is_empty() {
+            return false;
+        }
+        let _ = self.worker.submit(Job::PluginVisuals {
+            ids,
+            revision: string(&self.status["view_revision"]),
+        });
+        self.plugins.visual_due = now + if visible { 250 } else { 1000 };
+        true
+    }
+
+    pub(super) fn open_plugin_form(
+        &mut self,
+        key: &str,
+        entity: Option<String>,
+        target: FormTarget,
+    ) {
+        if !self.connected || self.plugins.form_pending || self.plugins.form_loading {
+            return;
+        }
+        if self.command(Job::PluginForm {
+            key: key.into(),
+            entity,
+            target,
+        }) {
+            self.credentials.clear();
+            self.plugins.form = None;
+            self.plugins.form_loading = true;
+        }
+    }
+    /// The Plugins tab of the settings: installed plugins and their administration.
+    pub(super) fn plugin_settings(&mut self, ui: &mut egui::Ui) {
+        // Nothing happening is not worth a line; an operation under way is.
+        let state = string(&self.plugins.status["state"]);
+        if !state.is_empty() && state != "idle" {
+            ui.label(label(&state, self.es));
+        }
+        let idle = self.plugins.can_administer(self.connected);
+        if self.plugins.status["locked"] == true {
+            ui.label(tr(
+                self.es,
+                "Restart RAD to recover plugin administration",
+                "Reinicia RAD para recuperar la administración de plugins",
+            ));
+        }
+        if let Some(code) = self.plugins.status["error"].as_str() {
+            ui.label(label(code, self.es));
+        }
+        // Known only once the status has arrived; until then nothing is claimed.
+        let installed = self.plugins.status["items"].as_array().map(Vec::len);
+        if installed == Some(0) {
+            ui.label(
+                egui::RichText::new(tr(
+                    self.es,
+                    "No plugins installed yet",
+                    "Aún no hay plugins instalados",
+                ))
+                .weak(),
+            );
+        }
+        if !plugin_status_list(ui, &mut self.plugins, idle, self.es) {
+            return;
+        }
+        if !idle {
+            return;
+        }
+        // A line between the installed plugins and the form to install another.
+        if installed.is_some_and(|count| count > 0) {
+            ui.add_space(6.);
+            ui.separator();
+        }
+        self.plugin_admin_controls(ui);
+    }
+    fn plugin_admin_controls(&mut self, ui: &mut egui::Ui) {
+        ui.label(tr(
+            self.es,
+            "Public GitHub repository / release URL",
+            "URL de repositorio / release público GitHub",
+        ));
+        if ui
+            .add(egui::TextEdit::singleline(&mut self.plugins.source).char_limit(2048))
+            .changed()
+        {
+            self.plugins.trusted = false;
+            self.plugins.source_edited = true;
+        }
+        ui.checkbox(
+            &mut self.plugins.trusted,
+            tr(
+                self.es,
+                "I trust this native code (not sandboxed)",
+                "Confío en este código nativo (sin sandbox)",
+            ),
+        );
+        let selected = self.plugins.selected_item();
+        let source_ok = self.plugins.trusted && !self.plugins.source.trim().is_empty();
+        let operations = [
+            ("install", "Install", "Instalar", source_ok),
+            (
+                "update",
+                "Update",
+                "Actualizar",
+                selected.is_some()
+                    && self.plugins.trusted_update()
+                    && !self.plugins.source.trim().is_empty(),
+            ),
+            (
+                "reinstall",
+                "Reinstall",
+                "Reinstalar",
+                selected.is_some() && source_ok,
+            ),
+            ("uninstall", "Uninstall", "Desinstalar", selected.is_some()),
+            (
+                "rollback",
+                "Rollback",
+                "Volver a anterior",
+                selected.is_some_and(|item| !item["previous"].is_null()),
+            ),
+        ];
+        let mut chosen = None;
+        ui.horizontal_wrapped(|ui| {
+            for (operation, en, es, allowed) in operations {
+                if allowed && ui.button(tr(self.es, en, es)).clicked() {
+                    chosen = Some(operation);
+                }
+            }
+        });
+        if let Some(operation) = chosen {
+            self.submit_plugin_operation(operation);
+        }
+    }
+    fn submit_plugin_operation(&mut self, operation: &str) {
+        let remote = matches!(operation, "install" | "update" | "reinstall");
+        let request = Request::new(
+            "plugin_admin",
+            json!({
+                "operation": operation,
+                "plugin_id": if operation == "install" { None } else { Some(self.plugins.selected.clone()) },
+                "source": if remote { Some(self.plugins.source.trim().to_owned()) } else { None },
+                "trusted": !remote || self.plugins.trusted || (operation == "update" && self.plugins.trusted_update()),
+            }),
+        );
+        if self.command(Job::Request(request)) {
+            self.plugins.admin_pending = true;
+            self.plugins.trusted = false;
+            // Keep the selected origin visible; backend status confirms persisted consent.
+        }
+    }
+
+    /// What the list of actions calls the plugin type `type_key`; the key itself when the
+    /// plugin no longer offers it.
+    pub(super) fn plugin_label(&self, type_key: &str) -> String {
+        self.plugins
+            .catalog
+            .iter()
+            .find(|entry| entry.type_key == type_key)
+            .map(|entry| entry.label.clone())
+            .unwrap_or_else(|| type_key.to_owned())
+    }
+    fn current_visual(&self) -> Option<String> {
+        self.inspection
+            .as_ref()
+            .and_then(|i| i.appearance["visual_type"].as_str())
+            .map(str::to_owned)
+    }
+    /// The appearance row has something to offer: a plugin that can draw keys, or one
+    /// already drawing this key.
+    pub(super) fn appearance_visible(&self) -> bool {
+        self.connected
+            && !self.plugins.form_pending
+            && !self.plugins.form_loading
+            && (self.current_visual().is_some()
+                || self
+                    .plugins
+                    .catalog
+                    .iter()
+                    .any(|entry| entry.visual && entry.ready))
+    }
+    /// Who draws the key: Manual (its own text and image) or a plugin, chosen from one list;
+    /// a plugin's settings open next to it.
+    pub(super) fn appearance_control(&mut self, ui: &mut egui::Ui, id: &str) {
+        let current = self.current_visual();
+        let manual = tr(self.es, "Manual", "Manual");
+        let shown = current
+            .as_deref()
+            .map(|key| self.plugin_label(key))
+            .unwrap_or_else(|| manual.to_owned());
+        egui::ComboBox::from_id_salt("visual-source")
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(current.is_none(), manual).clicked() && current.is_some() {
+                    self.send(Request::new(
+                        "edit",
+                        json!({"changes": [{
+                            "kind": "set", "id": id, "field": "visual", "value": {"type": "manual"}
+                        }]}),
+                    ));
+                }
+                for entry in self
+                    .plugins
+                    .catalog
+                    .clone()
+                    .into_iter()
+                    .filter(|entry| entry.visual && entry.ready)
+                {
+                    let chosen = current.as_deref() == Some(entry.type_key.as_str());
+                    if ui.selectable_label(chosen, &entry.label).clicked() {
+                        self.open_plugin_form(&entry.type_key, None, FormTarget::Visual(id.into()));
+                    }
+                }
+            });
+        if current.is_some()
+            && ui
+                .button(tr(self.es, "Configure…", "Configurar…"))
+                .clicked()
+        {
+            self.open_plugin_form("", Some(id.into()), FormTarget::Visual(id.into()));
+        }
+    }
+    pub(super) fn plugin_form_window(&mut self, ctx: &egui::Context) {
+        let Some((target, mut loaded)) = self.plugins.form.take() else {
+            self.credentials.clear();
+            return;
+        };
+        if let Some(form) = &loaded.form {
+            self.credentials.bind(
+                &format!("{target:?}:{}", loaded.type_key),
+                &loaded.type_key,
+                &form.definition.credential_slots,
+            );
+        } else {
+            self.credentials.clear();
+        }
+        let look = Look::new(&self.palette);
+        let mut open = true;
+        let mut request = None;
+        // Named after what is being set up, as the list of actions calls it.
+        let title = self.plugin_label(&loaded.type_key);
+        egui::Window::new(title)
+            .id(egui::Id::new("plugin-form"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .vscroll(true)
+            .default_width(420.)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .show(ctx, |ui| {
+                ui.label(look.muted_text(&loaded.type_key).small());
+                ui.add_space(4.);
+                if !self.plugins.form_pending && self.connected {
+                    if let Some(form) = loaded.form.as_mut() {
+                        if form.compatible() {
+                            form_ui(ui, &look, form, self.es);
+                        } else {
+                            ui.colored_label(look.warn, tr(self.es,
+                                "Incompatible parameters preserved; no migration. Remove explicitly if needed.",
+                                "Parámetros incompatibles conservados; sin migración. Elimina explícitamente si hace falta."));
+                        }
+                        ui.add_space(4.);
+                        match form.publish() {
+                            Ok(Some(value)) => {
+                                if ui.add(look.primary(tr(self.es, "Apply", "Aplicar"))).clicked() {
+                                    request = Some(target.request(&loaded.type_key, value));
+                                }
+                            }
+                            Ok(None) => {
+                                ui.label(look.muted_text(tr(self.es, "Unchanged — nothing to publish", "Sin cambios — nada que publicar")));
+                            }
+                            Err(_) => {
+                                ui.colored_label(look.warn, tr(self.es, "Not saved: check required fields, types and limits",
+                                    "No guardado: revisa campos requeridos, tipos y límites"));
+                            }
+                        }
+                    } else {
+                        ui.colored_label(look.warn, tr(self.es, "Plugin unavailable. Original configuration retained.",
+                            "Plugin no disponible. Configuración original conservada."));
+                    }
+                }
+                self.credentials.show(ui, &mut self.credential_worker, self.connected, self.es);
+                if self.plugins.form_pending {
+                    ui.label(look.muted_text(tr(self.es, "Saving — awaiting durable confirmation",
+                        "Guardando — esperando confirmación durable")));
+                }
+                // What was kept untouched only matters when the form cannot show it.
+                if loaded.form.as_ref().is_none_or(|form| !form.compatible()) {
+                    egui::CollapsingHeader::new(tr(self.es,
+                        "Preserved configuration (read only)", "Configuración conservada (solo lectura)"))
+                        .show(ui, |ui| {
+                            let mut raw = String::from_utf8_lossy(&loaded.original).into_owned();
+                            ui.add(egui::TextEdit::multiline(&mut raw).interactive(false).desired_rows(5));
+                            ui.label(look.muted_text(format!("{}: {}", tr(self.es, "Preserved bytes", "Bytes conservados"), loaded.original.len())));
+                        });
+                }
+            });
+        if let Some(request) = request
+            && self.command(Job::PluginApply(request))
+        {
+            self.plugins.form_pending = true;
+        }
+        if open {
+            self.plugins.form = Some((target, loaded));
+        } else {
+            self.credentials.clear();
+        }
+    }
+    pub(super) fn accept_plugin_visuals(
+        &mut self,
+        ctx: &egui::Context,
+        revision: &str,
+        visuals: Vec<Visual>,
+    ) {
+        if self.status["view_revision"].as_str() != Some(revision) {
+            return;
+        }
+        let ids: std::collections::BTreeSet<_> = self
+            .board
+            .iter()
+            .flat_map(|b| b.buttons.iter())
+            .filter(|b| b.appearance["visual_type"].is_string())
+            .map(|b| string(&b.entity["id"]))
+            .collect();
+        self.plugins.visuals.retain(|id, _| ids.contains(id));
+        for v in visuals.into_iter().filter(|v| ids.contains(&v.id)) {
+            if v.fault {
+                if let Some(previous) = self.plugins.visuals.get_mut(&v.id) {
+                    previous.state = "stale".into();
+                }
+                continue;
+            }
+            let texture = v.pixels.map(|p| {
+                ctx.load_texture(
+                    format!("plugin:{}:{}", v.id, v.revision),
+                    egui::ColorImage::from_rgba_unmultiplied(p.size, &p.rgba),
+                    Default::default(),
+                )
+            });
+            let texture = texture.or_else(|| {
+                if v.has_image && v.availability != "unavailable" {
+                    self.plugins
+                        .visuals
+                        .get(&v.id)
+                        .filter(|old| old.revision == v.revision)
+                        .and_then(|old| old.texture.clone())
+                } else {
+                    None
+                }
+            });
+            self.plugins.visuals.insert(
+                v.id,
+                Face {
+                    revision: v.revision,
+                    state: v.availability,
+                    text: v.text,
+                    position: v.text_position,
+                    color: v.color,
+                    texture,
+                },
+            );
+        }
+    }
+    pub(super) fn plugin_face(
+        &self,
+        ui: &egui::Ui,
+        _look: &super::look::Look,
+        id: &str,
+        rect: egui::Rect,
+    ) -> bool {
+        let external = self
+            .board
+            .iter()
+            .flat_map(|b| &b.buttons)
+            .any(|b| b.entity["id"] == id && b.appearance["visual_type"].is_string());
+        if !external {
+            return false;
+        }
+        let face = self.plugins.visuals.get(id);
+        let state = face.map(|f| f.state.as_str()).unwrap_or("unavailable");
+        let text = face.and_then(|f| f.text.as_deref()).unwrap_or("");
+        let mut look = super::look::Look::new(&self.palette);
+        if let Some(c) = face.and_then(|f| f.color) {
+            look.key = egui::Color32::from_rgb(
+                (u16::from(c[0]) * u16::from(c[3]) / 255) as u8,
+                (u16::from(c[1]) * u16::from(c[3]) / 255) as u8,
+                (u16::from(c[2]) * u16::from(c[3]) / 255) as u8,
+            );
+        }
+        super::deck::paint_key(
+            ui,
+            &look,
+            rect,
+            text,
+            face.map(|f| f.position.as_str()).unwrap_or("middle"),
+            face.and_then(|f| f.texture.as_ref()),
+        );
+        if state != "current" {
+            // A small tag in the corner: the face is not live, whatever it still shows.
+            let painter = ui.painter().with_clip_rect(rect);
+            let galley = painter.layout_no_wrap(
+                label(state, self.es).to_owned(),
+                egui::FontId::proportional(10.),
+                look.warn,
+            );
+            let tag = egui::Rect::from_min_size(
+                rect.left_top() + egui::vec2(4., 4.),
+                galley.size() + egui::vec2(8., 4.),
+            );
+            painter.rect_filled(
+                tag,
+                egui::CornerRadius::same(4),
+                egui::Color32::from_black_alpha(170),
+            );
+            painter.galley(tag.min + egui::vec2(4., 2.), galley, look.warn);
+        }
+        true
+    }
+}
+pub(super) fn form_ui(ui: &mut egui::Ui, look: &Look, form: &mut FormDraft, es: bool) {
+    use rad_plugin_contract::FieldKind;
+    // Labels share one column so the controls line up.
+    const LABEL: f32 = 120.;
+    for (index, field) in form.definition.schema.fields.clone().iter().enumerate() {
+        ui.push_id(index, |ui| {
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(LABEL, ui.spacing().interact_size.y),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(LABEL);
+                        ui.label(look.muted_text(format!(
+                            "{}{}",
+                            field.label,
+                            if field.required { " *" } else { "" }
+                        )));
+                    },
+                );
+                let mut present = form.fields[index].is_some();
+                if !field.required
+                    && ui
+                        .checkbox(&mut present, tr(es, "Set", "Definir"))
+                        .changed()
+                {
+                    form.set(
+                        index,
+                        present.then(|| {
+                            if matches!(field.kind, FieldKind::Boolean) {
+                                "false".into()
+                            } else {
+                                String::new()
+                            }
+                        }),
+                    );
+                }
+                if let Some(mut value) = form.fields[index].clone() {
+                    let changed = match &field.kind {
+                        FieldKind::Boolean => {
+                            let mut v = value == "true";
+                            let r = ui.checkbox(&mut v, tr(es, "Enabled", "Activado"));
+                            if r.changed() {
+                                value = v.to_string();
+                            }
+                            r.changed()
+                        }
+                        FieldKind::Choice { options } => {
+                            let old = value.clone();
+                            egui::ComboBox::from_id_salt("choice")
+                                .selected_text(if value.is_empty() {
+                                    tr(es, "Choose…", "Elige…")
+                                } else {
+                                    &value
+                                })
+                                .show_ui(ui, |ui| {
+                                    for option in options {
+                                        ui.selectable_value(&mut value, option.clone(), option);
+                                    }
+                                });
+                            old != value
+                        }
+                        FieldKind::Integer { min, max } => {
+                            let r = ui.add(
+                                egui::TextEdit::singleline(&mut value)
+                                    .char_limit(21)
+                                    .desired_width(100.),
+                            );
+                            ui.label(look.muted_text(format!("{min}…{max}")).small());
+                            r.changed()
+                        }
+                        FieldKind::Text { max_bytes } => {
+                            let r = ui
+                                .add(egui::TextEdit::singleline(&mut value).char_limit(*max_bytes))
+                                .on_hover_text(format!("≤{max_bytes} bytes"));
+                            r.changed()
+                        }
+                        FieldKind::DynamicChoice { .. } => {
+                            super::options::dynamic_choice(ui, look, form, index, &mut value, es)
+                        }
+                    };
+                    if changed {
+                        form.set(index, Some(value));
+                    }
+                }
+            });
+            if matches!(field.kind, FieldKind::DynamicChoice { .. }) {
+                let indent = LABEL + ui.spacing().item_spacing.x;
+                super::options::list_status(ui, look, form, index, es, indent);
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod administration_tests {
+    use super::*;
+
+    fn frame(
+        ctx: &egui::Context,
+        plugins: &mut PluginUi,
+        click: Option<egui::Pos2>,
+    ) -> Vec<(String, egui::Rect)> {
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900., 800.),
+            )),
+            ..Default::default()
+        };
+        if let Some(pos) = click {
+            input.events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        let output = ctx.run_ui(input, |ui| {
+            plugin_status_list(ui, plugins, true, false);
+        });
+        output
+            .shapes
+            .into_iter()
+            .filter_map(|s| {
+                if let egui::epaint::Shape::Text(text) = s.shape {
+                    let rect = text.galley.rect.translate(text.pos.to_vec2());
+                    Some((text.galley.job.text.clone(), rect))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+    #[test]
+    fn locked_admin_hides_mutations_and_reuses_only_selected_source_trust() {
+        let mut p = PluginUi {
+            status: json!({"state":"failed","locked":true,"items":[{"id":"p","source":"https://github.com/o/r","source_trusted":true}]}),
+            ..Default::default()
+        };
+        assert!(!p.can_administer(true));
+        p.status["locked"] = json!(false);
+        assert!(p.can_administer(true));
+        p.select("p");
+        assert_eq!(p.source, "https://github.com/o/r");
+        assert!(p.trusted_update());
+        p.source.push_str("/releases/tag/v2");
+        assert!(!p.trusted_update());
+        assert!(!p.trusted);
+    }
+    #[test]
+    fn every_installed_plugin_state_and_selector_is_reachable_with_bounded_pages() {
+        let ctx = egui::Context::default();
+        let mut plugins = PluginUi {
+            status: json!({"items": (1..=32).map(|i| json!({
+            "id":format!("plugin{i}"), "selected":{"major":i,"minor":0,"patch":0},
+            "previous":{"major":0,"minor":0,"patch":1}, "host":"failed"
+        })).collect::<Vec<_>>() }),
+            ..Default::default()
+        };
+        let mut text = frame(&ctx, &mut plugins, None);
+        for first in [1, 9, 17, 25] {
+            for id in first..first + 8 {
+                assert!(
+                    text.iter().any(|(s, _)| s == &format!("plugin{id}")),
+                    "missing plugin{id}"
+                );
+                assert!(text.iter().any(|(s, _)| {
+                    s.contains(&format!("Selected {id}.0.0 · Previous 0.0.1 · Failed"))
+                }));
+            }
+            assert_eq!(
+                text.iter().filter(|(s, _)| s.starts_with("plugin")).count(),
+                8
+            );
+            let at = text
+                .iter()
+                .find(|(s, _)| s == &format!("plugin{first}"))
+                .unwrap()
+                .1
+                .center();
+            text = frame(&ctx, &mut plugins, Some(at));
+            assert_eq!(plugins.selected, format!("plugin{first}"));
+            if first != 25 {
+                let next = text
+                    .iter()
+                    .find(|(s, _)| s == "Next")
+                    .expect("all installed plugins must be reachable, not truncated")
+                    .1
+                    .center();
+                frame(&ctx, &mut plugins, Some(next));
+                text = frame(&ctx, &mut plugins, None);
+            }
+        }
+        assert!(!text.iter().any(|(s, _)| s == "Next"));
+        plugins.status["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"plugin33"}));
+        text = frame(&ctx, &mut plugins, None);
+        assert!(
+            text.iter()
+                .any(|(s, _)| s == "Invalid plugin status: more than 32 entries")
+        );
+        assert!(!text.iter().any(|(s, _)| s.starts_with("plugin")));
+    }
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    #[test]
+    fn declared_credentials_are_visible_separately_from_ordinary_fields() {
+        let definition = rad_plugin_contract::Definition {
+            id: "authenticate".into(),
+            label: "Authenticate".into(),
+            schema: rad_plugin_contract::Schema {
+                version: 1,
+                fields: vec![],
+            },
+            credential_slots: vec!["password".into()],
+            response_timeout: None,
+        };
+        let mut form = FormDraft::new(definition);
+        let ctx = egui::Context::default();
+        let mut panel = super::super::credentials::Panel::default();
+        panel.bind("first", "p:authenticate", &form.definition.credential_slots);
+        let mut worker = super::super::credentials::start(std::path::PathBuf::from("/unused"));
+        let output = ctx.run_ui(Default::default(), |ui| {
+            form_ui(ui, &Look::new(&Default::default()), &mut form, false);
+            panel.show(ui, &mut worker, false, false);
+        });
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::epaint::Shape::Text(t) = &shape.shape {
+                    Some(t.galley.job.text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(texts.contains(&"Credentials — saved separately"));
+        assert!(texts.contains(&"password"));
+        assert_eq!(form.publish().unwrap().unwrap()["values"], json!({}));
+    }
+}

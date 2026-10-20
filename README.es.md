@@ -1,0 +1,132 @@
+[English](README.md) · [Español](README.es.md)
+
+# RAD · Rust Action Deck
+
+Un editor nativo para Linux y un runtime local para tu Stream Deck.
+
+![Editor de RAD con un deck demo](docs/images/editor-main.png)
+
+## ¿Qué es RAD?
+
+RAD convierte un Stream Deck XL en un lanzador de aplicaciones y una superficie
+de control configurable. Organiza botones visualmente, agrúpalos en carpetas y
+combina acciones. El runtime sigue funcionando al cerrar el editor.
+
+## Funciones
+
+- Distribución de 32 teclas, carpetas, edición por arrastre y deshacer/rehacer.
+- Hasta 20 acciones por botón, ejecución secuencial o paralela y acción Esperar integrada.
+- Apertura de aplicaciones desde el catálogo del escritorio.
+- Texto propio e imágenes PNG/JPEG estáticas.
+- Interfaz en inglés y español; ajustes de brillo, reposo y umbral de pulsación.
+- Exportar/restaurar configuración. La exportación excluye credenciales y ejecutables de plugins.
+- Automatización local por CLI con permisos heredados de consulta, modificación y ejecución.
+- Plugins opcionales de audio, multimedia, OBS y métricas del sistema.
+- Los plugins oficiales se cargan bajo demanda y duermen cuando nada los necesita.
+  Los botones visibles, consultas y trabajos admitidos pueden mantenerlos activos,
+  no solo las pulsaciones.
+
+## Galería
+
+| Inspector de tecla | Acción de plugin |
+| --- | --- |
+| ![Una tecla con varias acciones](docs/images/editor-key.png) | ![Formulario de una acción OBS](docs/images/editor-plugin-action.png) |
+
+![Ajustes del editor](docs/images/editor-settings.png)
+
+Las capturas usan una configuración demo.
+
+## Requisitos
+
+- Linux con Wayland, un driver compatible con OpenGL y un Rust reciente que soporte la edición 2024.
+- Acceso de lectura/escritura al nodo `hidraw` del Stream Deck. Las distribuciones
+  con el hwdb de controladores audiovisuales de systemd y sus reglas udev pueden
+  conceder acceso a la sesión activa mediante `uaccess`; comprueba los permisos
+  de dispositivos de tu distribución.
+- Audio: `pactl`. Multimedia: un reproductor MPRIS en el D-Bus de sesión.
+- Métricas GPU/VRAM: driver NVIDIA con NVML. CPU/RAM no requieren NVIDIA.
+- OBS: OBS Studio local con su servidor WebSocket habilitado.
+- Tests: `bwrap`, `pactl`, `dbus-daemon` y soporte de namespaces Linux.
+
+## Compilar y ejecutar
+
+```bash
+cargo build --release
+target/release/rad-runtime  # terminal 1: sin hardware por defecto
+target/release/rad-editor   # terminal 2
+```
+
+Mantén `rad-launcher-helper` junto a `rad-runtime`. Para tomar el control del XL,
+primero cierra StreamController y evita que se reinicie automáticamente; luego:
+
+```bash
+target/release/rad-runtime --xl-exclusive
+```
+
+Nunca uses dos controladores del deck a la vez. RAD no importa ni modifica datos
+de StreamController. Cerrar el editor deja el runtime activo; Ctrl+C en la
+terminal del runtime solicita su cierre.
+
+Los datos viven en `$XDG_DATA_HOME/rad` o `~/.local/share/rad`; los sockets locales,
+bajo `$XDG_RUNTIME_DIR/rad`.
+
+## Plugins
+
+Plugins oficiales y releases: [KroxiDev/rad-plugins](https://github.com/KroxiDev/rad-plugins).
+
+| Plugin | Release | Controles |
+| --- | --- | --- |
+| Audio | [0.1.0](https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.1.0) | Silenciar salida y micrófono; indicadores de estado |
+| Multimedia | [0.1.1](https://github.com/KroxiDev/rad-plugins/releases/tag/media-v0.1.1) | Controles de reproducción y reproducción actual |
+| OBS | [0.1.1](https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.1.1) | Escena Program, filtros, elementos, grabación y transmisión |
+| Métricas | [0.1.1](https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.1.1) | Visuales de CPU, RAM, GPU NVIDIA y VRAM |
+
+En **Ajustes → Plugins**, pega una URL pública de release de GitHub, confirma que
+confías en su código nativo y pulsa **Instalar**. Usa los enlaces etiquetados de
+arriba para elegir un plugin concreto. Actualizar, reinstalar, revertir y
+desinstalar son operaciones manuales. Los plugins son procesos nativos,
+**no un sandbox de seguridad**: instala solo código en el que confíes.
+La [guía para autores](plugins/README.md) explica el SDK y el protocolo.
+
+## Arranque automático
+
+[packaging/rad-runtime.service](packaging/rad-runtime.service) es una unidad
+systemd **de usuario** de ejemplo. Adapta la ruta del ejecutable e instala juntos
+runtime/helper antes de habilitarla con tu gestor de servicios de usuario. El
+ejemplo arranca sin hardware; añade `--xl-exclusive` solo después de asegurar
+el control exclusivo. Nada se instala ni habilita automáticamente.
+
+## Cómo funciona
+
+```text
+Editor / rad-cli ↔ socket Unix local ↔ Runtime ↔ Stream Deck (hidraw)
+                                         ↕
+                                  Procesos de plugins
+```
+
+El runtime posee la configuración, ejecución, navegación y dispositivo. El editor
+nativo eframe/egui usa Glow; editor y CLI comparten la validación de dominio.
+Cada plugin activo tiene su propio proceso, aislado del espacio de memoria del runtime.
+
+## Desarrollo
+
+La aplicación y los plugins son workspaces Cargo separados:
+
+```bash
+cargo test --release --workspace --all-features
+cargo test --manifest-path plugins/Cargo.toml --release --workspace --all-features
+```
+
+Compila primero los binarios/ejemplos de fixtures. La [puerta completa de AGENTS.md](AGENTS.md#validación-completa)
+incluye ejecución offline, variables de helpers, formato, clippy y scripts de
+conformidad. Los tests usan servicios privados y lectores sintéticos, no el deck físico.
+
+## Estado
+
+Probado con un Stream Deck XL en Omarchy/Hyprland. Otros modelos de dispositivo y
+distribuciones Linux no están validados. El repositorio sigue privado.
+
+## Licencia
+
+[MIT](LICENSE), copyright KroxiDev. Las dependencias conservan sus licencias;
+consulta los [avisos de terceros](plugins/notices/README.md) de los plugins.

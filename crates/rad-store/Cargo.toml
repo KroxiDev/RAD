@@ -1,0 +1,15 @@
+[package]
+name = "rad-store"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "limits"] }
+rad-core = { path = "../rad-core" }
+rad-codec = { path = "../rad-codec" }
+rad-media = { path = "../rad-media" }
+sha2 = "=0.10.9"
+
+[dev-dependencies]
+image = { version = "=0.25.10", default-features = false, features = ["png"] }

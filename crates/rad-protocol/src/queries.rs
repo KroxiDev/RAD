@@ -1,0 +1,170 @@
+use super::*;
+use rad_authority::{ActionType, ActionView, Cursor, EntityView, QueryError, Visible};
+use rad_core::{
+    configuration::{Mode, TextPosition},
+    permissions::LocalPermissions,
+};
+pub(super) fn read(
+    a: &Authority,
+    c: IncomingContext,
+    op: &str,
+    args: &Map<String, Value>,
+) -> Checked<Value> {
+    let rev = a
+        .view_revision(c.origin)
+        .ok_or("resource_exhausted")?
+        .value()
+        .to_string();
+    match op {
+        "get" => {
+            closed(args, &["id"])?;
+            let id = id(args, "id")?;
+            if id.kind() == EntityKind::Folder {
+                let f = a.folder(c.origin, id).ok_or("not_found")?;
+                return Ok(
+                    json!({"visibility":"visible","id":short(id),"kind":"folder","fields":{"name":f.name,"entry_button_id":f.entry_button.map(|b|short(b.short())),"parent_id":f.parent_binding.map(|b|short(b.short())),"slots":f.slots.into_iter().map(|slot|match slot {None=>Value::Null,Some(Visible::Restricted)=>json!({"visibility":"restricted"}),Some(Visible::Visible(b))=>json!({"visibility":"visible","id":short(b.short())})}).collect::<Vec<_>>()},"view_revision":rev,"sections":[]}),
+                );
+            }
+            Ok(entity(&a.get(c.origin, id).ok_or("not_found")?, &rev))
+        }
+        "list" => {
+            closed(args, &["cursor", "limit"])?;
+            if args.get("limit").and_then(Value::as_u64) != Some(32) {
+                return Err("invalid_request");
+            };
+            let cursor = cursor(args)?;
+            // Reserve envelope/cursor overhead once, not a second unbounded page buffer.
+            let mut first = true;
+            let page = a
+                .list(c.connection, c.origin, cursor.as_ref(), |e| {
+                    let n = serde_json::to_vec(&entity(e, &rev)).unwrap().len() + 1;
+                    let overhead = if first {
+                        first = false;
+                        1024
+                    } else {
+                        0
+                    };
+                    n + overhead
+                })
+                .map_err(query_error)?;
+            Ok(
+                json!({"items":page.entries.iter().map(|e|entity(e,&rev)).collect::<Vec<_>>(),"next_cursor":page.next.as_ref().map(encode_cursor),"view_revision":rev}),
+            )
+        }
+        "get_section" => {
+            closed(args, &["id", "section", "cursor"])?;
+            let id = id(args, "id")?;
+            let cursor = cursor(args)?;
+            match string(args, "section")? {
+                "appearance" => {
+                    if cursor.is_some() {
+                        return Err("cursor_expired");
+                    };
+                    let v = a.appearance(c.origin, id).ok_or("not_found")?;
+                    // The position is reported resolved: what a renderer must draw.
+                    let text_position = match v.appearance.effective_text_position() {
+                        TextPosition::Top => "top",
+                        TextPosition::Middle => "middle",
+                        TextPosition::Bottom => "bottom",
+                        TextPosition::AboveImage => "above_image",
+                        TextPosition::BelowImage => "below_image",
+                    };
+                    let visual_type = match &v.visual {
+                        rad_authority::VisualView::Static => None,
+                        rad_authority::VisualView::External(key) => {
+                            Some(format!("{}#{}", key.plugin(), key.name()))
+                        }
+                    };
+                    Ok(
+                        json!({"visual_type":visual_type,"section":"appearance","items":[{"name":"text","value":v.appearance.text},{"name":"image","value":v.appearance.image},{"name":"text_position","value":text_position}],"next_cursor":null,"view_revision":rev}),
+                    )
+                }
+                "actions" => {
+                    let mut first = true;
+                    let p = a
+                        .actions(c.connection, c.origin, id, cursor.as_ref(), |e| {
+                            let n = serde_json::to_vec(&visible_action(e, &rev)).unwrap().len() + 1;
+                            let overhead = if first {
+                                first = false;
+                                1024
+                            } else {
+                                0
+                            };
+                            n + overhead
+                        })
+                        .map_err(query_error)?;
+                    Ok(
+                        json!({"section":"actions","items":p.entries.iter().map(|e|visible_action(e,&rev)).collect::<Vec<_>>(),"next_cursor":p.next.as_ref().map(encode_cursor),"view_revision":rev}),
+                    )
+                }
+                _ => Err("invalid_request"),
+            }
+        }
+        _ => Err("invalid_request"),
+    }
+}
+fn query_error(e: QueryError) -> &'static str {
+    match e {
+        QueryError::NotFound => "not_found",
+        QueryError::CursorExpired => "cursor_expired",
+        QueryError::Capacity => "resource_exhausted",
+    }
+}
+fn local(p: LocalPermissions) -> Value {
+    match p.own_value() {
+        None => json!({"inherit":true}),
+        Some(p) => json!({"own":permissions(p)}),
+    }
+}
+fn entity(e: &EntityView, rev: &str) -> Value {
+    match e {
+        EntityView::Button(b) => {
+            json!({"visibility":"visible","id":short(b.binding.short()),"kind":"button","fields":{"name":b.name,"mode":match b.mode {Mode::Sequential=>"sequential",Mode::Parallel=>"parallel"},"permissions":local(b.local_permissions),"effective_permissions":permissions(b.permissions),"folder_id":b.folder.map(|b|short(b.short())),"position":b.position},"view_revision":rev,"sections":["appearance","actions"]})
+        }
+        EntityView::Action(v) => action(v, rev),
+    }
+}
+fn action(v: &ActionView, rev: &str) -> Value {
+    let kind = match &v.kind {
+        ActionType::Launcher => "launcher".to_owned(),
+        ActionType::EnterFolder => "enter_folder".to_owned(),
+        ActionType::Return => "return".to_owned(),
+        ActionType::Wait => "wait".to_owned(),
+        ActionType::External(t) => format!("{}:{}", t.plugin(), t.name()),
+    };
+    json!({"visibility":"visible","id":short(v.binding.short()),"kind":"action","fields":{"type":kind,"permissions":local(v.local_permissions),"effective_permissions":permissions(v.permissions),"parent_id":v.parent_binding.map(|b|short(b.short())),"parameters":parameters(v),"folder_id":v.destination.map(|b|short(b.short()))},"view_revision":rev,"sections":[]})
+}
+/// The action's own configuration, for the kinds whose parameters are not opaque.
+fn parameters(v: &ActionView) -> Value {
+    match (&v.desktop_entry, v.wait_ms) {
+        (Some(entry), _) => json!({"desktop_entry":entry.id()}),
+        (None, Some(milliseconds)) => json!({"milliseconds":milliseconds}),
+        (None, None) => Value::Null,
+    }
+}
+fn visible_action(v: &Visible<ActionView>, rev: &str) -> Value {
+    match v {
+        Visible::Visible(v) => action(v, rev),
+        Visible::Restricted => json!({"visibility":"restricted"}),
+    }
+}
+fn encode_cursor(c: &Cursor) -> String {
+    c.to_bytes().iter().map(|b| format!("{b:02x}")).collect()
+}
+fn cursor(args: &Map<String, Value>) -> Checked<Option<Cursor>> {
+    match args.get("cursor") {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(s))
+            if s.len() == 102
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) =>
+        {
+            let bytes = (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                .collect::<Vec<_>>();
+            Cursor::from_bytes(&bytes).map(Some).map_err(query_error)
+        }
+        _ => Err("invalid_request"),
+    }
+}

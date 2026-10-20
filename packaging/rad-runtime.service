@@ -1,0 +1,20 @@
+# Example USER unit; not installed/enabled by this repository.
+# Install the runtime and rad-launcher-helper beside one another at this path.
+# Default: NO physical device. For explicit human opt-in ONLY, after closing
+# StreamController and disabling its auto-restart, override ExecStart to append
+# --xl-exclusive. Do not enable both controllers or infer exclusive handoff.
+[Unit]
+Description=RAD local action deck authority
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/rad-runtime
+# Signal only the authority: it drains accepted work and reaps its helper.
+# Applications launched by GIO are not shutdown targets.
+KillMode=process
+KillSignal=SIGTERM
+Restart=no
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

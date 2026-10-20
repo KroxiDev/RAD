@@ -1,0 +1,17 @@
+pub mod bootstrap;
+mod catalog;
+pub mod display;
+pub mod lifecycle;
+pub mod native;
+pub mod persistence;
+pub mod server;
+pub mod storage;
+pub mod transfers;
+
+mod plugin_dispatch;
+
+mod plugin_visuals;
+
+mod plugin_admin;
+
+mod credential_worker;
