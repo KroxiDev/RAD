@@ -432,12 +432,32 @@ mod tests {
         };
         let hello = frame(json!({"v":1,"id":"1","op":"hello","args":{}}));
         socket.write_all(&hello).unwrap();
-        server.transport.drive(1).unwrap();
-        let key = server.transport.take_next().unwrap().key;
+        // The accept and the read may each take a readiness round of their own: drive until
+        // the hello is taken, on a clock that only moves forward.
+        let mut now = 0;
+        let key = loop {
+            now += 1;
+            server.transport.drive(now).unwrap();
+            if let Some(incoming) = server.transport.take_next() {
+                break incoming.key;
+            }
+            assert!(now < 1000, "the hello never arrived");
+            server
+                .transport
+                .wait_readiness(Duration::from_millis(1))
+                .unwrap();
+        };
         // The peer leaves before its request is looked at.
         drop(socket);
-        server.transport.drive(2).unwrap();
-        assert!(server.transport.connection_ids().next().is_none());
+        while server.transport.connection_ids().next().is_some() {
+            now += 1;
+            assert!(now < 2000, "the closed connection was never noticed");
+            server
+                .transport
+                .wait_readiness(Duration::from_millis(1))
+                .unwrap();
+            server.transport.drive(now).unwrap();
+        }
         let mut wire = rad_wire::Session::default();
         wire.accept(rad_wire::read_frame(&hello).unwrap().unwrap())
             .unwrap();
@@ -453,6 +473,7 @@ mod tests {
         assert_eq!(server.client_api(key, context, &request), Ok(true));
         assert!(server.notices.subscribers.is_empty());
         drop(server);
-        std::fs::remove_dir_all(root).unwrap();
+        // Workers may still be ending: a leftover file must not fail the test.
+        let _ = std::fs::remove_dir_all(root);
     }
 }
