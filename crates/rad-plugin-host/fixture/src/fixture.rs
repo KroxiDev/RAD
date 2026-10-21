@@ -44,6 +44,26 @@ pub fn run(major: u32) {
                 if mode == "crash" {
                     std::process::exit(23);
                 }
+                if mode == "child" || mode == "child_exit" {
+                    // A long-lived descendant of the plugin; its pid goes where the test looks.
+                    #[allow(clippy::zombie_processes)] // left running on purpose
+                    let child = std::process::Command::new("/bin/sleep")
+                        .arg("60")
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                        .expect("spawn descendant");
+                    let dir = std::env::var_os("XDG_RUNTIME_DIR").expect("runtime dir");
+                    std::fs::write(
+                        std::path::Path::new(&dir).join("descendant.pid"),
+                        child.id().to_string(),
+                    )
+                    .expect("write descendant pid");
+                    if mode == "child_exit" {
+                        std::process::exit(0);
+                    }
+                }
                 if mode == "slow" {
                     if let Some(key) = &subscription {
                         send(
