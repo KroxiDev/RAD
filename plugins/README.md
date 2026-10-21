@@ -6,8 +6,8 @@ crate; there is no separate SDK definition of the wire types.
 
 The authoritative documentation for authors is in **[KroxiDev/rad-plugins](https://github.com/KroxiDev/rad-plugins)**:
 
-- [Plugin contract v1](https://github.com/KroxiDev/rad-plugins/blob/main/docs/contract-v1.md)
-- [Author guide](https://github.com/KroxiDev/rad-plugins/blob/main/docs/author-guide.md)
+- [Plugin contract v1](https://github.com/KroxiDev/rad-plugins/blob/sdk-v0.2.0/docs/contract-v1.md)
+- [Author guide](https://github.com/KroxiDev/rad-plugins/blob/sdk-v0.2.0/docs/author-guide.md)
 - [Published packages](https://github.com/KroxiDev/rad-plugins/releases)
 
 Contract v1 uses a major version and negotiated capabilities, immutable settings

@@ -81,15 +81,17 @@ Plugins oficiales y releases: [KroxiDev/rad-plugins](https://github.com/KroxiDev
 
 | Plugin | Release | Controles |
 | --- | --- | --- |
-| Audio | [0.1.0](https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.1.0) | Silenciar salida y micrófono; indicadores de estado |
-| Multimedia | [0.1.1](https://github.com/KroxiDev/rad-plugins/releases/tag/media-v0.1.1) | Controles de reproducción y reproducción actual |
-| OBS | [0.1.1](https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.1.1) | Escena Program, filtros, elementos, grabación y transmisión |
-| Métricas | [0.1.1](https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.1.1) | Visuales de CPU, RAM, GPU NVIDIA y VRAM |
+| Audio | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.2.0) | Silenciar salida y micrófono; indicadores de estado |
+| Multimedia | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/media-v0.2.0) | Controles de reproducción y reproducción actual |
+| OBS | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.2.0) | Escena Program, filtros, elementos, grabación y transmisión |
+| Métricas | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.2.0) | Visuales de CPU, RAM, GPU NVIDIA y VRAM |
 
 En **Ajustes → Plugins**, pega una URL pública de release de GitHub, confirma que
 confías en su código nativo y pulsa **Instalar**. Usa los enlaces etiquetados de
 arriba para elegir un plugin concreto. Actualizar, reinstalar, revertir y
-desinstalar son operaciones manuales. Los plugins son procesos nativos,
+desinstalar son operaciones manuales. Las releases 0.1.x son anteriores al
+contrato de plugins v1: RAD las conserva instaladas, pero no las ejecuta hasta
+que actualices a 0.2.0. Los plugins son procesos nativos,
 **no un sandbox de seguridad**: instala solo código en el que confíes.
 La [guía para autores](plugins/README.md) explica el SDK y el protocolo.
 

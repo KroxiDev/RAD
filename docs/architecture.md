@@ -227,3 +227,4 @@ Estas piezas parecen simplificables y no lo son:
 | [0012](adr/0012-servicio-gestionado-por-el-editor.md) | Servicio systemd gestionado por el editor |
 | [0013](adr/0013-limpieza-de-procesos.md) | Limpieza de procesos: scopes para las aplicaciones y `KillMode=mixed` |
 | [0014](adr/0014-residual-de-plugins-en-el-host.md) | El residual de un plugin vencido pasa al Host |
+| [0015](adr/0015-gesto-del-plan-y-documento-v3.md) | Un gesto por botón, umbral global de pulsación larga y documento v3 |
