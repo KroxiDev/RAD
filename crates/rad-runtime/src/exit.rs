@@ -13,7 +13,8 @@
 //!
 //! 75 is `EX_TEMPFAIL`, reserved for what keeps the runtime from serving requests and
 //! that a restart cannot fix. Anything bound to one request, plugin or job is contained
-//! where it happens ([`contained`]) and never reaches this table.
+//! where it happens and recorded as an event ([`crate::events`]); it never reaches this
+//! table.
 //!
 //! Only unexpected exits are recorded in `last-exit.json`; for the other classes the unit
 //! state already says what happened.
@@ -175,14 +176,4 @@ pub fn install_panic_record(data: PathBuf) {
         }
         previous(info);
     }));
-}
-
-/// The stderr line for a failure contained where it happened, with a stable code.
-pub fn contained_line(code: &str) -> String {
-    format!("rad-runtime: contenido {code}")
-}
-
-/// Reports a contained failure: the runtime keeps serving and the visible state says so.
-pub fn contained(code: &str) {
-    eprintln!("{}", contained_line(code));
 }

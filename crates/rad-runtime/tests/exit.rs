@@ -102,8 +102,9 @@ fn an_unreadable_record_is_ignored_and_removed() {
 
 #[test]
 fn a_contained_failure_is_one_line_with_a_stable_code() {
-    let line = exit::contained_line("deck_spawn_failed");
-    assert_eq!(line, "rad-runtime: contenido deck_spawn_failed");
+    use rad_api::EventCode;
+    let line = rad_runtime::events::Events::line(EventCode::DeckSpawnFailed, None);
+    assert_eq!(line, "rad-runtime: deck_spawn_failed");
     assert!(!line.contains('\n'));
 }
 

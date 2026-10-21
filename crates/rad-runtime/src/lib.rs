@@ -1,6 +1,7 @@
 pub mod bootstrap;
 mod catalog;
 pub mod display;
+pub mod events;
 pub mod exit;
 pub mod lifecycle;
 pub mod native;

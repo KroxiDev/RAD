@@ -202,6 +202,7 @@ requests! {
     PluginSettings => "plugin_settings", false { plugin_id:String },
     SetPluginSettings => "set_plugin_settings", true { plugin_id:String, parameters:Option<PluginParameters> },
     PluginLog => "plugin_log", false { plugin_id:String },
+    RuntimeLog => "runtime_log", false {},
     PluginRetry => "plugin_retry", true { plugin_id:String },
     PluginStatus => "plugin_status", false {},
     PluginVisual => "plugin_visual", false { id:String },

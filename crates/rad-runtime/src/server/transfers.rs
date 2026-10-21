@@ -4,7 +4,10 @@ use crate::{
     transfers::{Context, Kind, Operation, Output},
 };
 use rad_authority::{Command, ExportLease};
-use rad_core::identity::ShortId;
+use rad_core::{
+    configuration::{Candidate, ConfigurationError},
+    identity::ShortId,
+};
 
 pub(super) struct Flight {
     job: JobId,
@@ -75,6 +78,30 @@ impl Server {
             }
         }
     }
+    /// Starts an export from its pinned lease and the snapshot made from it. A snapshot that
+    /// cannot be made fails this export only: the lease goes back and the client is told.
+    pub(super) fn export_begin(
+        &mut self,
+        c: IncomingContext,
+        size: Option<u64>,
+        lease: ExportLease,
+        snapshot: Result<Candidate, ConfigurationError>,
+    ) -> Result<(Operation, FlightKind), Box<Response>> {
+        let Ok(snapshot) = snapshot else {
+            self.actor.release_export(lease);
+            self.events.record(EventCode::ExportFailed, None);
+            return Err(Box::new(self.error(c, "resource_exhausted", true)));
+        };
+        Ok((
+            Operation::Begin {
+                kind: Kind::Export,
+                size,
+                export_revision: Some(lease.revision()),
+                export_snapshot: Some(snapshot),
+            },
+            FlightKind::Export(lease),
+        ))
+    }
     pub(super) fn transfer_external(
         &mut self,
         key: RequestKey,
@@ -99,24 +126,17 @@ impl Server {
                             return self.respond(key, self.error(c, "resource_exhausted", true));
                         }
                     };
-                    (
-                        Operation::Begin {
-                            kind,
-                            size,
-                            export_revision: Some(lease.revision()),
-                            export_snapshot: Some(
-                                crate::transfers::export_snapshot(
-                                    lease.snapshot(),
-                                    self.plugin_admin
-                                        .as_ref()
-                                        .map(|admin| admin.export_dependencies())
-                                        .unwrap_or_default(),
-                                )
-                                .map_err(|_| RuntimeError::Protocol)?,
-                            ),
-                        },
-                        FlightKind::Export(lease),
-                    )
+                    let snapshot = crate::transfers::export_snapshot(
+                        lease.snapshot(),
+                        self.plugin_admin
+                            .as_ref()
+                            .map(|admin| admin.export_dependencies())
+                            .unwrap_or_default(),
+                    );
+                    match self.export_begin(c, size, lease, snapshot) {
+                        Ok(begun) => begun,
+                        Err(response) => return self.respond(key, *response),
+                    }
                 } else {
                     (
                         Operation::Begin {

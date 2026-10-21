@@ -146,6 +146,42 @@ mod serving {
         serde_json::to_value(&response.data).unwrap()
     }
 
+    /// `(code, subject)` of every event in a `runtime_log` answer, oldest first.
+    fn event_codes(log: &Value) -> Vec<(String, Option<String>)> {
+        log["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["code"].as_str().unwrap().to_owned(),
+                    entry["subject"].as_str().map(str::to_owned),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_running_runtime_tells_the_editor_it_started_and_a_clean_stop_leaves_no_trace() {
+        let sandbox = Sandbox::new("log");
+        let (running, mut client) = start(&sandbox);
+        let log = view(&mut client, "runtime_log");
+        assert_eq!(event_codes(&log), [("started".into(), None)]);
+        assert_eq!(log["dropped"], "0");
+        // Reading the log is not an event, and the answer is the same the next time.
+        assert_eq!(view(&mut client, "runtime_log"), log);
+        drop(client);
+        assert_eq!(stop(running), Some(0));
+        let (running, mut client) = start(&sandbox);
+        assert_eq!(
+            event_codes(&view(&mut client, "runtime_log")),
+            [("started".into(), None)],
+            "the ring belongs to one process"
+        );
+        drop(client);
+        assert_eq!(stop(running), Some(0));
+    }
+
     #[test]
     fn a_second_instance_is_blocking_and_the_first_keeps_serving() {
         let sandbox = Sandbox::new("second");
@@ -198,6 +234,15 @@ mod serving {
         );
         let status = view(&mut client, "status");
         assert_eq!(status["previous_exit"], overview["previous_exit"]);
+        // The Log says the same: why the last run ended comes right after this start.
+        let log = event_codes(&view(&mut client, "runtime_log"));
+        assert_eq!(
+            log,
+            [
+                ("started".into(), None),
+                ("previous_exit".into(), Some("startup".into()))
+            ]
+        );
         assert!(!sandbox.data().join("last-exit.json").exists());
         drop(client);
         assert_eq!(stop(running), Some(0));

@@ -95,7 +95,10 @@ impl Server {
         c: IncomingContext,
         r: &rad_wire::Request,
     ) -> Result<bool, RuntimeError> {
-        if !matches!(r.operation(), "overview" | "subscribe" | "board") {
+        if !matches!(
+            r.operation(),
+            "overview" | "subscribe" | "board" | "runtime_log"
+        ) {
             return Ok(false);
         }
         if c.origin != Origin::Editor {
@@ -105,9 +108,10 @@ impl Server {
         let request = rad_api::Request::parse(r.operation(), Value::Object(r.args().clone()));
         let data:Result<rad_api::ResponseData,&'static str>=match request {
             Ok(rad_api::Request::Overview{})=>Ok(rad_api::ResponseData::Overview(self.overview())),
+            Ok(rad_api::Request::RuntimeLog{})=>Ok(rad_api::ResponseData::RuntimeLog(self.events.view())),
             Ok(rad_api::Request::Subscribe{})=>{
-                if !self.transport.subscribe(c.connection){return Err(RuntimeError::Transport);}
-                self.notices.subscribers.insert(c.connection);
+                // A peer that left meanwhile has nothing to subscribe: its answer finds no request.
+                if self.transport.subscribe(c.connection){self.notices.subscribers.insert(c.connection);}
                 Ok(rad_api::ResponseData::Empty(rad_api::Empty {}))
             },
             Ok(rad_api::Request::Board{folder_id})=>self.protocol.board_view(&self.actor,c,folder_id.as_deref()).and_then(|mut board|{
@@ -166,7 +170,7 @@ impl Server {
             .notify(connection, kind.key(), &payload)
             .is_err()
         {
-            crate::exit::contained("notice_dropped");
+            self.events.record(rad_api::EventCode::NoticeDropped, None);
         }
         Ok(())
     }
@@ -365,6 +369,46 @@ mod tests {
             assert!(kinds.contains(&NoticeKind::Overview));
             assert!(kinds.contains(&NoticeKind::Plugins));
         }
+        drop(server);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn subscribing_from_a_connection_that_already_left_is_ignored() {
+        let root = std::env::temp_dir().join(format!("rad-subscribe-gone-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut server =
+            Server::new(&root, &root.join("data"), NonZeroU128::new(812).unwrap()).unwrap();
+        let mut socket = UnixStream::connect(root.join("rad/editor.sock")).unwrap();
+        let frame = |value: Value| {
+            let bytes = serde_json::to_vec(&value).unwrap();
+            let mut framed = (bytes.len() as u32).to_be_bytes().to_vec();
+            framed.extend(bytes);
+            framed
+        };
+        let hello = frame(json!({"v":1,"id":"1","op":"hello","args":{}}));
+        socket.write_all(&hello).unwrap();
+        server.transport.drive(1).unwrap();
+        let key = server.transport.take_next().unwrap().key;
+        // The peer leaves before its request is looked at.
+        drop(socket);
+        server.transport.drive(2).unwrap();
+        assert!(server.transport.connection_ids().next().is_none());
+        let mut wire = rad_wire::Session::default();
+        wire.accept(rad_wire::read_frame(&hello).unwrap().unwrap())
+            .unwrap();
+        let subscribe = frame(json!({"v":1,"id":"2","op":"subscribe","args":{}}));
+        let request = wire
+            .accept(rad_wire::read_frame(&subscribe).unwrap().unwrap())
+            .unwrap();
+        let context = IncomingContext {
+            request_id: key.id(),
+            connection: key.connection(),
+            origin: Origin::Editor,
+        };
+        assert_eq!(server.client_api(key, context, &request), Ok(true));
+        assert!(server.notices.subscribers.is_empty());
         drop(server);
         std::fs::remove_dir_all(root).unwrap();
     }

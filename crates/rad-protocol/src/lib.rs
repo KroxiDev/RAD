@@ -553,6 +553,7 @@ impl Protocol {
                 "plugin_status",
                 "plugin_retry",
                 "plugin_log",
+                "runtime_log",
                 "plugin_dependencies",
                 "plugin_manifest",
                 "plugin_settings",

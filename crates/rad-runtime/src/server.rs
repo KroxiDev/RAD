@@ -3,10 +3,15 @@ mod client_api;
 #[cfg(test)]
 mod contained_tests;
 mod credentials;
+#[cfg(test)]
+mod events_tests;
 mod options;
 mod transfers;
 use crate::{bootstrap, persistence::Persistence};
-use rad_api::response::{Error, Outcome, Response, Status};
+use rad_api::{
+    EventCode,
+    response::{Error, Outcome, Response, Status},
+};
 use rad_authority::{Authority, Effect, RequestId};
 use rad_core::configuration::Origin;
 use rad_launcher::monotonic_ms;
@@ -70,6 +75,10 @@ pub struct Server {
     _wake: Arc<mio::Waker>,
     pub recovered_previous: bool,
     previous_exit: Option<rad_api::PreviousExit>,
+    events: crate::events::Events,
+    connection_failures: crate::events::ConnectionFailures,
+    /// Last storage state recorded, so only a change leaves an event.
+    storage_seen: rad_authority::StorageState,
 }
 impl Server {
     pub fn new(runtime: &Path, data: &Path, session: NonZeroU128) -> Result<Self, RuntimeError> {
@@ -110,11 +119,17 @@ impl Server {
             .editor_view(Origin::Editor)
             .expect("Editor view")
             .brightness;
+        let credentials = credentials::Credentials::new(data.to_path_buf(), wake.clone())?;
+        let mut events = crate::events::Events::new();
+        events.record(EventCode::Started, None);
+        if let Some(previous) = &previous_exit {
+            events.record(EventCode::PreviousExit, Some(&previous.code));
+        }
         Ok(Self {
             transport,
             actor: boot.authority,
             persistence,
-            credentials: credentials::Credentials::new(data.to_path_buf(), wake.clone())?,
+            credentials,
             native: None,
             plugin_admin: None,
             plugin_root: data.join("plugins"),
@@ -148,6 +163,9 @@ impl Server {
             _wake: wake,
             recovered_previous: boot.recovered_previous,
             previous_exit,
+            events,
+            connection_failures: Default::default(),
+            storage_seen: rad_authority::StorageState::Ready,
             reconciliation_attempted: false,
         })
     }
@@ -167,17 +185,17 @@ impl Server {
                 Err(TransportError::InvalidResponse) => {}
                 // Already answered or gone: nothing is left to answer.
                 Err(TransportError::UnknownRequest) => {
-                    crate::exit::contained("response_unknown_request");
+                    self.events.record(EventCode::ResponseUnknownRequest, None);
                     return Ok(());
                 }
                 Err(_) => return Err(RuntimeError::Transport),
             }
         }
-        crate::exit::contained("response_refused");
+        self.events.record(EventCode::ResponseRefused, None);
         let generic = self.generic_error(&response);
         let bytes = serde_json::to_vec(&generic).map_err(|_| RuntimeError::Protocol)?;
         if self.transport.finish(key, &bytes).is_err() {
-            crate::exit::contained("response_dropped");
+            self.events.record(EventCode::ResponseDropped, None);
         }
         Ok(())
     }
@@ -188,14 +206,96 @@ impl Server {
             Status::Error => refused.error.as_ref().and_then(|error| error.outcome),
             Status::Ok => None,
         };
+        self.failure(
+            refused.id.clone(),
+            rad_api::ErrorCode::ResourceExhausted,
+            outcome,
+        )
+    }
+    /// The answer to a request that Authority resolved. When none can be built (the view
+    /// it would carry is gone), the client still gets a generic error, and what the effect
+    /// says happened is not denied: only a rejection is "not applied".
+    fn response_or_generic(
+        &mut self,
+        found: Option<Response>,
+        context: IncomingContext,
+        effect: &Effect,
+    ) -> Response {
+        if let Some(response) = found {
+            return response;
+        }
+        self.events.record(EventCode::ResponseUnbuildable, None);
+        let outcome = match effect {
+            Effect::Rejected { .. } => Outcome::NotApplied,
+            _ => Outcome::Unknown,
+        };
+        self.failure(
+            Some(context.request_id.to_string()),
+            rad_api::ErrorCode::ResourceExhausted,
+            Some(outcome),
+        )
+    }
+    /// What a plugin answered, as the client's response. Data that does not decode is that
+    /// plugin's failure and that request's error, never the runtime's: a change that was
+    /// already submitted stays "unknown".
+    fn plugin_response(
+        &mut self,
+        context: IncomingContext,
+        operation: rad_api::Operation,
+        mutation: bool,
+        data: Value,
+    ) -> Response {
+        match rad_api::ResponseData::decode(operation, Status::Ok, data) {
+            Ok(data) => self.ok_response(context, data),
+            Err(_) => {
+                self.events.record(EventCode::PluginResponseInvalid, None);
+                self.failure(
+                    Some(context.request_id.to_string()),
+                    rad_api::ErrorCode::ExecutorUnavailable,
+                    mutation.then_some(Outcome::Unknown),
+                )
+            }
+        }
+    }
+    /// The launcher's catalog page as the client's response; a page that does not decode
+    /// is an error for this request only.
+    fn launcher_response(&mut self, context: IncomingContext, data: Value) -> Response {
+        match serde_json::from_value(data) {
+            Ok(page) => self.ok_response(context, rad_api::ResponseData::Launcher(page)),
+            Err(_) => {
+                self.events.record(EventCode::CatalogResponseInvalid, None);
+                self.failure(
+                    Some(context.request_id.to_string()),
+                    rad_api::ErrorCode::ServiceUnavailable,
+                    None,
+                )
+            }
+        }
+    }
+    fn ok_response(&self, context: IncomingContext, data: rad_api::ResponseData) -> Response {
         Response {
             v: 1,
-            id: refused.id.clone(),
+            id: Some(context.request_id.to_string()),
+            session_id: Some(format!("{:032x}", self.session)),
+            status: Status::Ok,
+            data,
+            error: None,
+        }
+    }
+    fn failure(
+        &self,
+        id: Option<String>,
+        code: rad_api::ErrorCode,
+        outcome: Option<Outcome>,
+    ) -> Response {
+        Response {
+            v: 1,
+            id,
             session_id: Some(format!("{:032x}", self.session)),
             status: Status::Error,
             data: rad_api::ResponseData::None,
             error: Some(Error {
-                code: rad_api::ErrorCode::ResourceExhausted,
+                code,
                 message: "Request rejected".into(),
                 details: json!({}),
                 outcome,
@@ -251,10 +351,13 @@ impl Server {
                     }
                     if let Some(mut target) = self.requests.remove(request) {
                         if !target.sent {
-                            let response = self
-                                .protocol
-                                .response_for(&self.actor, target.context, *request, &effect)
-                                .ok_or(RuntimeError::Protocol)?;
+                            let found = self.protocol.response_for(
+                                &self.actor,
+                                target.context,
+                                *request,
+                                &effect,
+                            );
+                            let response = self.response_or_generic(found, target.context, &effect);
                             self.respond(target.key, response)?;
                             target.sent = true;
                         }
@@ -291,7 +394,7 @@ impl Server {
                 }
                 Effect::DisplayClockOverflow => {
                     // The deck just does not go to sleep by itself; input still wakes it.
-                    crate::exit::contained("display_clock_overflow");
+                    self.events.record(EventCode::DisplayClockOverflow, None);
                 }
                 Effect::InputRejected { .. }
                 | Effect::CollectionFinished { .. }
@@ -302,7 +405,25 @@ impl Server {
                 | Effect::Collect { .. } => return Err(RuntimeError::Storage),
             }
         }
+        self.note_storage();
         Ok(())
+    }
+    /// Records a change of the storage state, whatever produced it.
+    fn note_storage(&mut self) {
+        use rad_authority::StorageState;
+        let now = self.actor.storage_state();
+        if now == self.storage_seen {
+            return;
+        }
+        self.storage_seen = now;
+        self.events.record(
+            match now {
+                StorageState::Ready => EventCode::StorageReady,
+                StorageState::Uncertain => EventCode::StorageUncertain,
+                StorageState::RecoveryRequired => EventCode::StorageRecoveryRequired,
+            },
+            None,
+        );
     }
     pub fn attach_deck_port(
         &mut self,
@@ -345,7 +466,7 @@ impl Server {
             Err(_) => {
                 // Contained: the runtime serves without a deck and says so, instead of ending.
                 self.deck_inaccessible = true;
-                crate::exit::contained("deck_spawn_failed");
+                self.events.record(EventCode::DeckSpawnFailed, None);
                 Ok(())
             }
         }
@@ -371,6 +492,7 @@ impl Server {
                 break;
             };
             let now = monotonic_ms().map_err(|_| RuntimeError::Clock)?;
+            let before = (self.deck_connected, self.deck_inaccessible);
             let effects = match event {
                 rad_deck::Event::Connected => {
                     self.deck_connected = true;
@@ -390,9 +512,28 @@ impl Server {
                 }
             }
             .map_err(|_| RuntimeError::Clock)?;
+            self.note_deck(before);
             self.effects(effects)?;
         }
         Ok(())
+    }
+    /// Records a change of what the deck is, not each report: a flapping cable costs one
+    /// event per change, and a repeated state none.
+    fn note_deck(&mut self, before: (bool, bool)) {
+        let after = (self.deck_connected, self.deck_inaccessible);
+        if after == before {
+            return;
+        }
+        self.events.record(
+            if self.deck_connected {
+                EventCode::DeckConnected
+            } else if self.deck_inaccessible {
+                EventCode::DeckInaccessible
+            } else {
+                EventCode::DeckDisconnected
+            },
+            None,
+        );
     }
     fn paint(&mut self) {
         if !self.display_dirty {
@@ -408,7 +549,9 @@ impl Server {
                 self.plugin_visuals.as_ref(),
             );
             if deck.set_desired(desired).is_err() {
+                let before = (self.deck_connected, self.deck_inaccessible);
                 self.deck_connected = false;
+                self.note_deck(before);
             }
         }
     }
@@ -462,15 +605,22 @@ impl Server {
                 &self.transport,
             );
         }
+        self.record_native_events();
+    }
+    /// Records what the launcher and the plugin host reported since the last call.
+    fn record_native_events(&mut self) {
+        if let Some(native) = &mut self.native {
+            self.events.record_all(native.take_events());
+        }
     }
     /// Pumps plugins and the launcher; `true` when that changed something (see `Native::pump`).
     fn pump_native(&mut self) -> Result<bool, RuntimeError> {
         let Some(native) = &mut self.native else {
             return Ok(false);
         };
-        let (effects, advanced) = native
-            .pump(&mut self.actor, &self.transport)
-            .map_err(|_| RuntimeError::Protocol)?;
+        let pumped = native.pump(&mut self.actor, &self.transport);
+        self.record_native_events();
+        let (effects, advanced) = pumped.map_err(|_| RuntimeError::Protocol)?;
         let produced = !effects.is_empty();
         self.effects(effects)?;
         Ok(advanced || produced)
@@ -546,15 +696,7 @@ impl Server {
                     .map_err(crate::plugin_admin::Rejection::from),
             };
             let response = match result {
-                Ok(data) => Response {
-                    v: 1,
-                    id: Some(context.request_id.to_string()),
-                    session_id: Some(format!("{:032x}", self.session)),
-                    status: Status::Ok,
-                    data: rad_api::ResponseData::decode(response_operation, Status::Ok, data)
-                        .map_err(|_| RuntimeError::Protocol)?,
-                    error: None,
-                },
+                Ok(data) => self.plugin_response(context, response_operation, mutation, data),
                 Err(rejection) => {
                     self.error_with_details(context, rejection.code, rejection.details, mutation)
                 }
@@ -577,16 +719,7 @@ impl Server {
             _ => Err("executor_unavailable"),
         };
         let response = match result {
-            Ok(data) => Response {
-                v: 1,
-                id: Some(context.request_id.to_string()),
-                session_id: Some(format!("{:032x}", self.session)),
-                status: Status::Ok,
-                data: rad_api::ResponseData::Launcher(
-                    serde_json::from_value(data).map_err(|_| RuntimeError::Protocol)?,
-                ),
-                error: None,
-            },
+            Ok(data) => self.launcher_response(context, data),
             Err(code) => self.error(context, code, false),
         };
         self.respond(key, response)
@@ -714,6 +847,14 @@ impl Server {
         self.transport
             .drive(monotonic_ms().map_err(|_| RuntimeError::Clock)?)
             .map_err(|_| RuntimeError::Transport)?;
+        let failures = self.transport.take_connection_failures();
+        if let Some(count) = self
+            .connection_failures
+            .note(failures, monotonic_ms().map_err(|_| RuntimeError::Clock)?)
+        {
+            self.events
+                .record(EventCode::ConnectionFailed, Some(&count.to_string()));
+        }
         let live: BTreeSet<_> = self.transport.connection_ids().collect();
         let lost: Vec<_> = self.connections.difference(&live).copied().collect();
         for connection in lost {
@@ -840,6 +981,7 @@ impl Server {
             return;
         }
         self.shutting_down = true;
+        self.events.record(EventCode::ShutdownRequested, None);
         self.credentials.shutdown();
         if let Some(admin) = &mut self.plugin_admin {
             admin.shutdown();
@@ -848,8 +990,9 @@ impl Server {
             deck.shutdown();
         }
         if let Some(native) = &mut self.native {
-            let _ = native.launcher.shutdown();
+            native.stop_launcher();
             native.shutdown_plugins();
+            self.record_native_events();
         }
     }
     pub fn shutdown_complete(&self) -> bool {

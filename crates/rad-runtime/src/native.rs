@@ -1,4 +1,6 @@
 //! One native helper, driven by the runtime's shared readiness wait.
+use crate::events::Occurrence;
+use rad_api::EventCode;
 use rad_authority::{Authority, Effect};
 use rad_core::execution::{Completion, Failure};
 use rad_launcher::{LaunchOutcome, Launcher, LauncherError, monotonic_ms};
@@ -15,6 +17,9 @@ pub struct Native {
     _exit: Option<OwnedFd>,
     writable: bool,
     plugin_io: PluginIo,
+    events: Vec<Occurrence>,
+    /// The launcher's end has been reported or was asked for: it is not reported (again).
+    launcher_settled: bool,
 }
 impl Native {
     pub fn attach(launcher: Launcher, transport: &Transport) -> Result<Self, LauncherError> {
@@ -50,6 +55,8 @@ impl Native {
             _exit: Some(exit),
             writable,
             plugin_io: Default::default(),
+            events: Vec::new(),
+            launcher_settled: false,
         })
     }
     pub fn route(
@@ -128,7 +135,7 @@ impl Native {
             && error != LauncherError::Capacity
         {
             // Do not release jobs merely on channel error. Reap proves helper loss.
-            let _ = self.launcher.shutdown();
+            self.lose_launcher();
         }
         while let Some((id, result)) = self.launcher.take_completion() {
             advanced = true;
@@ -150,24 +157,15 @@ impl Native {
         // Closing our reaped helper's pidfd removes its permanent exit readiness.
         if self.launcher.process_id().is_none() {
             self._exit.take();
+            // Gone without being asked to stop: the helper died on its own.
+            self.report_launcher_lost();
         }
-        let writable = self.launcher.needs_write();
-        if self.writable != writable {
-            let interest = if writable {
-                mio::Interest::READABLE | mio::Interest::WRITABLE
-            } else {
-                mio::Interest::READABLE
-            };
-            transport
-                .reregister_worker_io(
-                    &mut mio::unix::SourceFd(&self.launcher.as_fd().as_raw_fd()),
-                    interest,
-                )
-                .map_err(|_| LauncherError::Io)?;
-            self.writable = writable;
+        if self.follow_launcher_interest(transport).is_err() {
+            self.lose_launcher();
         }
         // A plugin retired for unregistrable descriptors is a binding change too.
-        self.plugin_io.sync(&mut self.plugins.host, transport);
+        self.plugin_io
+            .sync(&mut self.plugins.host, transport, &mut self.events);
         advanced |= self.binding_states() != bindings_before;
         Ok((output, advanced))
     }
@@ -181,7 +179,12 @@ struct PluginIo {
 impl PluginIo {
     /// Registers the descriptors that appeared since the last call. Whatever cannot be
     /// registered belongs to one plugin, so that plugin is retired and the rest go on.
-    fn sync(&mut self, host: &mut rad_plugin_host::Host, transport: &Transport) {
+    fn sync(
+        &mut self,
+        host: &mut rad_plugin_host::Host,
+        transport: &Transport,
+        events: &mut Vec<Occurrence>,
+    ) {
         let mut live = std::collections::BTreeSet::new();
         let mut failed = std::collections::BTreeSet::new();
         for (generation, fd, write) in host.io_sources() {
@@ -212,7 +215,7 @@ impl PluginIo {
                 .find(|(_, bound, _)| *bound == generation)
                 .map(|(manifest, ..)| manifest.id.clone());
             if let Some(id) = id {
-                crate::exit::contained("plugin_io_unregistrable");
+                events.push(Occurrence::new(EventCode::PluginIoUnregistrable, Some(&id)));
                 host.retire(&id);
             }
         }
@@ -220,6 +223,41 @@ impl PluginIo {
 }
 
 impl Native {
+    /// Keeps the helper socket's readiness interest in step with whether it has something to
+    /// write. A descriptor that cannot be re-registered cannot be waited on, so the caller
+    /// treats it as a lost helper.
+    fn follow_launcher_interest(&mut self, transport: &Transport) -> Result<(), LauncherError> {
+        let writable = self.launcher.needs_write();
+        if self.writable == writable {
+            return Ok(());
+        }
+        // Updated before the attempt: a failure is acted on once, not retried every pump.
+        self.writable = writable;
+        let interest = if writable {
+            mio::Interest::READABLE | mio::Interest::WRITABLE
+        } else {
+            mio::Interest::READABLE
+        };
+        transport
+            .reregister_worker_io(
+                &mut mio::unix::SourceFd(&self.launcher.as_fd().as_raw_fd()),
+                interest,
+            )
+            .map_err(|_| LauncherError::Io)
+    }
+    /// The helper can no longer be trusted: end it, and say so once. Its jobs finish through
+    /// the usual `HelperLost` path when the reap is observed.
+    fn lose_launcher(&mut self) {
+        self.report_launcher_lost();
+        let _ = self.launcher.shutdown();
+    }
+    fn report_launcher_lost(&mut self) {
+        if !self.launcher_settled {
+            self.launcher_settled = true;
+            self.events
+                .push(Occurrence::new(EventCode::LauncherLost, None));
+        }
+    }
     pub(crate) fn sync_credentials(
         &mut self,
         actor: &Authority,
@@ -227,7 +265,19 @@ impl Native {
         transport: &Transport,
     ) {
         self.plugins.sync_credentials(actor, extra);
-        self.plugin_io.sync(&mut self.plugins.host, transport);
+        self.plugin_io
+            .sync(&mut self.plugins.host, transport, &mut self.events);
+    }
+    /// What happened below the server since the last call, for it to record.
+    pub(crate) fn take_events(&mut self) -> Vec<Occurrence> {
+        let mut events = std::mem::take(&mut self.events);
+        events.append(&mut self.plugins.events);
+        events
+    }
+    /// The launcher is stopped on purpose (shutdown): its end is not a loss.
+    pub(crate) fn stop_launcher(&mut self) {
+        self.launcher_settled = true;
+        let _ = self.launcher.shutdown();
     }
     pub(crate) fn plugin_host_mut(&mut self) -> &mut rad_plugin_host::Host {
         &mut self.plugins.host
@@ -314,7 +364,15 @@ mod plugin_io_tests {
         };
         register(&host, broken).unwrap();
         let mut io = PluginIo::default();
-        io.sync(&mut host, &transport);
+        let mut events = Vec::new();
+        io.sync(&mut host, &transport, &mut events);
+        assert_eq!(
+            events,
+            [Occurrence::new(
+                rad_api::EventCode::PluginIoUnregistrable,
+                Some(BROKEN)
+            )]
+        );
         let end = Instant::now() + Duration::from_secs(5);
         let mut now = 0;
         while host.state(BROKEN) != Some(State::Reaped) {
@@ -329,7 +387,8 @@ mod plugin_io_tests {
             "the healthy plugin's descriptors are registered"
         );
         // Nothing more to do, and nothing fails, once the broken one is gone.
-        io.sync(&mut host, &transport);
+        io.sync(&mut host, &transport, &mut events);
+        assert_eq!(events.len(), 1, "a retired plugin is not reported again");
         host.shutdown();
         while host.resources().0 > 0 {
             assert!(Instant::now() < end);
@@ -338,5 +397,149 @@ mod plugin_io_tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         let _ = std::fs::remove_dir_all(&runtime);
+    }
+}
+
+#[cfg(all(test, feature = "fixture-tests"))]
+mod launcher_loss_tests {
+    use super::*;
+    use rad_api::EventCode;
+    use rad_core::configuration::Configuration;
+    use rad_core::identity::IdentityRegistry;
+    use std::{os::unix::fs::PermissionsExt, time::Duration};
+
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    /// The launcher adapter admits one live helper per process, and tests share a process.
+    static ONE_HELPER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    struct Fixture {
+        _helper: std::sync::MutexGuard<'static, ()>,
+        _directory: Directory,
+        transport: Transport,
+        other: Transport,
+        actor: Authority,
+        native: Native,
+    }
+    /// A real helper under a private environment, attached to `transport`; `other` is a
+    /// second transport the helper's descriptor is not registered with.
+    fn fixture(name: &str) -> Fixture {
+        let helper = ONE_HELPER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let directory = Directory(
+            std::env::temp_dir().join(format!("rad-launcher-loss-{name}-{}", std::process::id())),
+        );
+        for sub in [
+            "home", "data", "system", "config", "cache", "runtime", "other",
+        ] {
+            std::fs::create_dir_all(directory.0.join(sub)).unwrap();
+        }
+        for sub in ["runtime", "other"] {
+            std::fs::set_permissions(
+                directory.0.join(sub),
+                std::fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+        }
+        let mut command = std::process::Command::new(
+            std::env::var("RAD_TEST_LAUNCHER_HELPER").expect("runner builds the helper"),
+        );
+        command
+            .env_clear()
+            .env("HOME", directory.0.join("home"))
+            .env("XDG_DATA_HOME", directory.0.join("data"))
+            .env("XDG_DATA_DIRS", directory.0.join("system"))
+            .env("XDG_CONFIG_HOME", directory.0.join("config"))
+            .env("XDG_CACHE_HOME", directory.0.join("cache"))
+            .env("XDG_RUNTIME_DIR", directory.0.join("runtime"))
+            .env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                "unix:path=/nonexistent-rad-private-bus",
+            )
+            .env("PATH", "/nonexistent-rad-private-bin");
+        let transport = Transport::bind(&directory.0.join("runtime"), 31).unwrap();
+        let other = Transport::bind(&directory.0.join("other"), 32).unwrap();
+        let native = Native::attach(Launcher::spawn(command).unwrap(), &transport).unwrap();
+        let actor = Authority::new(
+            Configuration::prepare_new(&IdentityRegistry::new(9).unwrap()).unwrap(),
+            1,
+            std::num::NonZeroU128::new(33).unwrap(),
+        );
+        Fixture {
+            _helper: helper,
+            _directory: directory,
+            transport,
+            other,
+            actor,
+            native,
+        }
+    }
+    fn pump_until_gone(fixture: &mut Fixture, transport_of_other: bool) {
+        let end = Instant::now() + Duration::from_secs(5);
+        while fixture.native.launcher.process_id().is_some() {
+            assert!(Instant::now() < end, "the helper must be reaped");
+            let transport = if transport_of_other {
+                &fixture.other
+            } else {
+                &fixture.transport
+            };
+            fixture
+                .native
+                .pump(&mut fixture.actor, transport)
+                .expect("the launcher's end is not an error of the runtime");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        fixture
+            .native
+            .pump(&mut fixture.actor, &fixture.transport)
+            .unwrap();
+    }
+    fn lost(fixture: &mut Fixture) -> usize {
+        fixture
+            .native
+            .take_events()
+            .iter()
+            .filter(|event| event.code == EventCode::LauncherLost)
+            .count()
+    }
+
+    #[test]
+    fn a_helper_descriptor_that_cannot_be_reregistered_is_a_lost_launcher_not_a_runtime_error() {
+        let mut fixture = fixture("reregister");
+        // The helper wants to write, but this transport never saw its descriptor.
+        fixture.native.writable = !fixture.native.launcher.needs_write();
+        fixture
+            .native
+            .pump(&mut fixture.actor, &fixture.other)
+            .expect("contained: the launcher is shut down, the runtime goes on");
+        pump_until_gone(&mut fixture, true);
+        assert_eq!(lost(&mut fixture), 1);
+    }
+
+    #[test]
+    fn a_helper_that_dies_on_its_own_is_reported_lost_once() {
+        let mut fixture = fixture("killed");
+        let pid = fixture.native.launcher.process_id().unwrap();
+        // The helper is the child this test spawned.
+        assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGKILL) }, 0);
+        pump_until_gone(&mut fixture, false);
+        assert_eq!(lost(&mut fixture), 1);
+        fixture
+            .native
+            .pump(&mut fixture.actor, &fixture.transport)
+            .unwrap();
+        assert_eq!(lost(&mut fixture), 0, "reported once");
+    }
+
+    #[test]
+    fn a_helper_stopped_on_purpose_is_not_a_loss() {
+        let mut fixture = fixture("stopped");
+        fixture.native.stop_launcher();
+        pump_until_gone(&mut fixture, false);
+        assert_eq!(lost(&mut fixture), 0);
     }
 }

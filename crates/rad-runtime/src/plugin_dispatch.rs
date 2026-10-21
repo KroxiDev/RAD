@@ -14,6 +14,8 @@ pub(super) struct Plugins {
     end_budgets: BTreeMap<DispatchId, u64>,
     hold_ends: BTreeMap<(u64, u64), rad_core::execution::ExecutionId>,
     releasing: std::collections::BTreeSet<rad_core::execution::ExecutionId>,
+    /// Events for the server to record; taken by `Native::take_events`.
+    pub events: Vec<crate::events::Occurrence>,
 }
 impl Plugins {
     pub fn sync_credentials(
@@ -259,6 +261,10 @@ impl Plugins {
             self.observed.insert(m.id.clone(), (g, s));
             if matches!(s, State::Failed | State::Reaped) && !self.host.stopped_normally(&m.id) {
                 actor.plugin_failed(&m.id, g);
+                self.events.push(crate::events::Occurrence::new(
+                    rad_api::EventCode::PluginFailed,
+                    Some(&m.id),
+                ));
             }
         }
         let mut done = vec![];
@@ -866,7 +872,7 @@ mod hold_tests {
             )
             .unwrap();
         let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(942).unwrap());
-        let manifest:rad_plugin_contract::Manifest=serde_json::from_value(serde_json::json!({"contract":1,"capabilities":["controls"],"id":plugin,"version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[rad_plugin_host::TARGET],"actions":[{"id":"run","label":"Run","gestures":["hold"],"schema":{"version":1,"fields":[{"id":"mode","label":"Mode","required":true,"kind":{"type":"choice","options":["echo","end_fail"]}}]},"credential_slots":[]}],"visuals":[]})).unwrap();
+        let manifest:rad_plugin_contract::Manifest=serde_json::from_value(serde_json::json!({"contract":1,"capabilities":["controls"],"id":plugin,"version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[rad_plugin_host::TARGET],"actions":[{"id":"run","label":"Run","gestures":["hold"],"schema":{"version":1,"fields":[{"id":"mode","label":"Mode","required":true,"kind":{"type":"choice","options":["echo","end_fail","crash"]}}]},"credential_slots":[]}],"visuals":[]})).unwrap();
         actor
             .register_plugin(manifest, rad_plugin_host::TARGET)
             .unwrap();
@@ -918,6 +924,54 @@ mod hold_tests {
     #[test]
     fn ready_plugin_end_failure_updates_original_execution() {
         real_release("end_fail");
+    }
+    #[cfg(feature = "fixture-tests")]
+    #[test]
+    fn a_plugin_that_dies_on_its_own_is_an_event_with_its_id() {
+        use crate::events::Occurrence;
+        use std::time::{Duration, Instant};
+        let plugin = "org.rad.fixture";
+        let mut actor = fixture_mode(plugin, "echo");
+        let manifest = actor.plugin_manifests().next().unwrap().0.clone();
+        let mut plugins = Plugins::default();
+        let launch = plugins.host.reserve_launch(manifest.clone(), 0).unwrap();
+        let bin = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("rad-plugin-fixture-v1");
+        let mut prepared = Some(launch.spawn(std::process::Command::new(bin)));
+        let generation = plugins.host.attach(&mut prepared, 0).unwrap();
+        let end = Instant::now() + Duration::from_secs(3);
+        while plugins.host.state(plugin) != Some(State::Ready) {
+            assert!(Instant::now() < end);
+            plugins.pump(&mut actor, 0).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(plugins.events.is_empty());
+        let crash = serde_json::from_value(
+            serde_json::json!({"schema_version":1,"values":{"mode":"crash"}}),
+        )
+        .unwrap();
+        plugins
+            .host
+            .invoke(plugin, generation, "run", crash, 5000)
+            .unwrap();
+        while plugins.host.state(plugin) != Some(State::Reaped) {
+            assert!(Instant::now() < end, "the plugin must die");
+            plugins.pump(&mut actor, 1).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        plugins.pump(&mut actor, 2).unwrap();
+        assert_eq!(
+            plugins.events,
+            [Occurrence::new(
+                rad_api::EventCode::PluginFailed,
+                Some(plugin)
+            )]
+        );
     }
     #[cfg(feature = "fixture-tests")]
     fn real_release(mode: &str) {

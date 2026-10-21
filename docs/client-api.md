@@ -232,6 +232,43 @@ the Host's already sanitized, bounded stderr capture. It neither starts the plug
 nor changes logging; the response stays under 48 KiB including JSON escaping and
 envelope overhead. The editor exposes it under Settings → Advanced → Log.
 
+`runtime_log {}` is an editor-only read of the runtime's own recent events (ADR 0011),
+for Advanced → Log. It returns `{entries:[{seq, at_unix_ms, code, subject?}], dropped}`,
+oldest first, with every integer a decimal string. It is not a mutation and consumes
+nothing: asking again returns the same entries plus whatever happened since. Automation
+gets `permission_denied`.
+
+- The runtime keeps the last 128 events of this process; older ones are discarded and
+  counted in `dropped`. `seq` grows by one per event and is never reused, so a gap
+  between two reads means entries were dropped. A restart starts a new ring (what ended
+  the previous run is `previous_exit`).
+- `code` is a closed set of stable `snake_case` names, never prose; the editor words them.
+  `subject`, when present, is an identifier of at most 128 bytes (a plugin id, an exit
+  reason) and never data from a failure.
+- Events are state changes and contained failures, not traffic: none per request or per
+  key. Each one also leaves one line on stderr (journald), `rad-runtime: <code>[ <subject>]`.
+- At most 128 entries fit well inside 48 KiB.
+
+| Code | Subject | Meaning |
+|---|---|---|
+| `started` | | The runtime started serving. |
+| `previous_exit` | reason | The last run ended unexpectedly (`startup`, `storage`, `transport`, `clock`, `protocol`, `panic`). |
+| `shutdown_requested` | | A clean stop was asked for (SIGTERM or SIGINT). |
+| `deck_connected`, `deck_disconnected` | | The deck appeared or went away. |
+| `deck_inaccessible` | | The deck is present but cannot be used. |
+| `deck_spawn_failed` | | The deck could not be started; the runtime serves without it. |
+| `plugin_failed` | plugin id | A plugin ended without being asked to. |
+| `plugin_io_unregistrable` | plugin id | A plugin's pipes could not be watched; it was stopped. |
+| `launcher_lost` | | The launcher helper ended or could not be watched. |
+| `storage_uncertain`, `storage_recovery_required`, `storage_ready` | | The storage state changed. |
+| `display_clock_overflow` | | The deck's idle clock overflowed; it simply does not sleep by itself. |
+| `response_refused`, `response_unknown_request`, `response_dropped` | | An answer was too large or empty, its request was gone, or even the generic error could not be sent. |
+| `response_unbuildable` | | The answer to a resolved request could not be built; the client got a generic error, never "not applied" for a change. |
+| `plugin_response_invalid`, `catalog_response_invalid` | | A plugin or the launcher answered something that does not decode; that request got an error. |
+| `notice_dropped` | | A notice could not be queued; the next one recovers it. |
+| `connection_failed` | count | Connections that could not be taken in (closed, or left queued while the process is out of descriptors), reported at most once a minute with how many since the previous report. |
+| `export_failed` | | An export's snapshot could not be made; that export got an error and its lease went back. |
+
 Board and Overview notices invalidate independent views. The editor fetches only the
 invalidated view, while Board and Inspector still require matching revisions before
 being presented together.

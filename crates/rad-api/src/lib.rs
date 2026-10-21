@@ -10,6 +10,8 @@ mod notice;
 pub use notice::*;
 mod error;
 pub use error::*;
+mod runtime_log;
+pub use runtime_log::*;
 
 pub mod response;
 mod response_data;

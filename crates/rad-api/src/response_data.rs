@@ -258,6 +258,7 @@ pub enum ResponseData {
     PluginManifest(PluginManifestView),
     PluginSettings(PluginSettingsView),
     PluginLog(PluginLogView),
+    RuntimeLog(RuntimeLogView),
     Catalog(CatalogPage),
     Configuration(ConfigurationPage),
     Dependencies(DependenciesPage),
@@ -322,6 +323,7 @@ impl ResponseData {
             Operation::PluginManifest => decode!(PluginManifest),
             Operation::PluginSettings => decode!(PluginSettings),
             Operation::PluginLog => decode!(PluginLog),
+            Operation::RuntimeLog => decode!(RuntimeLog),
             Operation::PluginConfiguration => decode!(Configuration),
             Operation::PluginDependencies => decode!(Dependencies),
             Operation::Options => {
