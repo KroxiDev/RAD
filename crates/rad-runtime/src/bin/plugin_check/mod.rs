@@ -147,6 +147,20 @@ pub(super) fn children() -> Result<Vec<i32>> {
         .map(|s| s.parse().map_err(|_| "children_unobservable"))
         .collect()
 }
+/// Reaps, for at most one second, the already killed members of process group `pgid` that
+/// are this checker's children, so a later check sees only its own descendants.
+pub(super) fn reap_group(pgid: i32) {
+    let end = Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        let result = unsafe { libc::waitpid(-pgid, std::ptr::null_mut(), libc::WNOHANG) };
+        if result < 0 || Instant::now() >= end {
+            break;
+        };
+        if result == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+}
 impl Drop for Descendants {
     fn drop(&mut self) {
         let end = Instant::now() + std::time::Duration::from_secs(2);

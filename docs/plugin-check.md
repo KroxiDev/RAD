@@ -48,8 +48,10 @@ no cero. stderr contiene la advertencia de confianza; no imprimir credenciales.
 - `pressure`: índice cero basado de `actions`, `options` o `visuals`, con `kind`
   singular `action`, `options` o `visual`. Repite **únicamente** ese vector y exige
   consentimiento `safe_to_repeat: true`; jamás seleccionar una acción con efectos
-  reales para generar presión. Una fuente visual alterna alta/baja. La prueba
-  observa el cierre dentro de `timeout_ms`; no certifica un presupuesto universal
+  reales para generar presión. Una fuente visual alterna alta/baja. Antes de dejar
+  de leer, observa una respuesta del vector: el frame que el plugin no pudo escribir
+  puede ser esa respuesta, mayor que los ya encolados (por ejemplo, rechazos `busy`).
+  La prueba observa el cierre dentro de `timeout_ms`; no certifica un presupuesto universal
   de 50 ms ni el código de salida 74. Esa garantía de `run_stdio` del SDK se valida
   por separado con sus tests.
 - El checker inyecta una credencial sintética conocida por cada slot declarado;

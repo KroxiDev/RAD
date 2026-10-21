@@ -30,12 +30,46 @@ fn emit(e: Envelope) {
         }
     }
 }
+/// Bytes the host has not read yet from this fixture's output pipe.
+fn unread_output() -> usize {
+    let mut queued: libc::c_int = 0;
+    // SAFETY: FIONREAD writes one int for the pipe on fd 1.
+    if unsafe { libc::ioctl(1, libc::FIONREAD, &mut queued) } < 0 {
+        return 0;
+    }
+    queued as usize
+}
+/// The reply a slow option query sends when it finishes: larger than a `busy` refusal.
+fn large_choices() -> Message {
+    Message::Choices {
+        list: ChoiceList::Available {
+            options: (0..4)
+                .map(|i| ChoiceOption {
+                    value: format!("ok{i}"),
+                    label: "large ".repeat(16),
+                })
+                .collect(),
+        },
+    }
+}
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
     unsafe {
         libc::fcntl(0, libc::F_SETFL, libc::O_NONBLOCK);
         libc::fcntl(1, libc::F_SETFL, libc::O_NONBLOCK);
     }
+    // A child that lives until EOF, as a plugin's helper process does; it is ended on EOF.
+    let mut helper = (mode == "child-until-eof").then(|| {
+        std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap()
+    });
+    // One option query runs at a time, as in the SDK: the others are refused at once with a
+    // small `busy` reply while the running one finishes when the host waits for it or when the
+    // output can no longer take its larger reply.
+    let mut slow_query = None;
+    let mut last_input = Instant::now();
     let mut options = 0;
     let mut input = Vec::new();
     let mut subs = BTreeMap::new();
@@ -45,6 +79,10 @@ fn main() {
         let mut b = [0u8; 4096];
         match std::io::stdin().read(&mut b) {
             Ok(0) => {
+                if let Some(mut helper) = helper.take() {
+                    let _ = helper.kill();
+                    let _ = helper.wait();
+                }
                 if mode == "eof-stderr-leak" {
                     eprintln!("{secret}");
                 }
@@ -60,7 +98,10 @@ fn main() {
                 }
                 break;
             }
-            Ok(n) => input.extend_from_slice(&b[..n]),
+            Ok(n) => {
+                input.extend_from_slice(&b[..n]);
+                last_input = Instant::now();
+            }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
             Err(_) => break,
         }
@@ -99,6 +140,24 @@ fn main() {
                 Message::Invoke { .. } => Message::Result {
                     outcome: Outcome::Success,
                 },
+                Message::Options { .. } if mode == "late-large-reply" => {
+                    let Some(slow) = slow_query else {
+                        slow_query = Some(c);
+                        continue;
+                    };
+                    let large = Envelope {
+                        protocol: 1,
+                        correlation: slow,
+                        message: large_choices(),
+                    };
+                    if unread_output() + encode(&large).unwrap().len() > 4096 {
+                        // Its reply no longer fits, while a `busy` one still would.
+                        emit(large);
+                    }
+                    Message::Choices {
+                        list: ChoiceList::Unavailable,
+                    }
+                }
                 Message::Options { .. } => {
                     options += 1;
                     if options == 4 && mode == "blocked" {
@@ -168,6 +227,17 @@ fn main() {
                 protocol: 1,
                 correlation: c,
                 message: reply,
+            });
+        }
+        if let Some(slow) = slow_query
+            && last_input.elapsed() > Duration::from_millis(20)
+        {
+            // The host is waiting for this reply.
+            slow_query = None;
+            emit(Envelope {
+                protocol: 1,
+                correlation: slow,
+                message: large_choices(),
             });
         }
         if tick.elapsed() > Duration::from_millis(200) {
