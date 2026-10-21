@@ -56,4 +56,5 @@ pub mod dependencies;
 
 pub mod notices;
 pub mod schedule;
+pub mod service;
 pub mod texts;

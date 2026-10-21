@@ -4,6 +4,7 @@ use super::{
     look::{Icon, Look, icon_button, state_pill},
     string, tr,
 };
+use crate::service::Action;
 use eframe::egui;
 use serde_json::json;
 
@@ -67,15 +68,7 @@ impl App {
         });
         if self.attempted && !self.connected {
             ui.add_space(2.);
-            ui.horizontal(|ui| {
-                ui.colored_label(
-                    look.warn,
-                    tr(self.es, "RAD is not running. Start rad-runtime, then"),
-                );
-                if ui.add(look.primary(tr(self.es, "Reconnect"))).clicked() {
-                    self.reconnect(&ui.ctx().clone());
-                }
-            });
+            self.service_bar(ui, look);
         }
         let attention = crate::status::plugin_attention_states(&self.status);
         if self.connected && !attention.is_empty() {
@@ -94,6 +87,31 @@ impl App {
         if let Some(notice) = crate::status::recovery_notice(&self.status, self.es) {
             ui.colored_label(look.warn, notice);
         }
+    }
+    /// "Starting RAD…", or what stopped it with the way out (docs/ux.md); technical text
+    /// only under "View details".
+    fn service_bar(&mut self, ui: &mut egui::Ui, look: &Look) {
+        let Some(failure) = self.service_notice() else {
+            ui.colored_label(look.muted, tr(self.es, "Starting RAD…"));
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.colored_label(look.warn, tr(self.es, failure.kind.message()));
+            for action in failure.kind.actions() {
+                match action {
+                    Action::Retry => {
+                        if ui.add(look.primary(tr(self.es, "Retry"))).clicked() {
+                            self.retry_service(&ui.ctx().clone());
+                        }
+                    }
+                    Action::ViewDetails => {
+                        ui.collapsing(tr(self.es, "View details"), |ui| {
+                            ui.label(&failure.details);
+                        });
+                    }
+                }
+            }
+        });
     }
     pub(super) fn status_line(&self, ui: &mut egui::Ui, look: &Look) {
         ui.horizontal(|ui| {

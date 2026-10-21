@@ -94,11 +94,16 @@ you trust. See the [plugin author guide](plugins/README.md) for the SDK and prot
 
 ## Autostart
 
-[packaging/rad-runtime.service](packaging/rad-runtime.service) is an example
-systemd **user** unit. Adapt its executable path and install the runtime/helper
-together before enabling it with your user service manager. The example starts
-without hardware; add `--xl-exclusive` only after arranging exclusive ownership.
-Nothing is installed or enabled automatically.
+The editor installs and starts the runtime as a systemd **user** service: when the
+runtime does not answer, it writes the unit
+([packaging/rad-runtime.service](packaging/rad-runtime.service)) to
+`$XDG_CONFIG_HOME/systemd/user/` (or `~/.config/systemd/user/`) pointing at the
+`rad-runtime` beside the editor, rewrites it when a new version changes it, and
+starts it, with or without autostart. Keep `rad-runtime` and `rad-launcher-helper`
+together in that folder. The service starts without hardware; add `--xl-exclusive`
+only after arranging exclusive ownership, with a drop-in
+(`systemctl --user edit rad-runtime.service`). Starting with your computer will
+arrive as an editor setting.
 
 The unit restarts the runtime after unexpected failures (exit code 1 or a crash) with a
 growing delay, and stops after 5 starts in 5 minutes. It does not restart after a clean

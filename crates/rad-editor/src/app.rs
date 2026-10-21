@@ -20,12 +20,16 @@ mod inspector;
 mod look;
 mod options;
 mod plugins;
+mod service;
 mod settings;
 
 use look::Look;
 
 /// Pause after the last keystroke before the application list is searched again.
 const SEARCH_DEBOUNCE_MS: u64 = 250;
+
+/// Pause after starting the service so the runtime can open its socket before connecting.
+const SERVICE_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Duration a wait starts with when it is put on a key.
 const DEFAULT_WAIT_MS: u64 = 1000;
@@ -180,10 +184,19 @@ pub struct App {
     textures: std::collections::BTreeMap<String, egui::TextureHandle>,
     image_attempts: std::collections::BTreeSet<String>,
     plugins: plugins::PluginUi,
+    /// Owner of every call to systemd; absent where the editor must not touch the system.
+    service_worker: Option<Worker<crate::service::Job, crate::service::Outcome>>,
+    service: service::ServiceUi,
 }
 impl App {
     pub fn new(runtime: PathBuf, theme: PathBuf) -> Self {
-        Self::with_preferences_path(runtime, theme, crate::preferences::default_path())
+        let mut app =
+            Self::with_preferences_path(runtime, theme, crate::preferences::default_path());
+        app.service_worker = Some(crate::service::worker(
+            crate::service::user_service(),
+            SERVICE_SETTLE,
+        ));
+        app
     }
     fn with_preferences_path(
         runtime: PathBuf,
@@ -272,6 +285,8 @@ impl App {
             textures: Default::default(),
             image_attempts: Default::default(),
             plugins: Default::default(),
+            service_worker: None,
+            service: Default::default(),
         };
         if let Some(error) = preference_error {
             app.warn(tr(
@@ -344,7 +359,7 @@ impl App {
     /// The worker's thread ended. A job in flight has an unknown outcome: it is not repeated,
     /// whatever waited for its answer stops waiting, and the state is read again. A command
     /// that never left is said not to have been applied. Replacement is bounded; once the
-    /// limit is reached the bar offers Reconnect.
+    /// limit is reached the bar offers Retry.
     fn worker_lost(&mut self, ctx: &egui::Context, in_flight: bool, unsent: bool) {
         ctx.request_repaint();
         self.connected = false;
@@ -940,6 +955,7 @@ impl App {
             self.reconnect_needed = false;
             let _ = self.worker.submit(Job::Connect);
         }
+        self.pump_service(ctx);
         if !self.worker.busy() && self.connected {
             let now = self.now_ms();
             let next_image = self.board.as_ref().and_then(|b| {
@@ -1071,6 +1087,10 @@ impl eframe::App for App {
             let wake = ctx.clone();
             self.credential_worker
                 .set_waker(move || wake.request_repaint());
+            if let Some(service) = &self.service_worker {
+                let wake = ctx.clone();
+                service.set_waker(move || wake.request_repaint());
+            }
             let wake = ctx.clone();
             self.notices = Some(crate::notices::Notices::start(
                 self.runtime.clone(),

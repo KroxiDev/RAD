@@ -139,7 +139,7 @@ fn deaths_in_a_row_stop_being_replaced_and_leave_the_editor_disconnected() {
     assert_eq!(created.load(Ordering::SeqCst), 3, "no loop of replacements");
     assert!(!app.worker.busy());
     assert!(!app.connected);
-    assert!(app.attempted, "the bar offers Reconnect");
+    assert!(app.attempted, "the bar offers Retry");
 }
 
 #[test]

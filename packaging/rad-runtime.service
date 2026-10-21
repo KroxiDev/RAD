@@ -1,8 +1,10 @@
-# Example USER unit; not installed/enabled by this repository.
-# Install the runtime and rad-launcher-helper beside one another at this path.
+# USER unit that the RAD editor installs and starts (ADR 0012). The editor writes it to
+# $XDG_CONFIG_HOME/systemd/user/ and sets ExecStart= to the rad-runtime beside the editor;
+# it rewrites the file when a new version of RAD changes this template, so edit nothing here.
 # Default: NO physical device. For explicit human opt-in ONLY, after closing
-# StreamController and disabling its auto-restart, override ExecStart to append
-# --xl-exclusive. Do not enable both controllers or infer exclusive handoff.
+# StreamController and disabling its auto-restart, add --xl-exclusive in a drop-in
+# (systemctl --user edit rad-runtime.service). Do not enable both controllers or infer
+# exclusive handoff.
 [Unit]
 Description=RAD local action deck authority
 # Restart without loops (ADR 0011): at most 5 starts in 5 minutes, then the unit stays

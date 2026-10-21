@@ -97,11 +97,16 @@ La [guía para autores](plugins/README.md) explica el SDK y el protocolo.
 
 ## Arranque automático
 
-[packaging/rad-runtime.service](packaging/rad-runtime.service) es una unidad
-systemd **de usuario** de ejemplo. Adapta la ruta del ejecutable e instala juntos
-runtime/helper antes de habilitarla con tu gestor de servicios de usuario. El
-ejemplo arranca sin hardware; añade `--xl-exclusive` solo después de asegurar
-el control exclusivo. Nada se instala ni habilita automáticamente.
+El editor instala y arranca el runtime como servicio systemd **de usuario**: si el
+runtime no responde, escribe la unidad
+([packaging/rad-runtime.service](packaging/rad-runtime.service)) en
+`$XDG_CONFIG_HOME/systemd/user/` (o `~/.config/systemd/user/`) apuntando al
+`rad-runtime` que está junto al editor, la reescribe si una versión nueva la cambia
+y la arranca, con o sin inicio automático. Mantén `rad-runtime` y
+`rad-launcher-helper` juntos en esa carpeta. El servicio arranca sin hardware;
+añade `--xl-exclusive` solo después de asegurar el control exclusivo, con un
+*drop-in* (`systemctl --user edit rad-runtime.service`). Habilitar el inicio con
+el equipo vendrá como un ajuste del editor.
 
 La unidad reinicia el runtime tras un fallo inesperado (código de salida 1 o una
 caída) con una espera creciente, y se detiene tras 5 arranques en 5 minutos. No lo
