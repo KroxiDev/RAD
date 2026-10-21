@@ -184,9 +184,18 @@ distinguen esos fixtures del ejecutable de producto y no certifican hardware rea
   una cuota por categoría.
 - **Pruebas:** tras los avisos, ningún trabajo de fondo queda postergado.
 
-## Fase 3 · Operación y robustez
+## Fase 3 · Operación y robustez — hecha (2ac29f9)
 
-B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
+Salidas clasificadas, modo recuperación y unidad de usuario con reinicio acotado;
+el editor instala y arranca el servicio, y «Usar el Stream Deck con RAD» reemplaza
+a `--xl-exclusive`. El deck se busca por VID/PID y serie en cualquier puerto; los
+plugins y sus descendientes terminan con el runtime y cada aplicación corre en su
+propio scope.
+
+Validación completa en serie de ambos workspaces y las tres conformidades
+superada, sin hardware ni ventanas. Sin verificar con el XL, systemd ni la GUI
+reales. Parte de B2 tuvo una validación mínima y queda por endurecer; los límites
+conocidos están en la [PR #1](https://github.com/KroxiDev/RAD/pull/1).
 
 ### B1 · El deck está fijado al puerto USB 1-5 — hecho (cff2593)
 
@@ -286,7 +295,7 @@ UX4 y UX8. Con la fase 3: UX5.
 | UX2 | Copiar o mover una tecla exige escribir el ID de una carpeta (`inspector.rs:610–636`) | Selector de carpeta por nombre, o arrastrar y soltar |
 | UX3 | Los permisos de automatización aparecen en cada tecla y en Ajustes (`inspector.rs:598–608`; `crates/rad-editor/src/app/settings.rs:49–50`) | «Avanzado → Automatización», ocultos salvo que se activen |
 | UX4 — hecho (379bee2) | Estados y mensajes técnicos, y códigos en bruto (`crates/rad-editor/src/app/plugins.rs:76–100`; `crates/rad-editor/src/status.rs:23,103,132`) | Los cuatro estados de plugin, mensajes con acción y resolución automática |
-| UX5 | Poner en marcha RAD exige la terminal (`crates/rad-editor/src/app/bar.rs:77–78`; `README.md:53,61,93`) | Servicio gestionado por el editor (B2) |
+| UX5 — hecho (ad92e89, bb1f667) | Poner en marcha RAD exige la terminal (`crates/rad-editor/src/app/bar.rs:77–78`; `README.md:53,61,93`) | Servicio gestionado por el editor (B2) |
 | UX6 | El progreso se muestra en bytes (`crates/rad-editor/src/app.rs:618`) | Barra de progreso |
 | UX7 | Instalar un plugin exige pegar un enlace, también para los oficiales, y actualizar lo vuelve a pedir | Lista de oficiales y actualización desde el origen registrado |
 | UX8 — hecho (379bee2) | Unos 200 pares de traducción escritos en el código (`crates/rad-editor/src/app.rs:111`) | Catálogos por idioma |

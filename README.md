@@ -56,7 +56,7 @@ target/release/rad-editor   # terminal 2
 
 Keep `rad-launcher-helper` beside `rad-runtime`. The runtime starts without the
 deck and takes it when "Use the Stream Deck with RAD" is turned on in the editor's
-settings (arriving in this same PR).
+settings.
 
 Never run two deck controllers together. RAD does not read or modify data of other
 applications. Closing the editor leaves the runtime running; Ctrl+C
