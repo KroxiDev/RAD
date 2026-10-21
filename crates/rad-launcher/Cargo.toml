@@ -22,6 +22,11 @@ name = "rad-launcher-fixture"
 path = "tests/support/fixture.rs"
 required-features = ["fixture-tests"]
 
+[[bin]]
+name = "rad-launcher-fake-systemd"
+path = "tests/support/systemd.rs"
+required-features = ["fixture-tests"]
+
 [[test]]
 name = "launcher"
 path = "tests/launcher.rs"

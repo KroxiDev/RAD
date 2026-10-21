@@ -9,9 +9,13 @@ Description=RAD local action deck authority
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/rad-runtime
-# Signal only the authority: it drains accepted work and reaps its helper.
-# Applications launched by GIO are not shutdown targets.
-KillMode=process
+# SIGTERM goes only to the authority, which drains accepted work and shuts down
+# in order. Afterwards systemd kills whatever remains in the service cgroup:
+# plugins and their daemonized descendants, also after a crash. Applications
+# launched from the deck are not in that cgroup: the launcher helper moves each
+# one to its own transient scope (app-rad-*.scope), as GNOME and KDE do.
+# Without systemd's user manager the applications stay in this cgroup.
+KillMode=mixed
 KillSignal=SIGTERM
 Restart=no
 TimeoutStopSec=30
