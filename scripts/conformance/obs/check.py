@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Private D4 integration; only own processes, ephemeral TCP and temporary AF_UNIX."""
-import json, os, queue, select, signal, subprocess, sys, threading, time
+import json, os, queue, re, select, signal, subprocess, sys, threading, time
 from pathlib import Path
+
+EVENT=re.compile(r'rad-runtime: [a-z_]+( \S+)?')
 
 def equal(label, actual, expected):
     assert actual == expected, (label, actual, expected)
@@ -80,7 +82,9 @@ class World:
                 p.terminate()
                 try:p.wait(timeout=8)
                 except subprocess.TimeoutExpired:p.kill();p.wait(timeout=3)
-            error=p.stderr.read()
+            # The runtime's event lines (`rad-runtime: <code>[ <subject>]`, ADR 0011) are its
+            # journal; anything else on stderr is a failure.
+            error=[l for l in p.stderr.read().splitlines() if not EVENT.fullmatch(l)]
             assert not error, ('child stderr',error)
 
 def parameters(**values):return dict(schema_version=1,values=values)
