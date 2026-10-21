@@ -54,15 +54,12 @@ target/release/rad-runtime  # terminal 1: no hardware by default
 target/release/rad-editor   # terminal 2
 ```
 
-Keep `rad-launcher-helper` beside `rad-runtime`. To take control of the XL,
-first close StreamController and prevent its automatic restart, then start:
+Keep `rad-launcher-helper` beside `rad-runtime`. The runtime starts without the
+deck and takes it when "Use the Stream Deck with RAD" is turned on in the editor's
+settings (arriving in this same PR).
 
-```bash
-target/release/rad-runtime --xl-exclusive
-```
-
-Never run two deck controllers together. RAD does not import or modify
-StreamController data. Closing the editor leaves the runtime running; Ctrl+C
+Never run two deck controllers together. RAD does not read or modify data of other
+applications. Closing the editor leaves the runtime running; Ctrl+C
 in the runtime's terminal requests shutdown.
 
 Data lives in `$XDG_DATA_HOME/rad` or `~/.local/share/rad`; local sockets live
@@ -100,9 +97,8 @@ runtime does not answer, it writes the unit
 `$XDG_CONFIG_HOME/systemd/user/` (or `~/.config/systemd/user/`) pointing at the
 `rad-runtime` beside the editor, rewrites it when a new version changes it, and
 starts it, with or without autostart. Keep `rad-runtime` and `rad-launcher-helper`
-together in that folder. The service starts without hardware; add `--xl-exclusive`
-only after arranging exclusive ownership, with a drop-in
-(`systemctl --user edit rad-runtime.service`). Starting with your computer will
+together in that folder. The service starts without the deck; using it is a
+machine setting changed from the editor. Starting with your computer will
 arrive as an editor setting.
 
 The unit restarts the runtime after unexpected failures (exit code 1 or a crash) with a

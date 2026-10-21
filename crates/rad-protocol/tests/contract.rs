@@ -2029,3 +2029,32 @@ fn recovery_operations_are_not_served_in_normal_mode() {
         assert_eq!(error.outcome.is_some(), mutation, "{op}");
     }
 }
+
+#[test]
+fn machine_settings_operations_are_announced_to_the_editor_and_never_to_automation() {
+    for (origin, announced) in [(Origin::Editor, true), (Origin::Automation, false)] {
+        let value = serde_json::to_vec(&json!({"v":1,"id":"1","op":"hello","args":{}})).unwrap();
+        let mut bytes = (value.len() as u32).to_be_bytes().to_vec();
+        bytes.extend(value);
+        let request = rad_wire::Session::default()
+            .accept(rad_wire::read_frame(&bytes).unwrap().unwrap())
+            .unwrap();
+        let hello = response(Protocol::new(NonZeroU128::new(7).unwrap()).handle(
+            &mut actor(),
+            IncomingContext {
+                request_id: 1,
+                connection: 4,
+                origin,
+            },
+            &request,
+        ));
+        let capabilities = serde_json::to_value(&hello.data).unwrap()["capabilities"].clone();
+        for operation in ["machine_settings", "set_machine_settings"] {
+            assert_eq!(
+                capabilities.as_array().unwrap().contains(&json!(operation)),
+                announced,
+                "{origin:?} {operation}"
+            );
+        }
+    }
+}

@@ -24,7 +24,7 @@ fn run() -> Result<(), Exit> {
         .map_err(|_| Exit::Blocking("argumentos inválidos; use --help"))?;
     if options.help {
         println!(
-            "rad-runtime [--xl-exclusive]\nSin hardware por defecto.\n--xl-exclusive: requiere StreamController cerrado y su auto-restart deshabilitado."
+            "rad-runtime [--help]\nEl Stream Deck se usa cuando está activo «Usar el Stream Deck con RAD» en el editor."
         );
         return Ok(());
     }
@@ -57,7 +57,7 @@ fn run() -> Result<(), Exit> {
     if data_verified {
         exit::install_panic_record(paths.data.clone());
     }
-    serve(&options, &paths, signals, bound, data_verified).inspect_err(|exit| {
+    serve(&paths, signals, bound, data_verified).inspect_err(|exit| {
         if data_verified && let Some(reason) = exit.reason() {
             let _ = exit::record(&paths.data, reason, exit::now_unix_ms());
         }
@@ -72,7 +72,6 @@ enum Mode {
 }
 
 fn serve(
-    options: &Options,
     paths: &Paths,
     signals: ShutdownSignals,
     bound: Bound,
@@ -91,7 +90,7 @@ fn serve(
         }
         Opened::Serving(mut server) => {
             server.register_worker_io(&mut mio::unix::SourceFd(&fd), mio::Interest::READABLE)?;
-            attach(&mut server, options, paths)?;
+            attach(&mut server, paths)?;
             Mode::Serving(server)
         }
     };
@@ -121,7 +120,7 @@ fn serve(
                 unreachable!("checked above")
             };
             let mut server = Box::new(recovery.into_server()?);
-            attach(&mut server, options, paths)?;
+            attach(&mut server, paths)?;
             mode = Mode::Serving(server);
             // The requests queued behind the restart belong to the server: no sleeping.
             continue;
@@ -136,8 +135,9 @@ fn serve(
     }
 }
 
-/// What only the normal runtime has: the launcher helper and, on request, the deck.
-fn attach(server: &mut Server, options: &Options, paths: &Paths) -> Result<(), Exit> {
+/// What only the normal runtime has: the launcher helper and the deck, which the server
+/// opens only while «Usar el Stream Deck con RAD» is on.
+fn attach(server: &mut Server, paths: &Paths) -> Result<(), Exit> {
     let startup = |message| Exit::Unexpected(Reason::Startup, message);
     if server.recovered_previous {
         eprintln!(
@@ -148,11 +148,7 @@ fn attach(server: &mut Server, options: &Options, paths: &Paths) -> Result<(), E
     let launcher = rad_launcher::Launcher::spawn(helper_command(&paths.helper))
         .map_err(|_| startup("no se pudo iniciar rad-launcher-helper hermano del runtime"))?;
     server.attach_launcher(launcher)?;
-    if options.xl_exclusive {
-        eprintln!(
-            "rad-runtime: --xl-exclusive: requiere StreamController CERRADO y auto-restart DESHABILITADO; no se detienen otros controladores automáticamente."
-        );
-        server.attach_hardware(rad_deck::DeviceConfig::xl_after_exclusive_handoff())?;
-    }
+    // Whether the deck is opened is the machine setting's decision, taken by the server.
+    server.attach_hardware(rad_deck::DeviceConfig::xl())?;
     Ok(())
 }

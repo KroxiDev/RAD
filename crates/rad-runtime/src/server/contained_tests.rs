@@ -69,7 +69,21 @@ fn a_display_clock_overflow_does_not_end_the_runtime_nor_put_the_deck_to_sleep()
 
 #[test]
 fn a_deck_that_cannot_start_leaves_the_runtime_serving_with_an_inaccessible_deck() {
-    let (_root, mut server) = runtime("deck", 902);
+    let (root, server) = runtime("deck", 902);
+    // The user asked for the deck: the setting is on.
+    crate::machine_settings::MachineSettings {
+        use_stream_deck: true,
+        start_with_session: false,
+    }
+    .save(&root.0.join("data"))
+    .unwrap();
+    drop(server);
+    let mut server = Server::new(
+        &root.0,
+        &root.0.join("data"),
+        NonZeroU128::new(902).unwrap(),
+    )
+    .unwrap();
     server
         .attach_deck_with(|_, _| Err(rad_deck::DeckError::Unavailable))
         .unwrap();

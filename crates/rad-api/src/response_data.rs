@@ -11,6 +11,11 @@ macro_rules! dto {
     }
 }
 dto!(Empty {});
+// What this machine is set to do (ADR 0005, 0006); never part of a copy of the configuration.
+dto!(MachineSettingsView {
+    use_stream_deck: bool,
+    start_with_session: bool
+});
 dto!(Applied {
     changed: bool,
     revision: String
@@ -260,6 +265,7 @@ pub enum ResponseData {
     PluginLog(PluginLogView),
     RuntimeLog(RuntimeLogView),
     Recovery(RecoveryView),
+    MachineSettings(MachineSettingsView),
     Catalog(CatalogPage),
     Configuration(ConfigurationPage),
     Dependencies(DependenciesPage),
@@ -326,6 +332,9 @@ impl ResponseData {
             Operation::PluginLog => decode!(PluginLog),
             Operation::RuntimeLog => decode!(RuntimeLog),
             Operation::Recovery => decode!(Recovery),
+            Operation::MachineSettings | Operation::SetMachineSettings => {
+                decode!(MachineSettings)
+            }
             Operation::PluginConfiguration => decode!(Configuration),
             Operation::PluginDependencies => decode!(Dependencies),
             Operation::Options => {

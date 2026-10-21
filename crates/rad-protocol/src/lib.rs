@@ -545,6 +545,8 @@ impl Protocol {
                 "plugin_retry",
                 "plugin_log",
                 "runtime_log",
+                "machine_settings",
+                "set_machine_settings",
                 "plugin_dependencies",
                 "plugin_manifest",
                 "plugin_settings",

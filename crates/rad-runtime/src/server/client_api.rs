@@ -97,18 +97,28 @@ impl Server {
     ) -> Result<bool, RuntimeError> {
         if !matches!(
             r.operation(),
-            "overview" | "subscribe" | "board" | "runtime_log"
+            "overview"
+                | "subscribe"
+                | "board"
+                | "runtime_log"
+                | "machine_settings"
+                | "set_machine_settings"
         ) {
             return Ok(false);
         }
+        // A refused change says so: a mutation's error always carries its outcome.
+        let mutation = rad_api::Operation::parse(r.operation()).is_some_and(|o| o.is_mutation());
         if c.origin != Origin::Editor {
-            self.respond(key, self.error(c, "permission_denied", false))?;
+            self.respond(key, self.error(c, "permission_denied", mutation))?;
             return Ok(true);
         }
         let request = rad_api::Request::parse(r.operation(), Value::Object(r.args().clone()));
         let data:Result<rad_api::ResponseData,&'static str>=match request {
             Ok(rad_api::Request::Overview{})=>Ok(rad_api::ResponseData::Overview(self.overview())),
             Ok(rad_api::Request::RuntimeLog{})=>Ok(rad_api::ResponseData::RuntimeLog(self.events.view())),
+            Ok(rad_api::Request::MachineSettings{})=>Ok(self.machine_settings_data()),
+            Ok(rad_api::Request::SetMachineSettings{use_stream_deck,start_with_session})=>
+                self.set_machine_settings(use_stream_deck,start_with_session)?,
             Ok(rad_api::Request::Subscribe{})=>{
                 // A peer that left meanwhile has nothing to subscribe: its answer finds no request.
                 if self.transport.subscribe(c.connection){self.notices.subscribers.insert(c.connection);}
@@ -142,7 +152,7 @@ impl Server {
                     response
                 }
             }
-            Err(code) => self.error(c, code, false),
+            Err(code) => self.error(c, code, mutation),
         };
         self.respond(key, response)?;
         if r.operation() == "subscribe" && self.notices.subscribers.contains(&c.connection) {
@@ -151,6 +161,39 @@ impl Server {
             }
         }
         Ok(true)
+    }
+    fn machine_settings_data(&self) -> rad_api::ResponseData {
+        rad_api::ResponseData::MachineSettings(rad_api::MachineSettingsView {
+            use_stream_deck: self.machine.use_stream_deck,
+            start_with_session: self.machine.start_with_session,
+        })
+    }
+    /// Stores first and applies after: a change that could not be stored changes nothing.
+    /// Only `use_stream_deck` acts on the runtime; `start_with_session` is applied by the
+    /// editor, which owns the service unit.
+    fn set_machine_settings(
+        &mut self,
+        use_stream_deck: Option<bool>,
+        start_with_session: Option<bool>,
+    ) -> Result<Result<rad_api::ResponseData, &'static str>, RuntimeError> {
+        if use_stream_deck.is_none() && start_with_session.is_none() {
+            return Ok(Err("invalid_request"));
+        }
+        let current = self.machine;
+        let next = crate::machine_settings::MachineSettings {
+            use_stream_deck: use_stream_deck.unwrap_or(current.use_stream_deck),
+            start_with_session: start_with_session.unwrap_or(current.start_with_session),
+        };
+        if next != current {
+            if next.save(&self.data_dir).is_err() {
+                return Ok(Err("storage_error"));
+            }
+            self.machine = next;
+            if next.use_stream_deck != current.use_stream_deck {
+                self.apply_deck_setting(next.use_stream_deck)?;
+            }
+        }
+        Ok(Ok(self.machine_settings_data()))
     }
     pub(super) fn send_notice(
         &mut self,

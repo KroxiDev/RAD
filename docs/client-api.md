@@ -298,9 +298,20 @@ gets `permission_denied`.
 | `plugin_response_invalid`, `catalog_response_invalid` | | A plugin or the launcher answered something that does not decode; that request got an error. |
 | `notice_dropped` | | A notice could not be queued; the next one recovers it. |
 | `connection_failed` | count | Connections that could not be taken in (closed, or left queued while the process is out of descriptors), reported at most once a minute with how many since the previous report. |
+| `machine_settings_unreadable` | | `machine.json` could not be read; defaults are in use and the file is left untouched. |
 | `export_failed` | | An export's snapshot could not be made; that export got an error and its lease went back. |
 | `recovery_mode` | cause | The runtime could not open the configuration and entered recovery mode (`unreadable`, `newer_version`, `unsafe_folder`). |
 | `recovery_reset` | | «Empezar de nuevo» finished; the runtime went on in normal mode. |
+
+`machine_settings {}` is an editor-only read of the machine's own options (ADR 0005,
+0006): `{use_stream_deck, start_with_session}`, both booleans. They never travel in
+copies of the configuration. `set_machine_settings {use_stream_deck?, start_with_session?}`
+changes them and answers `ok` (not `applied`: it is no configuration revision) with the
+resulting view; no field at all is `invalid_request`, and a value equal to the current
+one writes nothing. The change is stored first: if that fails the answer is
+`storage_error` with `outcome: not_applied` and nothing changes. `use_stream_deck` then
+takes or lets go of the deck without restarting the runtime; `start_with_session` is only
+stored, the editor applies it. Automation gets `permission_denied` on both.
 
 Board and Overview notices invalidate independent views. The editor fetches only the
 invalidated view, while Board and Inspector still require matching revisions before

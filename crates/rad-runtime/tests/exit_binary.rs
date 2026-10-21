@@ -83,6 +83,9 @@ fn blocking_conditions_exit_75_and_leave_no_record() {
     let sandbox = Sandbox::new("blocking");
     let (code, _) = exit_code(sandbox.command().arg("--unknown"));
     assert_eq!(code, Some(75));
+    // The deck is a setting of the machine now, not an argument.
+    let (code, _) = exit_code(sandbox.command().arg("--xl-exclusive"));
+    assert_eq!(code, Some(75));
     // A runtime directory open to others, and one behind a symlink.
     fs::set_permissions(sandbox.runtime(), fs::Permissions::from_mode(0o755)).unwrap();
     let (code, stderr) = exit_code(&mut sandbox.command());

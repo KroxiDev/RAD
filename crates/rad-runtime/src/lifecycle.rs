@@ -1,7 +1,6 @@
 //! Process entry policy; no authority, storage or device logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Options {
-    pub xl_exclusive: bool,
     pub help: bool,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +17,6 @@ impl Options {
         let mut options = Self::default();
         for arg in args {
             match arg.to_str() {
-                Some("--xl-exclusive") if !options.xl_exclusive => options.xl_exclusive = true,
                 Some("--help") if !options.help => options.help = true,
                 _ => return Err(LifecycleError::Arguments),
             }

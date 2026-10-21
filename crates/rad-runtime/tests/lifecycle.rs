@@ -1,27 +1,21 @@
 use rad_runtime::lifecycle::{LifecycleError, Options};
 #[test]
-fn physical_hardware_is_explicit_opt_in_and_unknown_arguments_are_rejected() {
-    assert_eq!(
-        Options::parse([]).unwrap(),
-        Options {
-            xl_exclusive: false,
-            help: false
-        }
-    );
-    assert!(
-        Options::parse(["--xl-exclusive".into()])
-            .unwrap()
-            .xl_exclusive
-    );
+fn the_deck_is_no_command_line_option_and_unknown_arguments_are_rejected() {
+    // The user's consent is a setting of the machine (ADR 0006), never an argument.
+    assert_eq!(Options::parse([]).unwrap(), Options::default());
     assert!(Options::parse(["--help".into()]).unwrap().help);
-    assert_eq!(
-        Options::parse(["--device".into()]),
-        Err(LifecycleError::Arguments)
-    );
-    assert_eq!(
-        Options::parse(["--xl-exclusive".into(), "--xl-exclusive".into()]),
-        Err(LifecycleError::Arguments)
-    );
+    for arguments in [
+        vec!["--xl-exclusive"],
+        vec!["--device"],
+        vec!["--help", "--help"],
+        vec!["--help", "--xl-exclusive"],
+    ] {
+        assert_eq!(
+            Options::parse(arguments.iter().map(Into::into)),
+            Err(LifecycleError::Arguments),
+            "{arguments:?}"
+        );
+    }
 }
 
 #[test]
@@ -207,7 +201,9 @@ fn binary_help_and_invalid_environment_never_start_runtime() {
         .output()
         .unwrap();
     assert!(help.status.success());
-    assert!(String::from_utf8_lossy(&help.stdout).contains("--xl-exclusive"));
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(!help.contains("--xl-exclusive"), "{help}");
+    assert!(help.contains("Usar el Stream Deck con RAD"), "{help}");
     let invalid = std::process::Command::new(binary)
         .env_clear()
         .output()
