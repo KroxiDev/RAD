@@ -284,10 +284,102 @@ conocidos están en la [PR #1](https://github.com/KroxiDev/RAD/pull/1).
   administrativo, avance de reloj y completion).
 - **Pruebas:** secuencias intercaladas con los tests actuales de ciclo de vida.
 
+## Fase 3.5 · Escritorio y pantallas
+
+Cambios puntuales pedidos por el usuario tras probar el editor (2026-10-21), antes de
+la fase 4. Lo visual se valida con el usuario: cada pantalla se le muestra y se ajusta
+con lo que diga. E1–E3 son independientes de E4–E5.
+
+### E1 · Ícono de RAD
+
+- **Hoy:** RAD no tiene ícono, y la ventana toma como app_id el nombre que eframe
+  recibe (`crates/rad-editor/src/main.rs:17`).
+- **Cambio:** un solo archivo fuente del ícono en `packaging/`, del que salen la
+  ventana, el menú de aplicaciones y la bandeja; app_id explícito y estable. Ícono
+  provisional: la K del perfil de GitHub del autor, hasta que el usuario elija el
+  definitivo, que se cambia reemplazando solo ese archivo. Revisarlo a 16–24 px: si
+  el fondo negro estorba, usar la K recortada sobre fondo transparente.
+- **Pruebas:** el ícono embebido se decodifica en los tamaños usados; la entrada del
+  menú y el app_id coinciden.
+
+### E2 · RAD en el menú de aplicaciones
+
+- **Hoy:** solo se abre desde la terminal.
+- **Decisión:** ADR 0016. Propuesta: el editor instala la entrada (`.desktop`) y el
+  ícono en `~/.local/share/` con el mismo criterio que la unidad
+  ([ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md)): cuando faltan, y los
+  reescribe si una versión nueva los cambia, apuntando al editor en uso. La primera
+  vez se abre desde la carpeta de RAD; el README lo explica.
+- **Pruebas:** contra un HOME temporal, instala, no reescribe sin cambios y reescribe
+  cuando cambian; la entrada es válida y apunta al editor.
+
+### E3 · Ícono en la bandeja mientras RAD corre
+
+- **Comportamiento:** el ícono está mientras RAD corre, con o sin el editor abierto;
+  en Omarchy queda en el grupo de la flecha de Waybar, como Discord. Clic: abre el
+  editor, o lo trae al frente si ya está abierto, sin abrir otro. Menú: «Abrir RAD» y
+  «Salir de RAD»; salir detiene el servicio con una parada limpia, que no se reinicia:
+  RAD vuelve al abrir el editor o al iniciar sesión si el autoinicio está activo. Un
+  escritorio sin bandeja no muestra el ícono y RAD funciona igual.
+- **Decisión:** ADR 0016, que añade el proceso y su fila en [Capas](architecture.md#capas).
+  Propuesta: un proceso aparte, `rad-tray`, cliente como el editor, sin ventana ni
+  GPU; vive mientras vive el servicio y muere con él. Habla con la bandeja por el
+  D-Bus de la sesión (StatusNotifierItem y su menú) con `gio`, que ya está en el
+  workspace, sin dependencias nuevas. Quedan descartados el runtime, que no lleva
+  escritorio ni GIO (por eso existe `rad-launcher-helper`), y un editor residente,
+  que mantendría la GUI en memoria y no estaría tras un autoinicio.
+- **Pruebas:** con un bus D-Bus privado y una bandeja falsa: registro, nuevo registro
+  cuando la bandeja aparece después, clic que abre el editor con un lanzador falso y
+  un segundo clic que no abre otro, «Salir» que pide la parada con un systemctl
+  falso, y fin del proceso con el servicio.
+
+### E4 · Pantallas dentro de la ventana principal
+
+- **Hoy:** Ajustes (`crates/rad-editor/src/app/settings.rs:29`) y el formulario de un
+  plugin (`crates/rad-editor/src/app/plugins.rs:926`) son ventanas flotantes dentro
+  de la ventana del editor; Ajustes tiene 440 px de ancho fijo y no se puede mover ni
+  redimensionar.
+- **Cambio:** la ventana principal cambia de pantalla: teclas ↔ Ajustes, con sus
+  secciones, «Volver» y Esc. Cada pantalla ocupa la ventana y se adapta a su tamaño.
+  Los ajustes de un plugin se abren en la pantalla de Plugins y los parámetros de una
+  acción en el panel de la tecla. No quedan ventanas flotantes; la pantalla de
+  recuperación ya ocupa la ventana.
+- **Pruebas:** la navegación entre pantallas en lógica pura (abrir, volver, Esc, y
+  qué pasa con un formulario sin aplicar); capturas sin ventana para que el usuario
+  las revise.
+
+### E5 · Pantalla de Plugins para 6–8 o más
+
+- **Hoy:** la lista va en páginas de 8 dentro de la ventana de 440 px, con un 70 % de
+  alto y scroll; los controles dependen de seleccionar un plugin; instalar exige pegar
+  un enlace, también para los oficiales, y el progreso se muestra en bytes
+  (`crates/rad-editor/src/app/plugins.rs:319–442,656–830`; `app.rs:961`).
+- **Cambio:** absorbe UX6 y UX7. Propuesta, a ajustar después de verla: lista a la
+  izquierda con nombre, estado (los cuatro de [ux.md](ux.md)) y versión; a la
+  derecha, el plugin elegido con su acción (Reintentar, Escribir la contraseña,
+  Actualizar), sus ajustes, Quitar y Ver detalles. «Añadir plugin» muestra los
+  oficiales (audio, multimedia, OBS, métricas) con un botón cada uno, y uno de
+  terceros se añade pegando su enlace. Las descargas muestran una barra de progreso.
+  Cómo se obtiene la versión vigente de cada oficial se decide al diseñar; hoy son
+  releases por etiqueta en `KroxiDev/rad-plugins`.
+- **Pruebas:** con 8 y con 32 plugins sintéticos todos se alcanzan; instalar un
+  oficial envía su origen; la barra avanza de 0 a 100 con un downloader falso.
+
+### E6 · Limpieza
+
+- **Local — hecho (2026-10-21):** 61 restos de las fases 1 y 2 en `target/`
+  (registros, pruebas y builds de publicación; 1,3 GB) a la papelera. Se conservan la
+  caché de compilación, `target/plugins`, `target/conformance` y `target/tmp`.
+- **Repo:** quitar el skill `completar-contrato` (`.agentic/skills/completar-contrato.md`,
+  `.claude/commands/completar-contrato.md` y su mención en `.agentic/README.md`):
+  completa los `[PENDIENTE]` de AGENTS.md y no queda ninguno. Rehacer las capturas
+  de `docs/images/` después de E4 y E5. Lo demás versionado está en uso: fixtures
+  golden, conformidades y avisos de licencias de los plugins.
+
 ## Fase UX · En paralelo
 
-Norma: [ux.md](ux.md). Sobre la API actual: UX1, UX2, UX3, UX6 y UX7. Con la fase 2:
-UX4 y UX8. Con la fase 3: UX5.
+Norma: [ux.md](ux.md). Sobre la API actual: UX1, UX2 y UX3. Con la fase 2: UX4 y
+UX8. Con la fase 3: UX5. UX6 y UX7 pasan a la fase 3.5 (E5).
 
 | Ítem | Hoy | Cambio |
 |---|---|---|
@@ -296,8 +388,8 @@ UX4 y UX8. Con la fase 3: UX5.
 | UX3 | Los permisos de automatización aparecen en cada tecla y en Ajustes (`inspector.rs:598–608`; `crates/rad-editor/src/app/settings.rs:49–50`) | «Avanzado → Automatización», ocultos salvo que se activen |
 | UX4 — hecho (379bee2) | Estados y mensajes técnicos, y códigos en bruto (`crates/rad-editor/src/app/plugins.rs:76–100`; `crates/rad-editor/src/status.rs:23,103,132`) | Los cuatro estados de plugin, mensajes con acción y resolución automática |
 | UX5 — hecho (ad92e89, bb1f667) | Poner en marcha RAD exige la terminal (`crates/rad-editor/src/app/bar.rs:77–78`; `README.md:53,61,93`) | Servicio gestionado por el editor (B2) |
-| UX6 | El progreso se muestra en bytes (`crates/rad-editor/src/app.rs:618`) | Barra de progreso |
-| UX7 | Instalar un plugin exige pegar un enlace, también para los oficiales, y actualizar lo vuelve a pedir | Lista de oficiales y actualización desde el origen registrado |
+| UX6 → fase 3.5 (E5) | El progreso se muestra en bytes (`crates/rad-editor/src/app.rs:618`) | Barra de progreso |
+| UX7 → fase 3.5 (E5) | Instalar un plugin exige pegar un enlace, también para los oficiales, y actualizar lo vuelve a pedir | Lista de oficiales y actualización desde el origen registrado |
 | UX8 — hecho (379bee2) | Unos 200 pares de traducción escritos en el código (`crates/rad-editor/src/app.rs:111`) | Catálogos por idioma |
 
 ## Fase 4 · Medición
@@ -346,6 +438,7 @@ Casos que se conservan, o se añaden si falta cobertura.
 | SDK y salida | Salida parcial o sin lector, concurrencia máxima sin cola creciente, baja y cierre, validez vencida en el host, fuente sana sin cambios, renovación sin carga |
 | Operación | Clases de salida, tope de reinicios, modo recuperación, plugins e hijos que mueren con el runtime, aplicaciones que sobreviven en su scope, servicio instalado y arrancado sin autoinicio |
 | Dispositivo | Detección por VID/PID en cualquier puerto, ausencia y reconexión, rejilla desde el modelo |
+| Escritorio | Entrada del menú e ícono instalados y reescritos solo si cambian; bandeja registrada también cuando aparece tarde; un solo editor abierto; «Salir» con parada limpia; ninguna ventana flotante |
 | Capas | Test de arquitectura contra la tabla y sus invariantes |
 | Audio, Media, OBS, Metrics | `pactl` colgado o con flood, con kill y reap; bus privado y epochs; backpressure y sin replay; CPU y RAM sin NVML y lector terminal |
 | Instalación y paquetes | Configuración conservada al desinstalar y reinstalar, journal y reinicio, confianza explícita, cambio de origen, actualización desde el origen registrado, framing, límites y EOF |
