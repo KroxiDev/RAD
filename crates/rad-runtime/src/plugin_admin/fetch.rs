@@ -14,6 +14,7 @@ enum Stage {
     Downloading {
         request: PluginAdmin,
         thread: thread::JoinHandle<()>,
+        ended: crate::thread_end::Ended,
         done: mpsc::Receiver<Fetched>,
     },
     Done {
@@ -43,7 +44,7 @@ impl Fetcher {
     /// False once no download thread is left running.
     pub fn stopped(&self) -> bool {
         match &self.stage {
-            Some(Stage::Downloading { thread, .. }) => thread.is_finished(),
+            Some(Stage::Downloading { ended, .. }) => ended.get(),
             _ => true,
         }
     }
@@ -73,11 +74,12 @@ impl Fetcher {
         let (tx, done) = mpsc::sync_channel(1);
         let (download, wake, cancel) = (self.download.clone(), self.wake.clone(), cancel.clone());
         let url = request.source.clone().unwrap_or_default();
+        // Also when the downloader panics: `collect` then reports the lost result.
+        let (end, ended) = crate::thread_end::end_signal(move || wake());
         let thread = thread::Builder::new()
             .name("rad-plugin-fetch".into())
             .spawn(move || {
-                // Also when the downloader panics: `collect` then reports the lost result.
-                let _wake_on_exit = WakeOnExit(wake);
+                let _end = end;
                 let fetched = {
                     // A panicking downloader poisons the lock; the next fetch still runs.
                     let download = download.lock().unwrap_or_else(|e| e.into_inner());
@@ -98,6 +100,7 @@ impl Fetcher {
         self.stage = Some(Stage::Downloading {
             request,
             thread,
+            ended,
             done,
         });
         Ok(())

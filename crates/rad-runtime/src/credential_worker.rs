@@ -35,14 +35,9 @@ pub(crate) struct Worker {
     tx: Option<mpsc::SyncSender<Task>>,
     rx: mpsc::Receiver<Event>,
     thread: thread::JoinHandle<()>,
+    ended: crate::thread_end::Ended,
     busy: bool,
     pub state: Option<State>,
-}
-struct WakeOnExit(Arc<mio::Waker>);
-impl Drop for WakeOnExit {
-    fn drop(&mut self) {
-        let _ = self.0.wake();
-    }
 }
 impl Worker {
     #[cfg(test)]
@@ -58,6 +53,7 @@ impl Worker {
                 tx: Some(tx),
                 rx,
                 thread,
+                ended: crate::thread_end::Ended::already(),
                 busy: false,
                 state: Some(State::Ready),
             },
@@ -69,10 +65,14 @@ impl Worker {
     pub fn spawn(root: PathBuf, wake: Arc<mio::Waker>) -> Result<Self, Error> {
         let (tx, tasks) = mpsc::sync_channel::<Task>(1);
         let (results, rx) = mpsc::sync_channel(1);
+        let exit_wake = wake.clone();
+        let (end, ended) = crate::thread_end::end_signal(move || {
+            let _ = exit_wake.wake();
+        });
         let thread = thread::Builder::new()
             .name("rad-credentials".into())
             .spawn(move || {
-                let _wake_on_exit = WakeOnExit(wake.clone());
+                let _end = end;
                 let mut vault = Vault::open(&root);
                 let state = vault.as_ref().map_or(State::Unknown, Vault::state);
                 if results.send(Event::Opened(state)).is_err() {
@@ -179,6 +179,7 @@ impl Worker {
             tx: Some(tx),
             rx,
             thread,
+            ended,
             busy: false,
             state: None,
         })
@@ -226,7 +227,7 @@ impl Worker {
         self.tx.take();
     }
     pub fn stopped(&self) -> bool {
-        self.thread.is_finished()
+        self.ended.get()
     }
 }
 
@@ -246,6 +247,7 @@ mod tests {
             tx: Some(tx),
             rx,
             thread,
+            ended: crate::thread_end::Ended::already(),
             busy: true,
             state: Some(State::Ready),
         };
@@ -311,5 +313,36 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
         assert_eq!(done.state, State::Ready);
         assert_eq!(done.result, Some(Ok(Status::Absent)));
+    }
+    /// A loop woken by the worker's end must already read it as stopped: otherwise it
+    /// goes back to sleep and shutdown never completes (no further wake comes).
+    #[test]
+    fn a_loop_woken_by_the_worker_end_always_sees_it_stopped() {
+        use std::time::Duration;
+        let root = std::env::temp_dir().join(format!("rad-vault-end-{}", std::process::id()));
+        for round in 0..300 {
+            let mut poll = mio::Poll::new().unwrap();
+            let mut events = mio::Events::with_capacity(4);
+            // The runtime keeps its waker for its whole life: a waker dropped with the
+            // thread would close its descriptor and take the pending event with it.
+            let wake = Arc::new(mio::Waker::new(poll.registry(), mio::Token(92)).unwrap());
+            let mut worker = Worker::spawn(root.clone(), wake.clone()).unwrap();
+            while worker.poll().is_none() {
+                thread::yield_now();
+            }
+            worker.shutdown();
+            loop {
+                poll.poll(&mut events, Some(Duration::from_secs(2)))
+                    .unwrap();
+                assert!(
+                    !events.is_empty(),
+                    "round {round}: woken for the end, read as running, never woken again"
+                );
+                if worker.stopped() {
+                    break;
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -20,3 +20,5 @@ mod credential_worker;
 pub mod machine_settings;
 
 mod private_file;
+
+mod thread_end;

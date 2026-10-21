@@ -97,15 +97,6 @@ impl From<&'static str> for Rejection {
         }
     }
 }
-/// Wakes the runtime loop when a thread ends, normally or by panic: `stopped()`
-/// reads `is_finished`, which no readiness source reports, so a loop asleep in
-/// `wait` would otherwise never check shutdown completion again.
-struct WakeOnExit(Arc<dyn Fn() + Send + Sync>);
-impl Drop for WakeOnExit {
-    fn drop(&mut self) {
-        (self.0)();
-    }
-}
 /// Observable state of the administrator and the host bindings, compared around `poll`.
 #[derive(PartialEq)]
 struct ProgressMark {
@@ -125,7 +116,7 @@ struct ProgressMark {
 pub(crate) struct Admin {
     tx: mpsc::SyncSender<Job>,
     rx: mpsc::Receiver<Reply>,
-    worker: Option<thread::JoinHandle<()>>,
+    worker_ended: crate::thread_end::Ended,
     fetcher: fetch::Fetcher,
     unsent: Option<Job>,
     state: AdminState,
@@ -151,18 +142,22 @@ impl Admin {
         let (results, rx) = mpsc::sync_channel(1);
         let cancel = rad_plugin_manager::Cancellation::default();
         let worker_wake = wake.clone();
-        let worker = thread::Builder::new()
+        let exit_wake = wake.clone();
+        // A failed spawn drops the guard with the closure: the worker reads as ended.
+        let (end, worker_ended) = crate::thread_end::end_signal(move || exit_wake());
+        let spawned = thread::Builder::new()
             .name("rad-plugin-admin".into())
             .spawn(move || {
-                let _wake_on_exit = WakeOnExit(worker_wake.clone());
+                let _end = end;
                 worker::run(root, jobs, results, worker_wake)
             })
-            .ok();
-        let failed = worker.is_none();
+            .is_ok();
+        // The thread is detached: `worker_ended`, not a join, tells when it is gone.
+        let failed = !spawned;
         Self {
             tx,
             rx,
-            worker,
+            worker_ended,
             fetcher: fetch::Fetcher::new(wake, download),
             unsent: None,
             state: if failed {
@@ -616,7 +611,7 @@ impl Admin {
         self.cancel.cancel();
     }
     pub fn stopped(&self) -> bool {
-        self.worker.as_ref().is_none_or(|w| w.is_finished()) && self.fetcher.stopped()
+        self.worker_ended.get() && self.fetcher.stopped()
     }
 }
 fn diagnostic_code(d: rad_plugin_host::Diagnostic) -> &'static str {
@@ -720,6 +715,42 @@ mod tests {
         let after = wakes.load(Ordering::SeqCst);
         std::fs::remove_dir_all(root).unwrap();
         assert!(after > before, "the ended worker never woke the loop");
+    }
+    /// A loop woken by the worker's end must already read the admin as stopped.
+    #[test]
+    fn a_loop_woken_by_the_admin_end_always_sees_it_stopped() {
+        let root = std::env::temp_dir().join(format!("rad-admin-end-{}", std::process::id()));
+        let c = Configuration::prepare_new(&IdentityRegistry::new(505).unwrap()).unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(507).unwrap());
+        let mut host = Host::default();
+        for round in 0..300 {
+            let (woken, wakes) = mpsc::channel();
+            let mut admin = Admin::new(
+                root.clone(),
+                Arc::new(move || {
+                    let _ = woken.send(());
+                }),
+                Box::new(|_, _| Ok(vec![])),
+            );
+            while admin.busy {
+                admin.poll(&mut actor, &mut host, 0);
+                thread::yield_now();
+            }
+            admin.shutdown();
+            while !admin.stop_sent {
+                admin.poll(&mut actor, &mut host, 0);
+            }
+            loop {
+                assert!(
+                    wakes.recv_timeout(Duration::from_secs(2)).is_ok(),
+                    "round {round}: woken for the end, read as running, never woken again"
+                );
+                if admin.stopped() {
+                    break;
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(root);
     }
     #[test]
     fn a_panicking_download_still_wakes_the_loop() {
@@ -1538,8 +1569,11 @@ mod repair_tests {
     fn finish(mut admin: Admin, root: PathBuf) {
         admin.shutdown();
         admin.send(Job::Stop);
-        if let Some(worker) = admin.worker.take() {
-            worker.join().unwrap();
+        // The end is published after the worker dropped its store: the files are free.
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !admin.stopped() {
+            assert!(std::time::Instant::now() < end, "admin worker did not end");
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         std::fs::remove_dir_all(root).unwrap();
     }

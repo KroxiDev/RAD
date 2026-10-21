@@ -25,7 +25,7 @@ fn unconfirmed_and_uncertain_keep_barrier_credit_but_confirmed_not_applied_relea
         let mut admin = Admin {
             tx,
             rx,
-            worker: None,
+            worker_ended: crate::thread_end::Ended::already(),
             fetcher: fetch::Fetcher::new(Arc::new(|| {}), Box::new(|_, _| panic!("no download"))),
             unsent: None,
             state: AdminState::Preparing,
@@ -166,7 +166,7 @@ fn startup_publication_wait_is_retained_and_retried_next_turn() {
     let mut admin = Admin {
         tx,
         rx,
-        worker: None,
+        worker_ended: crate::thread_end::Ended::already(),
         fetcher: fetch::Fetcher::new(Arc::new(|| {}), Box::new(|_, _| panic!("no download"))),
         unsent: None,
         state: AdminState::Idle,
@@ -335,7 +335,7 @@ fn startup_registers_plugin_and_rejects_only_buttons_with_incompatible_configura
     let mut admin = Admin {
         tx,
         rx,
-        worker: None,
+        worker_ended: crate::thread_end::Ended::already(),
         fetcher: fetch::Fetcher::new(Arc::new(|| {}), Box::new(|_, _| panic!("no download"))),
         unsent: None,
         state: AdminState::Idle,
