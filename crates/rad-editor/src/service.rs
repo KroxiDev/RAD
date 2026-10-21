@@ -420,6 +420,8 @@ pub enum Job {
     Retry,
     /// Say why RAD does not answer.
     Inspect,
+    /// Enable or disable starting RAD with the user's session; never starts it.
+    SetAutostart(bool),
 }
 #[derive(Debug, PartialEq, Eq)]
 pub struct Outcome {
@@ -447,6 +449,7 @@ pub fn worker<S: Systemctl>(
                 }
                 started.err()
             }
+            (Ok(service), Job::SetAutostart(enabled)) => service.set_autostart(enabled).err(),
             (Ok(service), Job::Inspect) => service.failure().or_else(|| {
                 Some(Failure::could_not_start(
                     "the unit is running but RAD did not answer",

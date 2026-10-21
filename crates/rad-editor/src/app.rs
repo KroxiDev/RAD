@@ -18,8 +18,10 @@ mod credentials;
 mod deck;
 mod inspector;
 mod look;
+mod machine;
 mod options;
 mod plugins;
+mod recovery;
 mod service;
 mod settings;
 
@@ -187,6 +189,17 @@ pub struct App {
     /// Owner of every call to systemd; absent where the editor must not touch the system.
     service_worker: Option<Worker<crate::service::Job, crate::service::Outcome>>,
     service: service::ServiceUi,
+    /// What the runtime says this computer is set to do; absent until it has answered.
+    machine: Option<crate::machine::Settings>,
+    machine_due: bool,
+    /// A change waiting for systemd to enable or disable starting RAD with the session.
+    machine_pending: Option<crate::machine::Change>,
+    recovery: crate::recovery::Mode,
+    recovery_due: bool,
+    recovery_reset_confirm: bool,
+    /// The previous exit the user has already seen: its code and time.
+    previous_exit_seen: Option<(String, String)>,
+    runtime_log: Option<rad_api::RuntimeLogView>,
 }
 impl App {
     pub fn new(runtime: PathBuf, theme: PathBuf) -> Self {
@@ -287,6 +300,14 @@ impl App {
             plugins: Default::default(),
             service_worker: None,
             service: Default::default(),
+            machine: None,
+            machine_due: false,
+            machine_pending: None,
+            recovery: Default::default(),
+            recovery_due: false,
+            recovery_reset_confirm: false,
+            previous_exit_seen: None,
+            runtime_log: None,
         };
         if let Some(error) = preference_error {
             app.warn(tr(
@@ -535,6 +556,10 @@ impl App {
                 self.connected = false;
             }
             for kind in changed {
+                // Nothing is read while the runtime is in recovery mode: it would refuse.
+                if !self.recovery.is_normal() {
+                    break;
+                }
                 match kind {
                     rad_api::NoticeKind::Board => {
                         self.force = true;
@@ -615,6 +640,11 @@ impl App {
                     self.accept_plugin_visuals(ctx, &revision, visuals);
                 }
                 Err(e) => {
+                    // The runtime did not explain: nothing is retried until something changes.
+                    self.recovery_due = false;
+                    if matches!(self.recovery, crate::recovery::Mode::Asking) {
+                        self.recovery = Default::default();
+                    }
                     if connection_lost {
                         self.reconnect_needed = true;
                         self.force = true;
@@ -701,7 +731,12 @@ impl App {
                         self.connected = false;
                     }
                 }
+                Ok(Reply::RecoveryRequired) => self.enter_recovery(),
                 Ok(Reply::Connected) => {
+                    self.recovery = Default::default();
+                    self.recovery_due = false;
+                    self.machine = None;
+                    self.machine_due = true;
                     self.plugins.reconnect();
                     self.credentials.clear();
                     self.attempted = true;
@@ -853,6 +888,11 @@ impl App {
                         }
                         return;
                     }
+                    if self.recovery_response(&operation, &r)
+                        || self.machine_response(&operation, &r)
+                    {
+                        return;
+                    }
                     if operation == "restore_commit" && self.plugins.restore_result(r.status) {
                         self.credentials.clear();
                         self.settings_open = true;
@@ -973,14 +1013,17 @@ impl App {
                     ))
                 })
             });
+            let normal = self.recovery.is_normal();
             match self.schedule.choose([
-                self.force || self.overview_due,
-                self.result_due && self.control.result_request().is_some(),
+                normal && (self.force || self.overview_due),
+                normal && self.result_due && self.control.result_request().is_some(),
                 self.transfer_active,
-                self.inspect_needed,
-                self.catalog_due.is_some_and(|due| now >= due),
-                self.plugins.has_work(),
-                next_image.is_some(),
+                normal && self.inspect_needed,
+                normal && self.catalog_due.is_some_and(|due| now >= due),
+                normal && self.plugins.has_work(),
+                normal && next_image.is_some(),
+                normal && self.machine_due,
+                self.recovery_due,
             ]) {
                 Some(0) => {
                     let force = std::mem::take(&mut self.force);
@@ -1025,6 +1068,16 @@ impl App {
                         revision,
                     });
                 }
+                Some(7) => {
+                    self.machine_due = false;
+                    let _ = self
+                        .worker
+                        .submit(Job::Request(Request::MachineSettings {}));
+                }
+                Some(8) => {
+                    self.recovery_due = false;
+                    let _ = self.worker.submit(Job::Request(Request::Recovery {}));
+                }
                 _ => {}
             }
         }
@@ -1032,6 +1085,16 @@ impl App {
             Look::new(&self.palette).apply(ctx);
             self.styled = Some(self.palette.clone());
         }
+    }
+    /// Work waiting for the worker that a repaint must start.
+    fn reads_due(&self) -> bool {
+        self.force
+            || self.overview_due
+            || self.inspect_needed
+            || self.transfer_active
+            || self.plugins.has_work()
+            || self.catalog_due.is_some_and(|due| self.now_ms() >= due)
+            || (self.result_due && self.control.result_request().is_some())
     }
     /// Results of the credential and option-list workers; a dead one is replaced, within
     /// the same bound as the main worker.
@@ -1060,7 +1123,11 @@ impl App {
     }
     /// Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) reach the runtime unless a text field wants them.
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        if !self.connected || self.credentials.editing() || ctx.egui_wants_keyboard_input() {
+        if !self.connected
+            || !self.recovery.is_normal()
+            || self.credentials.editing()
+            || ctx.egui_wants_keyboard_input()
+        {
             return;
         }
         use egui::{Key, Modifiers};
@@ -1113,6 +1180,10 @@ impl eframe::App for App {
         // Background polling must not gate the controls: disabling them every poll made
         // the panels blink and took keyboard focus away from their text fields.
         let editable = self.connected && !self.transfer_active;
+        if !self.recovery.is_normal() {
+            self.recovery_view(ui, &look);
+            return;
+        }
         egui::Panel::top("bar")
             .frame(look.panel(look.surface, 10))
             .show(ui, |ui| self.bar(ui, &look));
@@ -1157,16 +1228,7 @@ impl eframe::App for App {
         self.settings_window(&ctx, &look);
         self.plugin_form_window(&ctx);
         deck::drag_ghost(&ctx, &look);
-        if self.connected
-            && !self.worker.busy()
-            && (self.force
-                || self.overview_due
-                || self.inspect_needed
-                || self.transfer_active
-                || self.plugins.has_work()
-                || self.catalog_due.is_some_and(|due| self.now_ms() >= due)
-                || (self.result_due && self.control.result_request().is_some()))
-        {
+        if self.connected && !self.worker.busy() && (self.machine_due || self.reads_due()) {
             ctx.request_repaint();
         }
     }

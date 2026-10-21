@@ -31,6 +31,7 @@ impl App {
             Polled::Ready(outcome) => self.service_done(ctx, outcome),
             Polled::Failed { .. } | Polled::Closed { .. } => {
                 self.service_worker = None;
+                self.machine_pending = None;
                 self.service.waiting = false;
                 self.service.failure = Some(Failure {
                     kind: FailureKind::CouldNotStart,
@@ -80,6 +81,9 @@ impl App {
     }
     fn service_done(&mut self, ctx: &egui::Context, outcome: Outcome) {
         ctx.request_repaint();
+        if matches!(outcome.job, Job::SetAutostart(_)) {
+            return self.machine_autostart_done(outcome.failure);
+        }
         match outcome.failure {
             Some(failure) => {
                 self.service.failure = Some(failure);
