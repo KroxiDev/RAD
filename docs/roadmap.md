@@ -226,7 +226,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   con un fixture que ignora el EOF, al matar el runtime no queda el plugin; la
   creación del scope de una aplicación, contra un systemd falso.
 
-### B4 · Una actualización puede llegar de otro origen sin aviso
+### B4 · Una actualización puede llegar de otro origen sin aviso — hecho (18a36f3)
 
 - **Evidencia:** `crates/rad-plugin-manager/src/store.rs:253–255`.
 - **Decisión:** [ADR 0009](adr/0009-confianza-en-plugins.md).
