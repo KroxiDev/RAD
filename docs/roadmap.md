@@ -216,7 +216,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   instala la unidad y la arranca con el autoinicio desactivado; el autoinicio solo la
   habilita.
 
-### B3 · Los plugins y sus descendientes no mueren con el runtime
+### B3 · Los plugins y sus descendientes no mueren con el runtime — hecho (eeb1c4b, 8c93228)
 
 - **Evidencia:** `configure_command` no usa `PR_SET_PDEATHSIG` ni grupo de procesos
   (`crates/rad-plugin-host/src/worker.rs:143`); la unidad usa `KillMode=process`
