@@ -243,7 +243,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   forma acotada, sin bucles.
 - **Pruebas:** un worker sintético que hace panic tras aceptar un trabajo.
 
-### B6 · Preparar un plugin retrasa el arranque en frío de otro
+### B6 · Preparar un plugin retrasa el arranque en frío de otro — hecho (ccba93a)
 
 - **Evidencia:** el worker administrativo queda `busy` durante la preparación, que
   incluye una descarga de hasta 600 s, y el mismo worker hace los Spawn
