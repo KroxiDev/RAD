@@ -200,7 +200,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
 - **Resultado:** con varios XL conectados se usa el de menor número de serie (decisión
   del usuario); un XL sin serial válido no es elegible. Sin verificar con el XL real.
 
-### B2 · Salidas, modo recuperación, servicio y dispositivo como ajuste
+### B2 · Salidas, modo recuperación, servicio y dispositivo como ajuste — hecho (55f67a2, a51c8b7, 6fbc403, 910335c, ce4e274, ad92e89, bb1f667)
 
 - **Evidencia:** cualquier error de `server.turn()` termina el runtime
   (`crates/rad-runtime/src/bin/rad-runtime.rs:71`); la unidad usa `Restart=no`
