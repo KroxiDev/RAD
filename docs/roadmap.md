@@ -340,20 +340,22 @@ con lo que diga. E1–E3 son independientes de E4–E5.
   apariencia, el foco concedido por el compositor y los cgroups reales no se han
   verificado; un escritorio sin bandeja sigue pudiendo usar RAD. E2 no se implementa.
 
-### E4 · Pantallas dentro de la ventana principal
+### E4 · Pantallas dentro de la ventana principal — hecho (commit `feat: show settings and plugin forms as in-window screens`)
 
-- **Hoy:** Ajustes (`crates/rad-editor/src/app/settings.rs:29`) y el formulario de un
-  plugin (`crates/rad-editor/src/app/plugins.rs:926`) son ventanas flotantes dentro
-  de la ventana del editor; Ajustes tiene 440 px de ancho fijo y no se puede mover ni
-  redimensionar.
-- **Cambio:** la ventana principal cambia de pantalla: teclas ↔ Ajustes, con sus
-  secciones, «Volver» y Esc. Cada pantalla ocupa la ventana y se adapta a su tamaño.
-  Los ajustes de un plugin se abren en la pantalla de Plugins y los parámetros de una
-  acción en el panel de la tecla. No quedan ventanas flotantes; la pantalla de
-  recuperación ya ocupa la ventana.
-- **Pruebas:** la navegación entre pantallas en lógica pura (abrir, volver, Esc, y
-  qué pasa con un formulario sin aplicar); capturas sin ventana para que el usuario
-  las revise.
+- **Entrega:** `crates/rad-editor/src/screens.rs` decide la pantalla: teclas o Ajustes
+  con sus secciones (General, Copia, Plugins, Automatización), con «Volver» y Esc;
+  Esc dentro de un campo o un menú solo lo cierra. Ajustes ocupa la ventana, con una
+  columna de hasta 640 px y scroll. Los ajustes de un plugin se abren dentro de la
+  sección Plugins; los parámetros de una acción, una acción nueva y la apariencia de
+  la tecla, en el panel de la tecla con «Volver». Ya no hay ventanas flotantes.
+  «Guardar ajustes» aparece solo con cambios.
+- **Sin aplicar:** salir con cambios (ajustes generales, formulario de plugin o una
+  contraseña a medio escribir) no descarta nada en silencio: la pantalla se queda y
+  dice «Hay cambios sin aplicar» con «Descartar»; aplicar quita el aviso.
+- **Validación focal:** navegación pura (abrir, cambiar de sección, volver, Esc con y
+  sin cambios, descartar); comprobación temporal con el App real de que cada sección
+  se dibuja y Esc vuelve o pregunta; suite del editor, fmt y clippy.
+- **Límite:** sin capturas; el usuario revisa el aspecto en la app real.
 
 ### E5 · Pantalla de Plugins para 6–8 o más
 

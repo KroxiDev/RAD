@@ -159,8 +159,10 @@ pub struct App {
     es: crate::preferences::Language,
     palette: Palette,
     styled: Option<Palette>,
-    settings_open: bool,
-    settings_tab: settings::Tab,
+    /// Keys or settings: the screen that fills the window.
+    navigation: crate::screens::Navigation,
+    /// Back from a plugin form in the key panel.
+    form_leave: crate::screens::Leave,
     settings: Value,
     new_name: String,
     move_folder: String,
@@ -278,8 +280,8 @@ impl App {
             es,
             palette: Palette::default(),
             styled: None,
-            settings_open: false,
-            settings_tab: Default::default(),
+            navigation: Default::default(),
+            form_leave: Default::default(),
             settings: Value::Null,
             new_name: String::new(),
             move_folder: String::new(),
@@ -749,7 +751,7 @@ impl App {
                 }
                 Ok(Reply::Refresh(r)) => {
                     if !r.status.is_null() {
-                        if !self.settings_open {
+                        if self.navigation.screen() == crate::screens::Screen::Keys {
                             self.settings = r.status["settings"].clone();
                         }
                         if self.status["view_revision"] != r.status["view_revision"] {
@@ -896,9 +898,7 @@ impl App {
                     }
                     if operation == "restore_commit" && self.plugins.restore_result(r.status) {
                         self.credentials.clear();
-                        self.settings_open = true;
-                        self.settings_tab = settings::Tab::Plugins;
-                        self.plugins.section_open = true;
+                        self.navigation.open(crate::screens::Section::Plugins);
                         self.say(tr(self.es, "Configuration restored"));
                         self.force = true;
                         self.inspect_needed = self.selected().is_some();
@@ -1142,6 +1142,67 @@ impl App {
             self.send(Request::Undo {});
         }
     }
+    /// The keys, the actions to drop on them and the panel of the selected one.
+    fn keys_screen(&mut self, ui: &mut egui::Ui, look: &Look, editable: bool) {
+        egui::Panel::top("bar")
+            .frame(look.panel(look.surface, 10))
+            .show(ui, |ui| self.bar(ui, look));
+        egui::Panel::bottom("status")
+            .frame(
+                look.panel(look.surface, 4)
+                    .inner_margin(egui::Margin::symmetric(14, 5)),
+            )
+            .show_separator_line(false)
+            .show(ui, |ui| self.status_line(ui, look));
+        egui::Panel::right("actions")
+            .default_size(260.)
+            .frame(look.panel(look.surface, 12))
+            .show(ui, |ui| {
+                ui.add_enabled_ui(editable, |ui| self.actions(ui, look));
+            });
+        // The keys come first: the inspector takes what a comfortable grid leaves over,
+        // and in a short tile never more than what still shows all four rows.
+        let room = ui.available_height();
+        let comfortable = self
+            .board
+            .as_ref()
+            .map_or(0., |b| deck::comfortable_height(b.grid));
+        let minimum = self.board.as_ref().map_or(0., |b| deck::min_height(b.grid));
+        let inspector = (room - comfortable).clamp(176., 420.).min(room - minimum);
+        egui::Panel::bottom("inspector")
+            .exact_size(inspector.max(120.))
+            .resizable(false)
+            .frame(look.panel(look.surface, 14))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        ui.add_enabled_ui(editable, |ui| self.inspector(ui, look));
+                    });
+            });
+        egui::CentralPanel::default()
+            .frame(look.panel(look.background, 0))
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!self.transfer_active, |ui| self.deck(ui, look));
+            });
+        deck::drag_ghost(ui.ctx(), look);
+    }
+    /// Esc goes back, as the Back button does, once no text field or menu holds it.
+    fn escape(&mut self, ctx: &egui::Context) {
+        let keys = self.navigation.screen() == crate::screens::Screen::Keys;
+        if (keys && !self.key_form_open())
+            || ctx.egui_wants_keyboard_input()
+            || egui::Popup::is_any_open(ctx)
+            || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            return;
+        }
+        if keys {
+            self.leave_key_form();
+        } else {
+            self.leave_settings();
+        }
+    }
 }
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1185,50 +1246,16 @@ impl eframe::App for App {
             self.recovery_view(ui, &look);
             return;
         }
-        egui::Panel::top("bar")
-            .frame(look.panel(look.surface, 10))
-            .show(ui, |ui| self.bar(ui, &look));
-        egui::Panel::bottom("status")
-            .frame(
-                look.panel(look.surface, 4)
-                    .inner_margin(egui::Margin::symmetric(14, 5)),
-            )
-            .show_separator_line(false)
-            .show(ui, |ui| self.status_line(ui, &look));
-        egui::Panel::right("actions")
-            .default_size(260.)
-            .frame(look.panel(look.surface, 12))
-            .show(ui, |ui| {
-                ui.add_enabled_ui(editable, |ui| self.actions(ui, &look));
-            });
-        // The keys come first: the inspector takes what a comfortable grid leaves over,
-        // and in a short tile never more than what still shows all four rows.
-        let room = ui.available_height();
-        let comfortable = self
-            .board
-            .as_ref()
-            .map_or(0., |b| deck::comfortable_height(b.grid));
-        let minimum = self.board.as_ref().map_or(0., |b| deck::min_height(b.grid));
-        let inspector = (room - comfortable).clamp(176., 420.).min(room - minimum);
-        egui::Panel::bottom("inspector")
-            .exact_size(inspector.max(120.))
-            .resizable(false)
-            .frame(look.panel(look.surface, 14))
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink(false)
-                    .show(ui, |ui| {
-                        ui.add_enabled_ui(editable, |ui| self.inspector(ui, &look));
-                    });
-            });
-        egui::CentralPanel::default()
-            .frame(look.panel(look.background, 0))
-            .show(ui, |ui| {
-                ui.add_enabled_ui(!self.transfer_active, |ui| self.deck(ui, &look));
-            });
-        self.settings_window(&ctx, &look);
-        self.plugin_form_window(&ctx);
-        deck::drag_ghost(&ctx, &look);
+        self.escape(&ctx);
+        if self.navigation.screen() == crate::screens::Screen::Keys {
+            self.keys_screen(ui, &look, editable);
+        } else {
+            self.settings_screen(ui, &look);
+        }
+        // A password is typed only next to the form or the plugin that asks for it.
+        if self.plugins.form.is_none() && self.plugins.dependency_credentials.is_none() {
+            self.credentials.clear();
+        }
         if self.connected && !self.worker.busy() && (self.machine_due || self.reads_due()) {
             ctx.request_repaint();
         }
@@ -1309,8 +1336,10 @@ mod connection_loss_tests {
             ..Default::default()
         };
         let _ = ctx.run_ui(input, |ui| app.bar(ui, &Look::new(&Default::default())));
-        assert!(app.settings_open);
-        assert!(app.settings_tab == settings::Tab::Plugins);
+        assert_eq!(
+            app.navigation.screen(),
+            crate::screens::Screen::Settings(crate::screens::Section::Plugins)
+        );
     }
     #[test]
     fn not_applied_disconnect_attempts_one_reconnect_and_never_replays_mutation() {

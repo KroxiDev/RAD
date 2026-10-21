@@ -1,70 +1,163 @@
-//! Settings window: device, language, backup, plugins and global automation permissions,
-//! one tab at a time.
-use super::{App, inspector::permission_ui, look::Look, tr};
-use crate::native::{Job, TransferKind};
+//! Settings screen: device, language, backup, plugins and global automation permissions,
+//! one section at a time, filling the window until Back or Esc (E4).
+use super::{
+    App,
+    inspector::permission_ui,
+    look::{Icon, Look, icon_button},
+    tr,
+};
+use crate::{
+    native::{Job, TransferKind},
+    plugins::FormTarget,
+    screens::{Screen, Section},
+};
 use eframe::egui;
 use serde_json::json;
 use std::path::PathBuf;
 
-/// Width of the settings window's content; the tabs and fields are laid out for it.
-const WIDTH: f32 = 440.;
-/// Width of the labels in the General tab, so the values line up.
+/// Widest the settings grow: wider, the eye loses the line between a label and its value.
+const WIDTH: f32 = 640.;
+/// Width of the labels in the General section, so the values line up.
 const LABEL: f32 = 170.;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum Tab {
-    #[default]
-    General,
-    Backup,
-    Plugins,
-    Permissions,
-}
-
 impl App {
-    pub(super) fn settings_window(&mut self, ctx: &egui::Context, look: &Look) {
-        if !self.settings_open {
-            return;
+    /// Shows a section of the settings; coming from the keys, the drafts start from what the
+    /// runtime last published.
+    pub(super) fn open_settings(&mut self, section: Section) {
+        if self.navigation.screen() == Screen::Keys {
+            self.settings = self.status["settings"].clone();
+            self.global_permissions = json!({"own":self.status["global_permissions"]});
         }
-        let mut open = true;
-        egui::Window::new(tr(self.es, "Settings"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .fixed_size([WIDTH, 0.])
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                self.settings_tabs(ui);
-                ui.separator();
-                ui.add_space(4.);
-                ui.add_enabled_ui(self.connected || self.settings_tab == Tab::General, |ui| match self.settings_tab {
-                    Tab::General => self.device(ui, look),
-                    Tab::Backup => self.backup(ui, look),
-                    Tab::Plugins => {
-                        egui::ScrollArea::vertical()
-                            .max_height(ui.ctx().content_rect().height() * 0.7)
-                            .show(ui, |ui| self.plugin_settings(ui));
-                    },
-                    Tab::Permissions => {
-                        ui.label(look.muted_text(tr(self.es, "What rad-cli and scripts may do, unless a folder or key says otherwise.")));
-                        ui.add_space(4.);
-                        if permission_ui(ui, &mut self.global_permissions, self.es, false) {
-                            self.send(crate::Request::SetPermissions {target:"global".into(),value:serde_json::from_value(self.global_permissions.clone()).expect("permissions draft")});
+        self.navigation.open(section);
+    }
+    fn general_unapplied(&self) -> bool {
+        self.connected
+            && !self.status["settings"].is_null()
+            && self.settings != self.status["settings"]
+    }
+    /// What leaving the settings would lose: the General draft, a plugin's settings or a
+    /// password being typed.
+    pub(super) fn settings_unapplied(&self) -> bool {
+        let form = self
+            .plugins
+            .form
+            .as_ref()
+            .filter(|(target, _)| matches!(target, FormTarget::Settings(_)));
+        self.general_unapplied()
+            || form.is_some_and(|(_, loaded)| loaded.form.as_ref().is_some_and(|f| f.dirty))
+            || ((form.is_some() || self.plugins.dependency_credentials.is_some())
+                && self.credentials.editing())
+    }
+    /// Back or Esc: to the keys, unless something unapplied makes the screen ask first.
+    pub(super) fn leave_settings(&mut self) {
+        let unapplied = self.settings_unapplied();
+        if self.navigation.back(unapplied) {
+            self.settings_closed();
+        }
+    }
+    fn discard_settings(&mut self) {
+        self.navigation.discard();
+        self.settings_closed();
+    }
+    /// Nothing of the settings outlives their screen.
+    fn settings_closed(&mut self) {
+        self.settings = self.status["settings"].clone();
+        if matches!(self.plugins.form, Some((FormTarget::Settings(_), _))) {
+            self.plugins.clear_form();
+            self.credentials.clear();
+        }
+        if self.plugins.dependency_credentials.take().is_some() {
+            self.credentials.clear();
+        }
+        self.plugins.section_open = false;
+    }
+    pub(super) fn settings_screen(&mut self, ui: &mut egui::Ui, look: &Look) {
+        let Screen::Settings(section) = self.navigation.screen() else {
+            return;
+        };
+        egui::Panel::top("settings-bar")
+            .frame(look.panel(look.surface, 10))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if icon_button(ui, look, Icon::Back, tr(self.es, "Back (Esc)")).clicked() {
+                        self.leave_settings();
+                    }
+                    ui.label(egui::RichText::new(tr(self.es, "Settings")).heading());
+                    ui.add_space(18.);
+                    for (choice, en) in [
+                        (Section::General, "General"),
+                        (Section::Backup, "Backup"),
+                        (Section::Plugins, "Plugins"),
+                        (Section::Automation, "Automation"),
+                    ] {
+                        if ui
+                            .selectable_label(section == choice, tr(self.es, en))
+                            .clicked()
+                        {
+                            self.navigation.open(choice);
                         }
                     }
                 });
-                ui.collapsing(tr(self.es, "Advanced"), |ui| {
-                    ui.collapsing(tr(self.es, "Log"), |ui| self.plugin_log(ui));
-                    ui.collapsing(tr(self.es, "RAD log"), |ui| self.runtime_log_ui(ui));
-                });
+                if self.navigation.asking(self.settings_unapplied()) {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(look.warn, tr(self.es, "Some changes are not applied"));
+                        if ui.add(look.dangerous(tr(self.es, "Discard"))).clicked() {
+                            self.discard_settings();
+                        }
+                    });
+                }
             });
-        // Plugin status is asked for only while its tab is in view.
-        self.plugins.section_open = self.settings_tab == Tab::Plugins;
-        self.settings_open &= open;
-        if (!self.settings_open || self.settings_tab != Tab::Plugins)
-            && self.plugins.dependency_credentials.take().is_some()
-        {
+        egui::Panel::bottom("status")
+            .frame(
+                look.panel(look.surface, 4)
+                    .inner_margin(egui::Margin::symmetric(14, 5)),
+            )
+            .show_separator_line(false)
+            .show(ui, |ui| self.status_line(ui, look));
+        egui::CentralPanel::default()
+            .frame(look.panel(look.background, 18))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        ui.set_max_width(WIDTH.min(ui.available_width()));
+                        self.settings_section(ui, look, section);
+                    });
+            });
+        // Plugin status is asked for only while its section is in view.
+        self.plugins.section_open = section == Section::Plugins;
+        if section != Section::Plugins && self.plugins.dependency_credentials.take().is_some() {
             self.credentials.clear();
         }
+    }
+    fn settings_section(&mut self, ui: &mut egui::Ui, look: &Look, section: Section) {
+        ui.add_enabled_ui(
+            self.connected || section == Section::General,
+            |ui| match section {
+                Section::General => self.device(ui, look),
+                Section::Backup => self.backup(ui, look),
+                Section::Plugins => self.plugin_settings(ui, look),
+                Section::Automation => {
+                    ui.label(look.muted_text(tr(
+                        self.es,
+                        "What rad-cli and scripts may do, unless a folder or key says otherwise.",
+                    )));
+                    ui.add_space(4.);
+                    if permission_ui(ui, &mut self.global_permissions, self.es, false) {
+                        self.send(crate::Request::SetPermissions {
+                            target: "global".into(),
+                            value: serde_json::from_value(self.global_permissions.clone())
+                                .expect("permissions draft"),
+                        });
+                    }
+                }
+            },
+        );
+        ui.add_space(12.);
+        ui.collapsing(tr(self.es, "Advanced"), |ui| {
+            ui.collapsing(tr(self.es, "Log"), |ui| self.plugin_log(ui));
+            ui.collapsing(tr(self.es, "RAD log"), |ui| self.runtime_log_ui(ui));
+        });
     }
     fn plugin_log(&mut self, ui: &mut egui::Ui) {
         let previous = self.plugins.log_selected.clone();
@@ -146,19 +239,7 @@ impl App {
             ));
         }
     }
-    fn settings_tabs(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            for (tab, en) in [
-                (Tab::General, "General"),
-                (Tab::Backup, "Backup"),
-                (Tab::Plugins, "Plugins"),
-                (Tab::Permissions, "Automation"),
-            ] {
-                ui.selectable_value(&mut self.settings_tab, tab, tr(self.es, en));
-            }
-        });
-    }
-    /// A label in the General tab's column, followed by its value.
+    /// A label in the General section's column, followed by its value.
     fn setting_label(ui: &mut egui::Ui, look: &Look, text: &str) {
         ui.allocate_ui_with_layout(
             egui::vec2(LABEL, ui.spacing().interact_size.y),
@@ -236,18 +317,18 @@ impl App {
                 }
             }
         });
-        ui.add_space(8.);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            if ui
-                .add_enabled(self.connected, look.primary(tr(self.es, "Save settings")))
-                .clicked()
-            {
-                self.send(crate::Request::SetSettings {
-                    changes: serde_json::from_value(self.settings.clone()).expect("settings draft"),
-                });
-                self.settings_open = false;
-            }
-        });
+        // Shown only when there is something to save, as on a key.
+        if self.general_unapplied() {
+            ui.add_space(8.);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                if ui.add(look.primary(tr(self.es, "Save settings"))).clicked() {
+                    self.send(crate::Request::SetSettings {
+                        changes: serde_json::from_value(self.settings.clone())
+                            .expect("settings draft"),
+                    });
+                }
+            });
+        }
     }
     fn backup(&mut self, ui: &mut egui::Ui, look: &Look) {
         ui.label(look.muted_text(tr(self.es, "Saves your keys, folders and images to one file. Credentials and plugin programs are not included.")));

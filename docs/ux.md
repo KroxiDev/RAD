@@ -73,6 +73,9 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   un plugin funcione, no hay avisos.
 - **Gestos.** El editor ofrece pulsar, mantener o pulsación larga solo si la acción
   los admite.
+- **Pantallas.** Ajustes y los formularios ocupan la ventana o el panel de la tecla,
+  sin ventanas flotantes; «Volver» y Esc regresan. Con cambios sin aplicar, la
+  pantalla se queda y ofrece «Descartar».
 - **Progreso.** Las transferencias muestran una barra.
 - **Puesta en marcha.** El editor arranca RAD y ofrece «Iniciar RAD con el equipo»;
   el usuario nunca usa la terminal ([ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md)).

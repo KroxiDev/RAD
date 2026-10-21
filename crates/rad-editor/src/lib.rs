@@ -61,6 +61,7 @@ pub mod machine;
 pub mod notices;
 pub mod recovery;
 pub mod schedule;
+pub mod screens;
 pub mod service;
 pub mod texts;
 

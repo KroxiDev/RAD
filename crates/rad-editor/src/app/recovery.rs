@@ -29,7 +29,7 @@ impl App {
         self.inspect_needed = false;
         self.catalog_due = None;
         self.machine_due = false;
-        self.settings_open = false;
+        self.navigation.discard();
         self.say("");
     }
     /// The runtime works normally again, on this same connection: read everything anew, as

@@ -1,5 +1,9 @@
 //! Plugin presentation only; publication/activation belong to the runtime.
-use super::{App, Job, look::Look, string, tr};
+use super::{
+    App, Job,
+    look::{Icon, Look, icon_button},
+    string, tr,
+};
 use crate::plugins::{CatalogEntry, FormDraft, FormTarget, LoadedForm, SourceChange, Visual};
 use eframe::egui;
 use serde_json::Value;
@@ -650,10 +654,11 @@ impl App {
             self.plugins.form = None;
             self.plugins.form_loading = true;
             self.plugins.form_load_current = true;
+            self.form_leave.reset();
         }
     }
-    /// The Plugins tab of the settings: installed plugins and their administration.
-    pub(super) fn plugin_settings(&mut self, ui: &mut egui::Ui) {
+    /// The Plugins section of the settings: installed plugins and their administration.
+    pub(super) fn plugin_settings(&mut self, ui: &mut egui::Ui, look: &Look) {
         // Nothing happening is not worth a line; an operation under way is.
         let state = string(&self.plugins.status["state"]);
         if !state.is_empty() && state != "idle" {
@@ -717,7 +722,24 @@ impl App {
         if let Some(plugin_id) = self.plugins.retry_request.take() {
             self.send(crate::Request::PluginRetry { plugin_id });
         }
-        if idle
+        // A plugin's settings belong to it: choosing another one closes them.
+        let shown = match &self.plugins.form {
+            Some((FormTarget::Settings(id), _)) => Some(id.clone()),
+            _ => None,
+        };
+        if shown
+            .as_ref()
+            .is_some_and(|id| *id != self.plugins.selected)
+        {
+            self.plugins.clear_form();
+            self.credentials.clear();
+        }
+        if shown.as_ref() == Some(&self.plugins.selected) {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.label(look.section(tr(self.es, "Plugin settings")));
+                self.plugin_form_ui(ui, look);
+            });
+        } else if idle
             && self
                 .plugins
                 .selected_item()
@@ -898,11 +920,9 @@ impl App {
             self.open_plugin_form("", Some(id.into()), FormTarget::Visual(id.into()));
         }
     }
-    pub(super) fn plugin_form_window(&mut self, ctx: &egui::Context) {
+    /// The open plugin form, drawn in place: its fields, Apply and the credentials it declares.
+    pub(super) fn plugin_form_ui(&mut self, ui: &mut egui::Ui, look: &Look) {
         let Some((target, mut loaded)) = self.plugins.form.take() else {
-            if self.plugins.dependency_credentials.is_none() {
-                self.credentials.clear();
-            }
             return;
         };
         if let Some(form) = &loaded.form {
@@ -914,76 +934,129 @@ impl App {
         } else {
             self.credentials.clear();
         }
-        let look = Look::new(&self.palette);
-        let mut open = true;
         let mut request = None;
-        // Named after what is being set up, as the list of actions calls it.
-        let title = if matches!(target, FormTarget::Settings(_)) {
-            tr(self.es, "Plugin settings").to_owned()
-        } else {
-            self.plugin_label(&loaded.type_key)
-        };
-        egui::Window::new(title)
-            .id(egui::Id::new("plugin-form"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .vscroll(true)
-            .default_width(420.)
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(ctx.content_rect().center())
-            .show(ctx, |ui| {
-                ui.collapsing(tr(self.es,"View details"), |ui| { ui.label(look.muted_text(&loaded.type_key).small()); });
+        if !self.plugins.form_pending && self.connected {
+            if let Some(form) = loaded.form.as_mut() {
+                if form.compatible() {
+                    form_ui(ui, look, form, self.es);
+                } else {
+                    ui.colored_label(look.warn, tr(self.es, "Incompatible parameters preserved; no migration. Remove explicitly if needed."));
+                }
                 ui.add_space(4.);
-                if !self.plugins.form_pending && self.connected {
-                    if let Some(form) = loaded.form.as_mut() {
-                        if form.compatible() {
-                            form_ui(ui, &look, form, self.es);
-                        } else {
-                            ui.colored_label(look.warn, tr(self.es, "Incompatible parameters preserved; no migration. Remove explicitly if needed."));
+                match form.publish() {
+                    Ok(Some(value)) => {
+                        if ui.add(look.primary(tr(self.es, "Apply"))).clicked() {
+                            request = Some(target.request(&loaded.type_key, value));
                         }
-                        ui.add_space(4.);
-                        match form.publish() {
-                            Ok(Some(value)) => {
-                                if ui.add(look.primary(tr(self.es, "Apply"))).clicked() {
-                                    request = Some(target.request(&loaded.type_key, value));
-                                }
-                            }
-                            Ok(None) => {
-                                ui.label(look.muted_text(tr(self.es, "Unchanged — nothing to publish")));
-                            }
-                            Err(_) => {
-                                ui.colored_label(look.warn, tr(self.es, "Not saved: check required fields, types and limits"));
-                            }
-                        }
-                    } else {
-                        ui.colored_label(look.warn, tr(self.es, "Plugin unavailable. Original configuration retained."));
+                    }
+                    Ok(None) => {
+                        ui.label(look.muted_text(tr(self.es, "Unchanged — nothing to publish")));
+                    }
+                    Err(_) => {
+                        ui.colored_label(
+                            look.warn,
+                            tr(
+                                self.es,
+                                "Not saved: check required fields, types and limits",
+                            ),
+                        );
                     }
                 }
-                self.credentials.show(ui, &mut self.credential_worker, self.connected, self.es);
-                if self.plugins.form_pending {
-                    ui.label(look.muted_text(tr(self.es, "Saving — awaiting durable confirmation")));
-                }
-                // What was kept untouched only matters when the form cannot show it.
-                if loaded.form.as_ref().is_none_or(|form| !form.compatible()) {
-                    egui::CollapsingHeader::new(tr(self.es, "Preserved configuration (read only)"))
-                        .show(ui, |ui| {
-                            let mut raw = String::from_utf8_lossy(&loaded.original).into_owned();
-                            ui.add(egui::TextEdit::multiline(&mut raw).interactive(false).desired_rows(5));
-                            ui.label(look.muted_text(format!("{}: {}", tr(self.es, "Preserved bytes"), loaded.original.len())));
-                        });
-                }
-            });
+            } else {
+                ui.colored_label(
+                    look.warn,
+                    tr(
+                        self.es,
+                        "Plugin unavailable. Original configuration retained.",
+                    ),
+                );
+            }
+        }
+        self.credentials
+            .show(ui, &mut self.credential_worker, self.connected, self.es);
+        if self.plugins.form_pending {
+            ui.label(look.muted_text(tr(self.es, "Saving — awaiting durable confirmation")));
+        }
+        // What was kept untouched only matters when the form cannot show it.
+        if loaded.form.as_ref().is_none_or(|form| !form.compatible()) {
+            egui::CollapsingHeader::new(tr(self.es, "Preserved configuration (read only)")).show(
+                ui,
+                |ui| {
+                    let mut raw = String::from_utf8_lossy(&loaded.original).into_owned();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut raw)
+                            .interactive(false)
+                            .desired_rows(5),
+                    );
+                    ui.label(look.muted_text(format!(
+                        "{}: {}",
+                        tr(self.es, "Preserved bytes"),
+                        loaded.original.len()
+                    )));
+                },
+            );
+        }
+        ui.collapsing(tr(self.es, "View details"), |ui| {
+            ui.label(look.muted_text(&loaded.type_key).small());
+        });
         if let Some(request) = request
             && self.command(Job::PluginApply(request))
         {
             self.plugins.form_pending = true;
         }
-        if open {
-            self.plugins.form = Some((target, loaded));
-        } else {
-            self.credentials.clear();
+        self.plugins.form = Some((target, loaded));
+    }
+    /// A form of the selected key (an action's parameters, a new action or who draws the
+    /// key) is open in the key panel.
+    pub(super) fn key_form_open(&self) -> bool {
+        self.plugins
+            .form
+            .as_ref()
+            .is_some_and(|(target, _)| !matches!(target, FormTarget::Settings(_)))
+    }
+    fn key_form_unapplied(&self) -> bool {
+        self.plugins
+            .form
+            .as_ref()
+            .is_some_and(|(_, loaded)| loaded.form.as_ref().is_some_and(|f| f.dirty))
+            || self.credentials.editing()
+    }
+    /// Back or Esc in the key panel: to the key, unless something unapplied makes it ask.
+    pub(super) fn leave_key_form(&mut self) {
+        if self.form_leave.request(self.key_form_unapplied()) {
+            self.close_form();
         }
+    }
+    fn close_form(&mut self) {
+        self.plugins.clear_form();
+        self.credentials.clear();
+        self.form_leave.reset();
+    }
+    /// The key panel while a form of its key is open: Back, the form, and the question when
+    /// leaving would lose something.
+    pub(super) fn key_form(&mut self, ui: &mut egui::Ui, look: &Look) {
+        let title = self
+            .plugins
+            .form
+            .as_ref()
+            .map(|(_, loaded)| self.plugin_label(&loaded.type_key))
+            .unwrap_or_default();
+        ui.horizontal(|ui| {
+            if icon_button(ui, look, Icon::Back, tr(self.es, "Back (Esc)")).clicked() {
+                self.leave_key_form();
+            }
+            ui.label(egui::RichText::new(title).heading());
+        });
+        if self.form_leave.asking(self.key_form_unapplied()) {
+            ui.horizontal(|ui| {
+                ui.colored_label(look.warn, tr(self.es, "Some changes are not applied"));
+                if ui.add(look.dangerous(tr(self.es, "Discard"))).clicked() {
+                    self.close_form();
+                }
+            });
+        }
+        ui.add_space(4.);
+        self.plugin_form_ui(ui, look);
     }
     pub(super) fn accept_plugin_visuals(
         &mut self,

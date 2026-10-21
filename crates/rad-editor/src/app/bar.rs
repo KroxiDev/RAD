@@ -6,7 +6,6 @@ use super::{
 };
 use crate::service::Action;
 use eframe::egui;
-use serde_json::json;
 
 impl App {
     fn folder_title(&self) -> String {
@@ -36,9 +35,7 @@ impl App {
                     .add(egui::Button::new(egui::RichText::new("⚙").size(17.)).frame(false))
                     .on_hover_text(tr(self.es, "Settings"));
                 if settings.clicked() {
-                    self.settings = self.status["settings"].clone();
-                    self.global_permissions = json!({"own":self.status["global_permissions"]});
-                    self.settings_open = true;
+                    self.open_settings(crate::screens::Section::General);
                 }
                 ui.add_enabled_ui(self.connected, |ui| {
                     for (op, icon, en) in [
@@ -74,10 +71,7 @@ impl App {
         if self.connected && !attention.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 if ui.button(tr(self.es, "Plugins")).clicked() {
-                    self.settings = self.status["settings"].clone();
-                    self.global_permissions = json!({"own":self.status["global_permissions"]});
-                    self.settings_tab = super::settings::Tab::Plugins;
-                    self.settings_open = true;
+                    self.open_settings(crate::screens::Section::Plugins);
                 }
                 for state in attention {
                     ui.colored_label(look.warn, state.label(self.es));

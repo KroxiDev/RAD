@@ -22,6 +22,9 @@ const MAX_WAIT_MS: u64 = 600_000;
 
 impl App {
     pub(super) fn inspector(&mut self, ui: &mut egui::Ui, look: &Look) {
+        if self.key_form_open() {
+            return self.key_form(ui, look);
+        }
         match (self.selected(), self.selected_slot) {
             (Some(id), _) => self.key_editor(ui, look, &id),
             (None, Some(position)) => self.empty_key(ui, look, position),
