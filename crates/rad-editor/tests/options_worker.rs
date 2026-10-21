@@ -143,7 +143,7 @@ fn question(ticket: u64, field: &str) -> OptionsJob {
 fn wait<J: Send + 'static, R: Send + 'static>(worker: &mut Worker<J, R>) -> R {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if let Some(result) = worker.poll() {
+        if let Some(result) = worker.poll().ready() {
             return result;
         }
         assert!(Instant::now() < deadline, "no result within 5 s");

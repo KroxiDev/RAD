@@ -4,7 +4,6 @@ use super::{
     look::{Icon, Look, icon_button, state_pill},
     string, tr,
 };
-use crate::native::Job;
 use eframe::egui;
 use serde_json::json;
 
@@ -74,7 +73,7 @@ impl App {
                     tr(self.es, "RAD is not running. Start rad-runtime, then"),
                 );
                 if ui.add(look.primary(tr(self.es, "Reconnect"))).clicked() {
-                    self.command(Job::Connect);
+                    self.reconnect(&ui.ctx().clone());
                 }
             });
         }

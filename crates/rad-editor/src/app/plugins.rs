@@ -61,6 +61,27 @@ impl PluginUi {
             self.form = Some((target, loaded));
         }
     }
+    /// The worker died with these requests unanswered. None is repeated: whatever depended on
+    /// an answer stops waiting for it, and the state is read again.
+    pub fn abandon_pending(&mut self) {
+        if self.form_pending
+            && let Some((FormTarget::Settings(id), _)) = self.form.as_ref()
+        {
+            self.settings_reload = Some(id.clone());
+            self.form = None;
+        }
+        self.form_pending = false;
+        self.form_loading = false;
+        self.form_load_current = false;
+        self.admin_pending = false;
+        self.manifest_pending = None;
+        self.manifest_invalidated = false;
+        self.dependencies.reset();
+        self.dependency_status_due = true;
+        for face in self.visuals.values_mut() {
+            face.state = "stale".into();
+        }
+    }
     pub fn reconnect(&mut self) {
         self.dependencies.reset();
         self.dependency_status_due = true;

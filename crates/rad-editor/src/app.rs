@@ -6,7 +6,7 @@ use crate::{
     native::{self, Event, Job, OptionsEvent, OptionsJob, Reply, TransferKind},
     session::{Board, Inspection},
     theme::Palette,
-    worker::Worker,
+    worker::{Polled, Pulse, SubmitError, Worker},
 };
 use eframe::egui;
 use serde_json::{Value, json};
@@ -119,6 +119,10 @@ pub struct App {
     /// must not hold up Apply or the polling that `worker` does.
     options_worker: Worker<OptionsJob, OptionsEvent>,
     credential_worker: credentials::CredentialWorker,
+    /// Replace a worker whose thread died, a bounded number of times in a row.
+    worker_respawn: crate::worker::Respawner<Job, Event>,
+    options_respawn: crate::worker::Respawner<OptionsJob, OptionsEvent>,
+    credential_respawn: crate::worker::Respawner<credentials::Job, credentials::Event>,
     credentials: credentials::Panel,
     credential_selection: Option<String>,
     control: Controller,
@@ -193,9 +197,22 @@ impl App {
         let preference_error = loaded.as_ref().err().map(ToString::to_string);
         let preferences = loaded.ok().flatten().unwrap_or_default();
         let es = preferences.language(&crate::preferences::system_locale());
+        let options_respawn = {
+            let runtime = runtime.clone();
+            crate::worker::Respawner::new(move || native::start_options(runtime.clone()))
+        };
+        let credential_respawn = {
+            let runtime = runtime.clone();
+            crate::worker::Respawner::new(move || credentials::start(runtime.clone()))
+        };
+        let worker_respawn = {
+            let runtime = runtime.clone();
+            let theme = theme.clone();
+            crate::worker::Respawner::new(move || native::start(runtime.clone(), theme.clone()))
+        };
         let options_worker = native::start_options(runtime.clone());
         let credential_worker = credentials::start(runtime.clone());
-        let mut worker = native::start(runtime.clone(), theme);
+        let mut worker = native::start(runtime.clone(), theme.clone());
         let _ = worker.submit(Job::Connect);
         let mut app = Self {
             preferences,
@@ -203,6 +220,9 @@ impl App {
             worker,
             options_worker,
             credential_worker,
+            worker_respawn,
+            options_respawn,
+            credential_respawn,
             credentials: Default::default(),
             credential_selection: None,
             control: Controller::default(),
@@ -293,11 +313,66 @@ impl App {
     }
     /// A user command waits behind the in-flight poll; controls never depend on polling.
     fn command(&mut self, job: Job) -> bool {
-        let accepted = self.worker.enqueue(job).is_ok();
-        if !accepted {
-            self.warn(tr(self.es, "Busy — not sent"));
+        let refused = self.worker.enqueue(job).err();
+        match refused {
+            None => {}
+            Some(SubmitError::Busy) => self.warn(tr(self.es, "Busy — not sent")),
+            Some(SubmitError::Disconnected) => self.warn(tr(self.es, "Not applied — try again")),
         }
-        accepted
+        refused.is_none()
+    }
+    /// The user asked to reconnect: a worker given up on is replaced first.
+    /// The user asked to reconnect: every worker that gave up starts again with a fresh count.
+    fn reconnect(&mut self, ctx: &egui::Context) {
+        if self.worker_respawn.gave_up() {
+            let wake = ctx.clone();
+            self.worker_respawn
+                .revive(&mut self.worker, move || wake.request_repaint());
+        }
+        if self.credential_respawn.gave_up() {
+            let wake = ctx.clone();
+            self.credential_respawn
+                .revive(&mut self.credential_worker, move || wake.request_repaint());
+        }
+        if self.options_respawn.gave_up() {
+            let wake = ctx.clone();
+            self.options_respawn
+                .revive(&mut self.options_worker, move || wake.request_repaint());
+        }
+        self.command(Job::Connect);
+    }
+    /// The worker's thread ended. A job in flight has an unknown outcome: it is not repeated,
+    /// whatever waited for its answer stops waiting, and the state is read again. A command
+    /// that never left is said not to have been applied. Replacement is bounded; once the
+    /// limit is reached the bar offers Reconnect.
+    fn worker_lost(&mut self, ctx: &egui::Context, in_flight: bool, unsent: bool) {
+        ctx.request_repaint();
+        self.connected = false;
+        self.attempted = true;
+        self.transfer_active = false;
+        self.pending_action = None;
+        self.icon_candidate = None;
+        self.icon_asked = false;
+        self.plugins.abandon_pending();
+        self.plugins.visuals.clear();
+        self.plugins.status = Value::Null;
+        self.plugins.dependency_credentials = None;
+        self.credentials.clear();
+        if in_flight {
+            self.resolving_unknown = true;
+            self.force = true;
+            self.overview_due = true;
+            self.inspect_needed = self.selected().is_some();
+        }
+        if unsent {
+            self.warn(tr(self.es, "Not applied — try again"));
+        } else if in_flight {
+            self.say(tr(self.es, "Checking what changed…"));
+        }
+        let wake = ctx.clone();
+        self.reconnect_needed = self
+            .worker_respawn
+            .replace(&mut self.worker, move || wake.request_repaint());
     }
     fn send(&mut self, request: Request) {
         self.command(Job::Request(request));
@@ -466,13 +541,23 @@ impl App {
                 }
             }
         }
-        if let Some(event) = self.worker.poll() {
+        let polled = self.worker.poll();
+        match &polled {
+            Polled::Failed { unsent } => self.worker_lost(ctx, true, *unsent),
+            Polled::Closed { unsent } => self.worker_lost(ctx, false, *unsent),
+            Polled::Ready(_) | Polled::Pending => {}
+        }
+        if let Polled::Ready(event) = polled {
             // Some handlers finish this turn early; keep newly invalidated work runnable.
             ctx.request_repaint();
             self.palette = event.palette;
             // One recovery attempt per lost RPC, including a definitely-unsent mutation.
             // A failed Connect starts disconnected, so it cannot trigger a retry loop.
             let connection_lost = self.connected && !event.connected;
+            // Connecting says nothing of the worker's health; any other answer does.
+            if matches!(&event.result, Ok(reply) if !matches!(reply, Reply::Connected)) {
+                self.worker_respawn.answered();
+            }
             self.connected = event.connected;
             match event.result {
                 Ok(Reply::PluginApplied(r)) => {
@@ -929,6 +1014,31 @@ impl App {
             self.styled = Some(self.palette.clone());
         }
     }
+    /// Results of the credential and option-list workers; a dead one is replaced, within
+    /// the same bound as the main worker.
+    fn pump_auxiliary(&mut self, ctx: &egui::Context) {
+        match self.credentials.pump(&mut self.credential_worker) {
+            Pulse::Answered => self.credential_respawn.answered(),
+            Pulse::Lost => {
+                let wake = ctx.clone();
+                self.credential_respawn
+                    .replace(&mut self.credential_worker, move || wake.request_repaint());
+            }
+            Pulse::Quiet => {}
+        }
+        match self
+            .plugins
+            .pump_options(&mut self.options_worker, self.connected)
+        {
+            Pulse::Answered => self.options_respawn.answered(),
+            Pulse::Lost => {
+                let wake = ctx.clone();
+                self.options_respawn
+                    .replace(&mut self.options_worker, move || wake.request_repaint());
+            }
+            Pulse::Quiet => {}
+        }
+    }
     /// Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) reach the runtime unless a text field wants them.
     fn shortcuts(&mut self, ctx: &egui::Context) {
         if !self.connected || self.credentials.editing() || ctx.egui_wants_keyboard_input() {
@@ -970,13 +1080,11 @@ impl eframe::App for App {
             self.wake_registered = true;
         }
         self.pump(&ctx);
-        self.credentials.pump(&mut self.credential_worker);
+        self.pump_auxiliary(&ctx);
         if self.credential_selection != self.selected() {
             self.credentials.clear();
             self.credential_selection = self.selected();
         }
-        self.plugins
-            .pump_options(&mut self.options_worker, self.connected);
         self.shortcuts(&ctx);
         let look = Look::new(&self.palette);
         // Background polling must not gate the controls: disabling them every poll made
@@ -1165,3 +1273,6 @@ mod connection_loss_tests {
         assert!(!app.connected);
     }
 }
+
+#[cfg(test)]
+mod worker_loss_tests;

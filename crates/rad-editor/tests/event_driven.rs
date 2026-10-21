@@ -37,5 +37,5 @@ fn worker_wakes_after_publishing_a_result_without_gui_polling() {
     rx.recv().unwrap(); // registration covers already queued results
     worker.submit(4).unwrap();
     rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
-    assert_eq!(worker.poll(), Some(5));
+    assert_eq!(worker.poll(), rad_editor::worker::Polled::Ready(5));
 }
