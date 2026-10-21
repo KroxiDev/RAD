@@ -8,6 +8,7 @@ fn controlled() -> (Admin, mpsc::Receiver<Job>, Authority, Host) {
         tx,
         rx,
         worker: None,
+        fetcher: fetch::Fetcher::new(Arc::new(|| {}), Box::new(|_, _| panic!("no download"))),
         unsent: None,
         state: AdminState::Idle,
         error: None,

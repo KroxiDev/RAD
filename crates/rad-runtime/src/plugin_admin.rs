@@ -1,4 +1,6 @@
 //! Single worker and single operation credit, retained through commit, spawn and reap.
+//! The download runs on its own thread; the worker never waits for the network.
+mod fetch;
 mod messages;
 mod worker;
 use rad_authority::{
@@ -22,7 +24,11 @@ type Download = Box<
         + Send,
 >;
 enum Job {
-    Prepare(PluginAdmin),
+    /// `package` is the downloaded archive; the worker validates and stages it.
+    Prepare {
+        request: PluginAdmin,
+        package: Option<Vec<u8>>,
+    },
     Commit(PreparedChange),
     Abort(PreparedChange),
     Spawn {
@@ -80,6 +86,7 @@ pub(crate) struct Admin {
     tx: mpsc::SyncSender<Job>,
     rx: mpsc::Receiver<Reply>,
     worker: Option<thread::JoinHandle<()>>,
+    fetcher: fetch::Fetcher,
     unsent: Option<Job>,
     state: AdminState,
     error: Option<&'static str>,
@@ -103,16 +110,17 @@ impl Admin {
         let (tx, jobs) = mpsc::sync_channel(1);
         let (results, rx) = mpsc::sync_channel(1);
         let cancel = rad_plugin_manager::Cancellation::default();
-        let worker_cancel = cancel.clone();
+        let worker_wake = wake.clone();
         let worker = thread::Builder::new()
             .name("rad-plugin-admin".into())
-            .spawn(move || worker::run(root, jobs, results, wake, download, worker_cancel))
+            .spawn(move || worker::run(root, jobs, results, worker_wake))
             .ok();
         let failed = worker.is_none();
         Self {
             tx,
             rx,
             worker,
+            fetcher: fetch::Fetcher::new(wake, download),
             unsent: None,
             state: if failed {
                 AdminState::Failed
@@ -145,19 +153,20 @@ impl Admin {
         if origin != Origin::Editor {
             return Err("permission_denied");
         }
-        if self.busy || self.locked || self.stopping {
+        if self.busy || self.fetcher.active() || self.locked || self.stopping {
             return Err("resource_exhausted");
         }
         if let Some(id) = &request.plugin_id {
             actor.plugin_change_allowed(id).map_err(plugin_error)?;
         }
         let next = self.next.checked_add(1).ok_or("resource_exhausted")?;
+        self.fetcher
+            .start(request, &self.cancel)
+            .map_err(|_| "resource_exhausted")?;
         self.next = next;
         self.operation = Some(next);
         self.error = None;
-        self.busy = true;
         self.state = AdminState::Preparing;
-        self.send(Job::Prepare(request));
         Ok(json!({"operation_id":next.to_string(),"state":"preparing"}))
     }
     fn send(&mut self, job: Job) {
@@ -271,6 +280,8 @@ impl Admin {
                 _ => {}
             }
         }
+        self.fetcher.collect();
+        self.dispatch_fetched();
         self.reconcile_demand(actor, host, now);
         if self.stopping && (!self.busy || self.locked) && !self.stop_sent && self.unsent.is_none()
         {
@@ -278,10 +289,40 @@ impl Admin {
             self.send(Job::Stop);
         }
     }
+    /// Hands a returned download to the worker once it is idle. Selector, permits and
+    /// publication stay here: the permit is born only in `Reply::Prepared`.
+    fn dispatch_fetched(&mut self) {
+        if self.stopping || self.locked {
+            // A download that returns after shutdown (or a lock) is dropped unused.
+            if self.fetcher.take_done().is_some() && !self.locked {
+                self.error = Some("cancelled");
+                if !self.busy {
+                    self.state = AdminState::Failed;
+                }
+            }
+            return;
+        }
+        if self.busy || self.unsent.is_some() {
+            return;
+        }
+        match self.fetcher.take_done() {
+            None => {}
+            Some((_, Err(e))) => {
+                self.error = Some(manager_error(e));
+                self.state = AdminState::Failed;
+            }
+            Some((request, Ok(package))) => {
+                self.busy = true;
+                self.state = AdminState::Preparing;
+                self.send(Job::Prepare { request, package });
+            }
+        }
+    }
     /// Explicit repair of the same failed selection, only after its process was reaped.
     /// No package operation, configuration edit, credential replacement or action replay.
     pub fn can_retry(&self, id: &str, actor: &Authority, host: &Host) -> bool {
         !self.busy
+            && !self.fetcher.active()
             && !self.locked
             && !self.stopping
             && self.startup.is_empty()
@@ -450,7 +491,8 @@ impl Admin {
             })
             .collect();
         json!({
-            "state": self.state.wire(),
+            // The download is part of the visible operation although the worker is free.
+            "state": if self.fetcher.active() { AdminState::Preparing.wire() } else { self.state.wire() },
             "operation_id": self.operation.map(|n| n.to_string()),
             "error": self.error,
             "locked": self.locked,
@@ -463,7 +505,7 @@ impl Admin {
         self.cancel.cancel();
     }
     pub fn stopped(&self) -> bool {
-        self.worker.as_ref().is_none_or(|w| w.is_finished())
+        self.worker.as_ref().is_none_or(|w| w.is_finished()) && self.fetcher.stopped()
     }
 }
 fn diagnostic_code(d: rad_plugin_host::Diagnostic) -> &'static str {
@@ -717,7 +759,7 @@ mod lifecycle_tests {
         let end = Instant::now() + Duration::from_secs(5);
         loop {
             tick(admin, actor, ports, now);
-            if !admin.busy && admin.startup.is_empty() {
+            if !admin.busy && !admin.fetcher.active() && admin.startup.is_empty() {
                 break;
             }
             assert!(
@@ -908,6 +950,84 @@ mod lifecycle_tests {
         ports.host.shutdown();
         while !admin.stopped() || ports.host.resources().0 > 0 {
             tick(&mut admin, &mut actor, &mut ports, 100);
+            assert!(Instant::now() < end);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn held_download_of_one_plugin_does_not_delay_cold_start_of_another() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let root = std::env::temp_dir().join(format!("rad-b6-fetch-{}", std::process::id()));
+        assert!(!root.exists());
+        let (b_package, a_package) = (package(1), package_for("org.rad.other", 1));
+        let release = Arc::new(AtomicBool::new(false));
+        let entered = Arc::new(AtomicBool::new(false));
+        let (r, e) = (release.clone(), entered.clone());
+        let mut admin = Admin::new(
+            root.clone(),
+            Arc::new(|| {}),
+            Box::new(move |source, _| {
+                if source.ends_with("/v1") {
+                    return Ok(b_package.clone());
+                }
+                e.store(true, Ordering::SeqCst);
+                while !r.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Ok(a_package.clone())
+            }),
+        );
+        let c = Configuration::prepare_new(&IdentityRegistry::new(95).unwrap()).unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(23).unwrap());
+        let mut ports = crate::plugin_dispatch::Plugins::default();
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        admin
+            .submit(Origin::Editor, request("install", Some(1)), &actor)
+            .unwrap();
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        assert_eq!(ports.host.state("org.rad.fixture"), None, "B starts cold");
+        // Install A: its download is held by the fake downloader.
+        admin
+            .submit(Origin::Editor, request("install", Some(2)), &actor)
+            .unwrap();
+        let end = Instant::now() + Duration::from_secs(5);
+        while !entered.load(Ordering::SeqCst) {
+            tick(&mut admin, &mut actor, &mut ports, 0);
+            assert!(Instant::now() < end, "download of A never started");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // First demand for B while A is still downloading.
+        admin.set_extra_demand(["org.rad.fixture".into()].into());
+        let cold_start = Instant::now() + Duration::from_secs(3);
+        while ports.host.state("org.rad.fixture") != Some(State::Ready) {
+            tick(&mut admin, &mut actor, &mut ports, 0);
+            assert!(
+                Instant::now() < cold_start,
+                "B must reach Ready while A's download is held: {}",
+                admin.status(&ports.host)
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let held = admin.status(&ports.host);
+        assert_eq!(held["state"], "preparing", "A's operation stays visible");
+        assert_eq!(
+            admin.submit(Origin::Editor, request("install", Some(2)), &actor),
+            Err("resource_exhausted"),
+            "one administrative operation at a time"
+        );
+        release.store(true, Ordering::SeqCst);
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        let done = admin.status(&ports.host);
+        assert_eq!(done["error"], serde_json::Value::Null);
+        assert_eq!(done["items"].as_array().unwrap().len(), 2, "A installed");
+        assert_eq!(ports.host.state("org.rad.fixture"), Some(State::Ready));
+        admin.set_extra_demand(Default::default());
+        admin.shutdown();
+        ports.host.shutdown();
+        let end = Instant::now() + Duration::from_secs(5);
+        while !admin.stopped() || ports.host.resources().0 > 0 {
+            tick(&mut admin, &mut actor, &mut ports, 0);
             assert!(Instant::now() < end);
             std::thread::sleep(Duration::from_millis(1));
         }
