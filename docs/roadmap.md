@@ -255,7 +255,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   manteniendo serializados el selector, los permits y la publicación.
 - **Pruebas:** un downloader falso retenido y la demanda de otro plugin, sin red.
 
-### B7 · El deadline del Host se trata como terminación
+### B7 · El deadline del Host se trata como terminación — hecho (9a1bc7f)
 
 - **Evidencia:** `crates/rad-plugin-host/src/worker.rs:63–99,465–476`;
   `crates/rad-runtime/src/plugin_dispatch.rs:191–202`;
