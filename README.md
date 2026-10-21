@@ -97,9 +97,9 @@ runtime does not answer, it writes the unit
 `$XDG_CONFIG_HOME/systemd/user/` (or `~/.config/systemd/user/`) pointing at the
 `rad-runtime` beside the editor, rewrites it when a new version changes it, and
 starts it, with or without autostart. Keep `rad-runtime` and `rad-launcher-helper`
-together in that folder. The service starts without the deck; using it is a
-machine setting changed from the editor. Starting with your computer will
-arrive as an editor setting.
+together in that folder. The service starts without the deck. Using the deck and
+starting RAD with your computer are machine settings changed from the editor;
+turning on the first also turns on the second.
 
 The unit restarts the runtime after unexpected failures (exit code 1 or a crash) with a
 growing delay, and stops after 5 starts in 5 minutes. It does not restart after a clean

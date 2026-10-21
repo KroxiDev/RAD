@@ -100,9 +100,9 @@ runtime no responde, escribe la unidad
 `$XDG_CONFIG_HOME/systemd/user/` (o `~/.config/systemd/user/`) apuntando al
 `rad-runtime` que está junto al editor, la reescribe si una versión nueva la cambia
 y la arranca, con o sin inicio automático. Mantén `rad-runtime` y
-`rad-launcher-helper` juntos en esa carpeta. El servicio arranca sin el deck;
-usarlo es un ajuste de la máquina que se cambia desde el editor. Habilitar el inicio con
-el equipo vendrá como un ajuste del editor.
+`rad-launcher-helper` juntos en esa carpeta. El servicio arranca sin el deck. Usar
+el deck e iniciar RAD con el equipo son ajustes de la máquina que se cambian desde el
+editor; activar el primero activa también el segundo.
 
 La unidad reinicia el runtime tras un fallo inesperado (código de salida 1 o una
 caída) con una espera creciente, y se detiene tras 5 arranques en 5 minutos. No lo
