@@ -1,5 +1,6 @@
 //! One editor per session bus. Registration precedes window creation, so even
 //! simultaneous launches become activations of the same owner, not extra windows.
+//! Its `quit` action closes the editor when RAD is quit from the tray.
 use gio::{glib, prelude::*};
 use std::sync::{
     Arc,
@@ -15,10 +16,11 @@ pub struct Instance {
 }
 impl Instance {
     /// `None` means the existing editor was activated and this process must exit.
-    /// The callback may arrive before a window exists; its owner must retain that intent.
+    /// The callbacks may arrive before a window exists; their owner must retain that intent.
     pub fn claim(
         app_id: &str,
         activate: impl Fn() + Send + 'static,
+        quit: impl Fn() + Send + 'static,
     ) -> Result<Option<Self>, String> {
         let context = glib::MainContext::new();
         let loop_ = glib::MainLoop::new(Some(&context), false);
@@ -35,6 +37,9 @@ impl Instance {
                     let app =
                         gio::Application::new(Some(&app_id), gio::ApplicationFlags::FLAGS_NONE);
                     app.connect_activate(move |_| activate());
+                    let action = gio::SimpleAction::new("quit", None);
+                    action.connect_activate(move |_, _| quit());
+                    app.add_action(&action);
                     if let Err(error) = app.register(gio::Cancellable::NONE) {
                         let _ = tx.send(Err(error.to_string()));
                         return;
@@ -100,6 +105,7 @@ pub struct WindowActivation(std::sync::Mutex<WindowState>);
 struct WindowState {
     context: Option<eframe::egui::Context>,
     pending: bool,
+    closing: bool,
 }
 #[cfg(feature = "gui")]
 impl WindowActivation {
@@ -111,12 +117,26 @@ impl WindowActivation {
             state.pending = true;
         }
     }
+    /// RAD was quit: the window closes, or will as soon as it exists.
+    pub fn close(&self) {
+        let mut state = self.0.lock().expect("window activation mutex");
+        match &state.context {
+            Some(context) => Self::close_window(context),
+            None => state.closing = true,
+        }
+    }
     pub fn bind(&self, context: &eframe::egui::Context) {
         let mut state = self.0.lock().expect("window activation mutex");
         state.context = Some(context.clone());
-        if std::mem::take(&mut state.pending) {
+        if std::mem::take(&mut state.closing) {
+            Self::close_window(context);
+        } else if std::mem::take(&mut state.pending) {
             Self::focus(context);
         }
+    }
+    fn close_window(context: &eframe::egui::Context) {
+        context.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+        context.request_repaint();
     }
     fn focus(context: &eframe::egui::Context) {
         use eframe::egui::ViewportCommand;
@@ -153,6 +173,33 @@ mod tests {
             commands
                 .iter()
                 .any(|c| matches!(c, ViewportCommand::RequestUserAttention(_)))
+        );
+    }
+    #[test]
+    fn quitting_closes_the_window_now_or_as_soon_as_it_exists() {
+        let closes = |activation: &WindowActivation, quit_after_bind: bool| {
+            let context = Context::default();
+            let output = context.run_ui(Default::default(), |ui| {
+                activation.bind(ui.ctx());
+                if quit_after_bind {
+                    activation.close();
+                }
+            });
+            output.viewport_output[&ViewportId::ROOT]
+                .commands
+                .iter()
+                .any(|c| matches!(c, ViewportCommand::Close))
+        };
+        let before = WindowActivation::default();
+        before.close();
+        assert!(closes(&before, false), "quit during startup");
+        assert!(
+            closes(&WindowActivation::default(), true),
+            "quit with a window"
+        );
+        assert!(
+            !closes(&WindowActivation::default(), false),
+            "binding alone never closes"
         );
     }
 }

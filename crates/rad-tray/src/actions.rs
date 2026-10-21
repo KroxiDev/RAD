@@ -55,6 +55,7 @@ impl Actions {
                             o.store(false, Ordering::Release);
                         }
                         Ok(Action::Stop) => {
+                            close_editor(&bus);
                             stop_runtime();
                             s.store(false, Ordering::Release);
                         }
@@ -115,6 +116,27 @@ fn open_editor(bus: &gio::DBusConnection, editor: &std::path::Path, launch: &mut
     {
         Ok(child) => *launch = Some(child),
         Err(error) => eprintln!("RAD editor launch: {error}"),
+    }
+}
+/// Quitting RAD closes an open editor too; without one there is nothing to close.
+fn close_editor(bus: &gio::DBusConnection) {
+    let platform = std::collections::BTreeMap::<String, gio::glib::Variant>::new();
+    match bus.call_sync(
+        Some(EDITOR),
+        "/io/github/KroxiDev/RAD",
+        "org.gtk.Actions",
+        "Activate",
+        Some(&("quit", Vec::<gio::glib::Variant>::new(), platform).to_variant()),
+        None,
+        gio::DBusCallFlags::NO_AUTO_START,
+        2000,
+        gio::Cancellable::NONE,
+    ) {
+        Ok(_) => {}
+        Err(error)
+            if error.matches(gio::DBusError::ServiceUnknown)
+                || error.matches(gio::DBusError::NameHasNoOwner) => {}
+        Err(error) => eprintln!("RAD editor close: {error}"),
     }
 }
 fn stop_runtime() {

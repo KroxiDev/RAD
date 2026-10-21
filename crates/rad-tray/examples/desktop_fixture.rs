@@ -6,9 +6,11 @@ fn log(line: &str) {
     writeln!(file, "{line}").unwrap();
 }
 fn main() {
-    let instance = rad_editor::activation::Instance::claim(rad_editor::app_icon::APP_ID, || {
-        log("editor-activate")
-    })
+    let instance = rad_editor::activation::Instance::claim(
+        rad_editor::app_icon::APP_ID,
+        || log("editor-activate"),
+        || log("editor-quit"),
+    )
     .unwrap();
     let Some(instance) = instance else {
         return;

@@ -1,19 +1,20 @@
 fn main() -> Result<(), eframe::Error> {
     use std::{path::PathBuf, sync::Arc};
     let activation = Arc::new(rad_editor::activation::WindowActivation::default());
-    let notify = activation.clone();
-    let _instance =
-        match rad_editor::activation::Instance::claim(rad_editor::app_icon::APP_ID, move || {
-            notify.activate()
-        }) {
-            Ok(Some(instance)) => Some(instance),
-            Ok(None) => return Ok(()),
-            Err(error) => {
-                // A desktop without a session bus still gets a usable editor.
-                eprintln!("RAD editor activation unavailable: {error}");
-                None
-            }
-        };
+    let (notify, quit) = (activation.clone(), activation.clone());
+    let _instance = match rad_editor::activation::Instance::claim(
+        rad_editor::app_icon::APP_ID,
+        move || notify.activate(),
+        move || quit.close(),
+    ) {
+        Ok(Some(instance)) => Some(instance),
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            // A desktop without a session bus still gets a usable editor.
+            eprintln!("RAD editor activation unavailable: {error}");
+            None
+        }
+    };
     // The menu entry follows the editor in use (E2); failing to write it never blocks the editor.
     std::thread::spawn(|| {
         if let Err(error) = rad_editor::desktop::install_for_user() {

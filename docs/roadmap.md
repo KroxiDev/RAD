@@ -339,6 +339,11 @@ con lo que diga. E1–E3 son independientes de E4–E5.
 - **Límite:** sin operar Waybar, ventanas, hardware ni el systemd personal. La
   apariencia, el foco concedido por el compositor y los cgroups reales no se han
   verificado; un escritorio sin bandeja sigue pudiendo usar RAD. E2 no se implementa.
+- **Corrección (2026-10-21):** al probarlo, «Salir de RAD» detenía el runtime pero
+  dejaba abierta la ventana del editor. Ahora la bandeja activa primero la acción
+  `quit` del editor (GApplication) y la ventana se cierra, también si aún arrancaba.
+  Validación: bus privado (la orden de cerrar llega antes de la parada) y cierre
+  inmediato o pendiente de la ventana.
 
 ### E4 · Pantallas dentro de la ventana principal — hecho (commit `feat: show settings and plugin forms as in-window screens`)
 
@@ -378,8 +383,14 @@ con lo que diga. E1–E3 son independientes de E4–E5.
   la barra sigue 0 → 50 → 100 y desaparece; actualización oficial y de terceros;
   progreso por bloques en el descargador y de 0 a 100 en el runtime con un
   descargador falso. Workspace principal: build, tests y clippy.
-- **Límite:** sin capturas ni descargas reales; el usuario revisa el aspecto en la
-  app. Las copias de seguridad siguen mostrando bytes (UX6, abajo).
+- **Límite:** sin capturas; el usuario revisa el aspecto en la app. Las copias de
+  seguridad siguen mostrando bytes (UX6, abajo).
+- **Corrección (2026-10-21):** instalar o actualizar desde las releases 0.2.0 fallaba
+  siempre: el descargador exigía un paquete llamado `rad-plugin-<target>.radp` y las
+  releases publican `<id>-<versión>-<target>.radp`. Ahora acepta cualquier nombre
+  terminado en `-<target>.radp`, siempre que haya uno solo. Validación: selección de
+  paquete (nombre publicado, otro target, dos candidatos, target pegado) y una
+  descarga temporal real de `audio-v0.2.0` validada por el host, retirada después.
 
 ### E6 · Limpieza — hecha (3bcf3d3)
 

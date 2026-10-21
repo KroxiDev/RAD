@@ -61,7 +61,7 @@ RAD" is turned on in the editor's settings.
 
 Never run two deck controllers together. RAD does not read or modify data of other
 applications. Closing the editor leaves the runtime running; "Quit RAD" in the tray
-icon stops it.
+icon closes the editor and stops the runtime.
 
 Data lives in `$XDG_DATA_HOME/rad` or `~/.local/share/rad`; local sockets live
 under `$XDG_RUNTIME_DIR/rad`.

@@ -63,7 +63,7 @@ en los ajustes del editor.
 
 Nunca uses dos controladores del deck a la vez. RAD no lee ni modifica datos de
 otras aplicaciones. Cerrar el editor deja el runtime activo; «Salir de RAD» en el
-ícono de la bandeja lo detiene.
+ícono de la bandeja cierra el editor y detiene el runtime.
 
 Los datos viven en `$XDG_DATA_HOME/rad` o `~/.local/share/rad`; los sockets locales,
 bajo `$XDG_RUNTIME_DIR/rad`.

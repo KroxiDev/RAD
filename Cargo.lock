@@ -2306,23 +2306,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rad-transport"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "mio",
+ "rad-api",
+ "rad-wire",
+ "serde_json",
+]
+
+[[package]]
 name = "rad-tray"
 version = "0.1.0"
 dependencies = [
  "gio",
  "image",
  "rad-editor",
- "serde_json",
-]
-
-[[package]]
-name = "rad-transport"
-version = "0.1.0"
-dependencies = [
- "rad-api",
- "libc",
- "mio",
- "rad-wire",
  "serde_json",
 ]
 

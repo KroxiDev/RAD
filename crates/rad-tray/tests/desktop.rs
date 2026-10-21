@@ -290,6 +290,15 @@ fn private_tray_registers_late_reappears_opens_once_and_requests_clean_stop() {
             .unwrap()
             .contains("systemctl --user stop rad-runtime.service")
     });
+    // Quitting closes the open editor before stopping RAD.
+    let calls = std::fs::read_to_string(&log).unwrap();
+    let quit = calls
+        .find("editor-quit")
+        .expect("the editor is asked to close");
+    assert!(
+        quit < calls.find("systemctl --user stop").unwrap(),
+        "{calls}"
+    );
     // Simulate the unit's stop signal without touching the user's systemd.
     Command::new("kill")
         .args(["-TERM", &tray.0.id().to_string()])

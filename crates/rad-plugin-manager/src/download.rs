@@ -128,7 +128,9 @@ fn asset_for_target(bytes: &[u8], target: &str) -> Result<(String, u64), Error> 
     let mut matches = release
         .assets
         .iter()
-        .filter(|a| a.name == format!("rad-plugin-{target}.radp"));
+        // `rad-plugin-<target>.radp`, or `<id>-<version>-<target>.radp` as the official
+        // releases publish it: exactly one package for this target.
+        .filter(|a| a.name.ends_with(&format!("-{target}.radp")));
     let found = matches.next().ok_or(Error::AmbiguousAsset)?;
     if matches.next().is_some() {
         return Err(Error::AmbiguousAsset);
@@ -152,6 +154,21 @@ mod tests {
         assert_eq!(asset(br#"{"assets":[]}"#), Err(Error::AmbiguousAsset));
         let duplicate=br#"{"assets":[{"name":"rad-plugin-x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/a"},{"name":"rad-plugin-x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/b"}]}"#;
         assert_eq!(asset(duplicate), Err(Error::AmbiguousAsset));
+        // The official releases name the package after the plugin and its version.
+        let published=br#"{"assets":[{"name":"manifest.json","browser_download_url":"https://github.com/m"},{"name":"org.rad.audio-0.2.0-x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/p"},{"name":"org.rad.audio-0.2.0-aarch64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/q"}]}"#;
+        assert_eq!(asset(published).unwrap(), "https://github.com/p");
+        let two=br#"{"assets":[{"name":"rad-plugin-x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/a"},{"name":"org.rad.audio-0.2.0-x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/b"}]}"#;
+        assert_eq!(
+            asset(two),
+            Err(Error::AmbiguousAsset),
+            "two packages for the target"
+        );
+        let glued=br#"{"assets":[{"name":"plugin_x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/a"}]}"#;
+        assert_eq!(
+            asset(glued),
+            Err(Error::AmbiguousAsset),
+            "the target is a whole name part"
+        );
     }
 }
 

@@ -29,10 +29,12 @@ la única autoridad y no incorpora escritorio, GIO ni GPU.
   launcher (ADR 0013). La reclamación atómica del nombre resuelve también dos
   arranques simultáneos; una activación durante el arranque queda pendiente hasta
   que exista la ventana. No se mantiene el editor residente.
-- «Salir de RAD» pide `systemctl --user stop rad-runtime.service`, con plazo y reap
-  del proceso. La parada explícita no dispara `Restart=on-failure`; el editor que
-  ya estaba abierto no rearranca automáticamente por perder la conexión. El
-  autoinicio habilitado no cambia: RAD vuelve al abrir el editor o iniciar sesión.
+- «Salir de RAD» cierra primero el editor abierto, activando la acción `quit` de su
+  GApplication (sin editor no hay nada que cerrar), y luego pide
+  `systemctl --user stop rad-runtime.service`, con plazo y reap del proceso. La
+  parada explícita no dispara `Restart=on-failure`; un editor que siguiera abierto no
+  rearranca automáticamente por perder la conexión. El autoinicio habilitado no
+  cambia: RAD vuelve al abrir el editor o iniciar sesión.
 
 **Límites:** la activación pide al compositor mostrar/desminimizar y enfocar la
 ventana, usando también la petición xdg-activation que ofrece winit en Wayland
