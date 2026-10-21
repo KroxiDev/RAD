@@ -266,7 +266,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   respuesta o el reap, sin liberar credenciales ni repetir la acción; incluye la rama
   de caída del proceso.
 
-### D1 · El bucle principal depende del orden de llamada
+### D1 · El bucle principal depende del orden de llamada — hecho (cb68a21)
 
 - **Evidencia:** `admin.poll` se llama dos veces seguidas, con comentarios que
   explican el orden (`crates/rad-runtime/src/server.rs:610,621`).
