@@ -209,6 +209,7 @@ impl App {
             crate::service::user_service(),
             SERVICE_SETTLE,
         ));
+        app.bootstrap_service();
         app
     }
     fn with_preferences_path(

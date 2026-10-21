@@ -389,3 +389,26 @@ fn the_messages_of_both_failures_exist_in_every_language_in_plain_words() {
         assert_eq!(rad_editor::texts::text("es", kind.message()), es);
     }
 }
+
+#[test]
+fn tray_unit_is_installed_with_runtime_and_is_only_reloaded_when_changed() {
+    let home = Home::new("tray-unit", true);
+    std::fs::write(home.editor.parent().unwrap().join("rad-tray"), b"").unwrap();
+    let fake = Fake::default();
+    let service = home.service(&fake);
+    service.install().unwrap();
+    let path = home.units.join("rad-tray.service");
+    let wanted = std::fs::read_to_string(&path).expect("tray is installed with runtime");
+    assert!(wanted.contains(&format!(
+        "ExecStart={}\n",
+        home.editor.parent().unwrap().join("rad-tray").display()
+    )));
+    assert!(wanted.contains("BindsTo=rad-runtime.service"));
+    fake.clear();
+    service.install().unwrap();
+    assert!(fake.calls().is_empty());
+    std::fs::write(&path, "old tray unit").unwrap();
+    service.install().unwrap();
+    assert_eq!(fake.verbs(), ["daemon-reload"]);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), wanted);
+}

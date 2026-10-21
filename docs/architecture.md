@@ -17,6 +17,9 @@ flowchart LR
   Editor[rad-editor: GUI y workers cliente] -->|API tipada y avisos| Runtime
   Editor -.->|instala la unidad, la arranca y habilita el autoinicio| Service[systemd de usuario]
   Service -.-> Runtime
+  Service -.->|mismo ciclo de vida| Tray[rad-tray: sin GUI ni GPU]
+  Tray -->|activa la instancia única| Editor
+  Tray -.->|parada explícita| Service
   CLI[rad-cli y automatización] -->|API tipada, JSON estable| Runtime
   subgraph Runtime[rad-runtime: proceso único con reinicio supervisado y modo recuperación]
     Transport[Transport y Protocol] --> Authority[Authority: publicación, admisión y navegación]
@@ -45,6 +48,8 @@ flowchart LR
   configuración, entra en modo recuperación ([ADR 0011](adr/0011-salidas-y-modo-recuperacion.md)).
 - **rad-editor y rad-cli:** clientes del socket local; observan y piden
   ([ADR 0010](adr/0010-api-de-clientes.md)).
+- **rad-tray:** cliente de escritorio sin GUI/GPU; publica la bandeja y activa el
+  editor, ligado al ciclo del servicio ([ADR 0016](adr/0016-presencia-de-escritorio.md)).
 - **Plugins:** un proceso por plugin activo, arrancado por demanda; nada de lo que
   lancen sobrevive al runtime ([ADR 0013](adr/0013-limpieza-de-procesos.md)).
 - **rad-launcher-helper:** mantiene GIO fuera del runtime y lanza cada aplicación en
@@ -125,6 +130,7 @@ El usuario ve el funcionamiento, no el mecanismo: principios S1–S5 en [ux.md](
 | 4 · Traducción y composición | `rad-protocol` | API de clientes ↔ interface de aplicación | plugin-contract, authority, core, wire, api |
 | 4 | `rad-runtime` | Composición, event loop, efectos y ajustes de la máquina; único que compone adapters | todas las anteriores |
 | 5 · Clientes | `rad-client` | Conexión, consultas consistentes y CLI | wire, api |
+| 5 | `rad-tray` | Bandeja de sesión, activación del editor y parada del servicio | ninguna |
 | 5 | `rad-editor` | Presentación, catálogos de textos, preferencias, borradores y workers cliente | plugin-contract, client, api |
 | Extensiones (workspace `plugins/`) | `rad-plugin-sdk` | Handshake, framing, correlación, respuestas, suscripciones y límites | plugin-contract ([ADR 0007](adr/0007-contrato-de-plugins-v1.md)) |
 | Extensiones | plugins oficiales | Semántica de cada integración | SDK |
@@ -228,3 +234,4 @@ Estas piezas parecen simplificables y no lo son:
 | [0013](adr/0013-limpieza-de-procesos.md) | Limpieza de procesos: scopes para las aplicaciones y `KillMode=mixed` |
 | [0014](adr/0014-residual-de-plugins-en-el-host.md) | El residual de un plugin vencido pasa al Host |
 | [0015](adr/0015-gesto-del-plan-y-documento-v3.md) | Un gesto por botón, umbral global de pulsación larga y documento v3 |
+| [0016](adr/0016-presencia-de-escritorio.md) | Identidad de escritorio, bandeja independiente y activación de un único editor |

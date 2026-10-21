@@ -5,6 +5,8 @@
 # ("Use the Stream Deck with RAD"); nothing about it belongs in this unit.
 [Unit]
 Description=RAD local action deck authority
+# Optional desktop companion; its failure must not stop the authority.
+Wants=rad-tray.service
 # Restart without loops (ADR 0011): at most 5 starts in 5 minutes, then the unit stays
 # failed and the Editor says so. These two belong to [Unit], not [Service].
 StartLimitIntervalSec=300

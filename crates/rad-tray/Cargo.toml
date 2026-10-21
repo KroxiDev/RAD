@@ -1,0 +1,13 @@
+[package]
+name = "rad-tray"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gio = { version = "=0.22.10", default-features = false, features = ["v2_60"] }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+serde_json = "=1.0.154"
+
+[dev-dependencies]
+rad-editor = { path = "../rad-editor", default-features = false }

@@ -13,6 +13,7 @@ use std::{
 pub const UNIT: &str = "rad-runtime.service";
 /// The unit the editor installs; only its `ExecStart=` line is replaced.
 const TEMPLATE: &str = include_str!("../../../packaging/rad-runtime.service");
+const TRAY_TEMPLATE: &str = include_str!("../../../packaging/rad-tray.service");
 /// Most that is kept of what `systemctl` prints on each stream.
 const OUTPUT_LIMIT: u64 = 64 * 1024;
 /// Longest a single `systemctl` call may take.
@@ -308,7 +309,7 @@ impl<S: Systemctl> Service<S> {
             )))
         }
     }
-    /// Writes the unit if it is missing or differs, then reloads systemd. Touches no other unit.
+    /// Installs the runtime and available tray units if missing or changed, then reloads once.
     pub fn install(&self) -> Result<(), Failure> {
         let runtime = sibling_runtime(&self.editor).ok_or_else(|| {
             Failure::could_not_start(format!(
@@ -316,16 +317,39 @@ impl<S: Systemctl> Service<S> {
                 self.editor.display()
             ))
         })?;
-        let wanted = render_unit(TEMPLATE, &runtime).map_err(Failure::could_not_start)?;
-        let path = self.unit_dir.join(UNIT);
-        if std::fs::read(&path).is_ok_and(|current| current == wanted.as_bytes()) {
-            return Ok(());
+        let mut units = vec![(
+            UNIT,
+            render_unit(TEMPLATE, &runtime).map_err(Failure::could_not_start)?,
+        )];
+        // A partial build without the optional tray must not prevent the authority starting.
+        if let Some(tray) = self
+            .editor
+            .parent()
+            .map(|dir| dir.join("rad-tray"))
+            .filter(|path| path.is_file())
+        {
+            units.push((
+                "rad-tray.service",
+                render_unit(TRAY_TEMPLATE, &tray).map_err(Failure::could_not_start)?,
+            ));
         }
-        write_atomic(&path, &wanted).map_err(|e| {
-            Failure::could_not_start(format!("could not write {}: {e}", path.display()))
-        })?;
-        self.call_ok(&["daemon-reload"]).map(drop)
+        let mut changed = false;
+        for (name, wanted) in units {
+            let path = self.unit_dir.join(name);
+            if std::fs::read(&path).is_ok_and(|current| current == wanted.as_bytes()) {
+                continue;
+            }
+            write_atomic(&path, &wanted).map_err(|e| {
+                Failure::could_not_start(format!("could not write {}: {e}", path.display()))
+            })?;
+            changed = true;
+        }
+        if changed {
+            self.call_ok(&["daemon-reload"])?;
+        }
+        Ok(())
     }
+
     /// Installs if needed and starts the unit, with or without autostart.
     pub fn start(&self) -> Result<(), Failure> {
         self.install()?;

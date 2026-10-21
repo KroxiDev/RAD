@@ -2166,6 +2166,7 @@ name = "rad-editor"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "gio",
  "image",
  "rad-api",
  "rad-client",
@@ -2302,6 +2303,16 @@ dependencies = [
  "rad-media",
  "rusqlite",
  "sha2",
+]
+
+[[package]]
+name = "rad-tray"
+version = "0.1.0"
+dependencies = [
+ "gio",
+ "image",
+ "rad-editor",
+ "serde_json",
 ]
 
 [[package]]

@@ -312,7 +312,7 @@ con lo que diga. E1–E3 son independientes de E4–E5.
 - **Pruebas:** contra un HOME temporal, instala, no reescribe sin cambios y reescribe
   cuando cambian; la entrada es válida y apunta al editor.
 
-### E3 · Ícono en la bandeja mientras RAD corre
+### E3 · Ícono en la bandeja mientras RAD corre — hecho (commit `feat: add runtime-bound desktop tray`)
 
 - **Comportamiento:** el ícono está mientras RAD corre, con o sin el editor abierto;
   en Omarchy queda en el grupo de la flecha de Waybar, como Discord. Clic: abre el
@@ -320,17 +320,22 @@ con lo que diga. E1–E3 son independientes de E4–E5.
   «Salir de RAD»; salir detiene el servicio con una parada limpia, que no se reinicia:
   RAD vuelve al abrir el editor o al iniciar sesión si el autoinicio está activo. Un
   escritorio sin bandeja no muestra el ícono y RAD funciona igual.
-- **Decisión:** ADR 0016, que añade el proceso y su fila en [Capas](architecture.md#capas).
-  Propuesta: un proceso aparte, `rad-tray`, cliente como el editor, sin ventana ni
-  GPU; vive mientras vive el servicio y muere con él. Habla con la bandeja por el
-  D-Bus de la sesión (StatusNotifierItem y su menú) con `gio`, que ya está en el
-  workspace, sin dependencias nuevas. Quedan descartados el runtime, que no lleva
-  escritorio ni GIO (por eso existe `rad-launcher-helper`), y un editor residente,
-  que mantendría la GUI en memoria y no estaría tras un autoinicio.
-- **Pruebas:** con un bus D-Bus privado y una bandeja falsa: registro, nuevo registro
-  cuando la bandeja aparece después, clic que abre el editor con un lanzador falso y
-  un segundo clic que no abre otro, «Salir» que pide la parada con un systemctl
-  falso, y fin del proceso con el servicio.
+- **Entrega:** [ADR 0016](adr/0016-presencia-de-escritorio.md). `rad-tray` es un
+  cliente separado, sin ventana ni GPU, con StatusNotifierItem y DBusMenu por GIO;
+  usa el mismo PNG de E1. Su unidad acompaña al runtime con Wants, BindsTo y PartOf.
+  Al abrir el editor se instala y arranca una sola vez, incluso con un runtime
+  previo activo, sin volver a arrancarlo después de Salir. La instancia única del
+  editor recibe la activación; se muestra y pide foco mediante
+  el protocolo del escritorio. El editor lanzado desde la bandeja va a su propio
+  scope. Salir pide `systemctl --user stop rad-runtime.service`; el editor no vuelve
+  a arrancarlo automáticamente tras haber conectado (Reintentar sigue explícito).
+- **Validación focal:** bus D-Bus privado y falsos de bandeja, lanzador y systemctl:
+  registro tardío y reaparición del watcher, clic sin duplicar editor, menú, parada y
+  terminación. Pruebas de instalación de unidades, no rebootstrap del editor,
+  activación pendiente y capas; build, fmt y clippy de los dos paquetes tocados.
+- **Límite:** sin operar Waybar, ventanas, hardware ni el systemd personal. La
+  apariencia, el foco concedido por el compositor y los cgroups reales no se han
+  verificado; un escritorio sin bandeja sigue pudiendo usar RAD. E2 no se implementa.
 
 ### E4 · Pantallas dentro de la ventana principal
 
@@ -364,7 +369,7 @@ con lo que diga. E1–E3 son independientes de E4–E5.
 - **Pruebas:** con 8 y con 32 plugins sintéticos todos se alcanzan; instalar un
   oficial envía su origen; la barra avanza de 0 a 100 con un downloader falso.
 
-### E6 · Limpieza — hecha (commit `docs: refresh editor screenshots and remove obsolete skill`)
+### E6 · Limpieza — hecha (3bcf3d3)
 
 - **Local — hecho (2026-10-21):** 61 restos de las fases 1 y 2 en `target/`
   (registros, pruebas y builds de publicación; 1,3 GB) a la papelera. Se conservan la

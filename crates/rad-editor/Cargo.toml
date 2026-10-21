@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+gio = { version = "=0.22.10", default-features = false, features = ["v2_60"] }
 rad-api = { path = "../rad-api" }
 zeroize = "=1.9.1"
 rad-plugin-contract = { path = "../rad-plugin-contract" }

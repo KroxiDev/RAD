@@ -62,3 +62,5 @@ pub mod recovery;
 pub mod schedule;
 pub mod service;
 pub mod texts;
+
+pub mod activation;

@@ -8,7 +8,7 @@ use eframe::egui;
 
 #[derive(Default)]
 pub(super) struct ServiceUi {
-    /// A start was asked for since the last connection: one per attempt, never a loop.
+    /// Bootstrap was attempted or a connection already succeeded; never undo a stop.
     tried: bool,
     /// The next failed connection asks systemd why.
     inspect_due: bool,
@@ -18,11 +18,34 @@ pub(super) struct ServiceUi {
 }
 
 impl App {
+    /// One editor launch refreshes the installed units even when the runtime already answers.
+    pub(super) fn bootstrap_service(&mut self) {
+        if self.service.tried {
+            return;
+        }
+        if self
+            .service_worker
+            .as_mut()
+            .is_some_and(|worker| worker.submit(Job::Start).is_ok())
+        {
+            self.service = ServiceUi {
+                tried: true,
+                waiting: true,
+                ..Default::default()
+            };
+        }
+    }
+
     /// Starts the service when the runtime does not answer, at most once per attempt, and
     /// asks systemd why when it still does not. Called every turn; it sleeps when idle.
     pub(super) fn pump_service(&mut self, ctx: &egui::Context) {
         if self.connected {
-            self.service = ServiceUi::default();
+            // After connecting, only systemd owns restart policy. Otherwise losing a
+            // connection after the tray's Stop would silently start the service again.
+            self.service = ServiceUi {
+                tried: true,
+                ..Default::default()
+            };
         }
         let Some(worker) = self.service_worker.as_mut() else {
             return;
@@ -89,7 +112,11 @@ impl App {
                 self.service.failure = Some(failure);
                 self.service.waiting = false;
             }
-            None if outcome.job == Job::Inspect => self.service.waiting = false,
+            None if outcome.job == Job::Inspect || self.connected => {
+                // Bootstrap also updates units for an already-active runtime. Do not
+                // replace a healthy RPC session just because its idempotent Start ended.
+                self.service.waiting = false;
+            }
             None => {
                 // Started: connect once; if the runtime still is silent, say why.
                 self.service.inspect_due = true;
@@ -221,6 +248,41 @@ mod tests {
         assert_eq!(*asked.lock().unwrap(), [Job::Start]);
         assert_eq!(connects.lock().unwrap().len(), 2);
         assert!(app.service.failure.is_none() && !app.service.waiting);
+    }
+
+    #[test]
+    fn opening_with_an_active_runtime_starts_once_and_does_not_replace_its_connection() {
+        let (mut app, connects, asked) = editor(1, |_| None);
+        app.bootstrap_service();
+        app.bootstrap_service();
+        pump_until(&mut app, |app| app.connected);
+        quiet(&mut app);
+        assert_eq!(*asked.lock().unwrap(), [Job::Start]);
+        assert_eq!(
+            connects.lock().unwrap().len(),
+            1,
+            "an active client is not reconnected"
+        );
+    }
+
+    #[test]
+    fn losing_a_connected_runtime_does_not_undo_an_explicit_stop_but_retry_still_works() {
+        let (mut app, _, asked) = editor(1, |_| Some(stopped()));
+        pump_until(&mut app, |app| app.connected);
+        quiet(&mut app);
+        assert!(asked.lock().unwrap().is_empty());
+        // The same unavailable response the RPC worker emits after the service stops.
+        app.worker = Worker::spawn(|_: Main| unavailable());
+        app.worker.submit(Main::Connect).unwrap();
+        pump_until(&mut app, |app| !app.connected);
+        quiet(&mut app);
+        assert!(
+            asked.lock().unwrap().is_empty(),
+            "the editor must not restart a stopped service"
+        );
+        app.retry_service(&egui::Context::default());
+        pump_until(&mut app, |app| app.service.failure.is_some());
+        assert_eq!(*asked.lock().unwrap(), [Job::Retry]);
     }
 
     #[test]

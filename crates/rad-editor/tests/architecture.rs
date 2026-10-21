@@ -140,7 +140,7 @@ fn check_workspace(root: &Path, workspace: &Path, allowed: &BTreeMap<String, Vec
                         !(adapters.contains(&name) && adapters.contains(&local.as_str())),
                         "adapters must not compose each other: {name} -> {local}"
                     );
-                    if matches!(name, "rad-client" | "rad-editor") {
+                    if matches!(name, "rad-client" | "rad-editor" | "rad-tray") {
                         assert!(
                             ["rad-wire", "rad-api", "rad-client", "rad-plugin-contract"]
                                 .contains(&local.as_str()),

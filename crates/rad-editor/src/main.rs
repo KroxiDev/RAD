@@ -1,5 +1,19 @@
 fn main() -> Result<(), eframe::Error> {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
+    let activation = Arc::new(rad_editor::activation::WindowActivation::default());
+    let notify = activation.clone();
+    let _instance =
+        match rad_editor::activation::Instance::claim(rad_editor::app_icon::APP_ID, move || {
+            notify.activate()
+        }) {
+            Ok(Some(instance)) => Some(instance),
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                // A desktop without a session bus still gets a usable editor.
+                eprintln!("RAD editor activation unavailable: {error}");
+                None
+            }
+        };
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_default();
@@ -24,6 +38,9 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         rad_editor::texts::text("en", "RAD"),
         options,
-        Box::new(move |_| Ok(Box::new(rad_editor::app::App::new(runtime, theme)))),
+        Box::new(move |creation| {
+            activation.bind(&creation.egui_ctx);
+            Ok(Box::new(rad_editor::app::App::new(runtime, theme)))
+        }),
     )
 }
