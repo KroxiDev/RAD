@@ -290,7 +290,7 @@ Cambios puntuales pedidos por el usuario tras probar el editor (2026-10-21), ant
 la fase 4. Lo visual se valida con el usuario: cada pantalla se le muestra y se ajusta
 con lo que diga. E1–E3 son independientes de E4–E5.
 
-### E1 · Ícono de RAD — hecho (commit `feat: add shared RAD desktop icon`)
+### E1 · Ícono de RAD — hecho (b80d235)
 
 - **Entrega:** `packaging/rad.png` es la K provisional original de GitHub y la única
   fuente de imagen; se reemplaza ese PNG y se recompila para cambiarla. La ventana
@@ -364,16 +364,19 @@ con lo que diga. E1–E3 son independientes de E4–E5.
 - **Pruebas:** con 8 y con 32 plugins sintéticos todos se alcanzan; instalar un
   oficial envía su origen; la barra avanza de 0 a 100 con un downloader falso.
 
-### E6 · Limpieza
+### E6 · Limpieza — hecha (commit `docs: refresh editor screenshots and remove obsolete skill`)
 
 - **Local — hecho (2026-10-21):** 61 restos de las fases 1 y 2 en `target/`
   (registros, pruebas y builds de publicación; 1,3 GB) a la papelera. Se conservan la
   caché de compilación, `target/plugins`, `target/conformance` y `target/tmp`.
-- **Repo:** quitar el skill `completar-contrato` (`.agentic/skills/completar-contrato.md`,
-  `.claude/commands/completar-contrato.md` y su mención en `.agentic/README.md`):
-  completa los `[PENDIENTE]` de AGENTS.md y no queda ninguno. Rehacer las capturas
-  de `docs/images/` después de E4 y E5. Lo demás versionado está en uso: fixtures
-  golden, conformidades y avisos de licencias de los plugins.
+- **Repo — hecho:** retirados el skill `completar-contrato`, su adaptador Claude y
+  sus menciones en `.agentic/README.md`. Lo demás versionado se conserva.
+- **Capturas — hechas:** las cuatro imágenes de `docs/images/` muestran el editor
+  vigente con datos demo, gestos de fase 3 y ajustes actuales; el encargo de E6 las
+  adelanta sin ejecutar E4 ni E5, que siguen pendientes. Render real de egui sin
+  ventana, hardware ni servicios personales; generador temporal retirado.
+- **Validación focal:** generación e inspección visual de las cuatro capturas
+  (1440 × 900), referencias de ambos README y respaldo Git de los archivos retirados.
 
 ## Fase UX · En paralelo
 

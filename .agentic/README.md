@@ -8,7 +8,6 @@ herramientas lean lo mismo.
 .agentic/
   golden-rules.md                # reglas siempre vigentes
   skills/orquestar.md            # el procedimiento de orquestación
-  skills/completar-contrato.md    # llenar los [PENDIENTE] de AGENTS.md
   skills/tdd.md                  # ciclo rojo–verde–refactor
   skills/code-review.md          # estándares y especificación
   skills/usar-engram.md          # contexto entre sesiones, si está disponible
@@ -20,19 +19,6 @@ herramientas lean lo mismo.
 
 Para retirar la capa: borrar `.agentic/`, `.claude/`, `.codex/`, y el bloque
 `AGENTIC_TEMPLATE` de `AGENTS.md` y `CLAUDE.md`.
-
-## Primer paso: completar el contrato
-
-`AGENTS.md` llega con campos `[PENDIENTE]`. Para llenarlos:
-
-- **Claude** → `/completar-contrato`
-- **Codex** → `Leé .agentic/skills/completar-contrato.md y aplicalo`
-
-Recorre el repositorio, propone lo que puede inferir con su evidencia, y pregunta
-solo lo que no. Lo que no se confirma queda `[PENDIENTE]`: un hueco declarado se
-ve, un valor inventado no.
-
-Sirve igual más adelante, cada vez que agregues un campo nuevo al contrato.
 
 ## Procedimientos incluidos
 
