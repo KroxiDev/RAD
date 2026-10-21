@@ -102,14 +102,19 @@ impl Native {
         }
         Ok(output)
     }
+    /// Pumps plugins and the launcher. The flag is `true` when this call changed anything
+    /// another step may depend on: a plugin binding changed state, an execution
+    /// completed, or Authority produced effects. An idle pump returns `false`.
     pub fn pump(
         &mut self,
         actor: &mut Authority,
         transport: &Transport,
-    ) -> Result<Vec<Effect>, LauncherError> {
+    ) -> Result<(Vec<Effect>, bool), LauncherError> {
         let now = monotonic_ms()?;
+        let bindings_before = self.binding_states();
         let completed = self.plugins.pump(actor, now)?;
         let effects = actor.before_event(now).map_err(|_| LauncherError::Clock)?;
+        let mut advanced = !completed.is_empty() || !effects.is_empty();
         let mut output = self.route(actor, effects)?;
         for (id, result) in completed {
             let effects = actor
@@ -124,6 +129,7 @@ impl Native {
             let _ = self.launcher.shutdown();
         }
         while let Some((id, result)) = self.launcher.take_completion() {
+            advanced = true;
             let effects = actor
                 .before_event(monotonic_ms()?)
                 .map_err(|_| LauncherError::Clock)?;
@@ -159,7 +165,8 @@ impl Native {
             self.writable = writable;
         }
         self.register_plugin_io(transport)?;
-        Ok(output)
+        advanced |= self.binding_states() != bindings_before;
+        Ok((output, advanced))
     }
 }
 
@@ -210,5 +217,12 @@ impl Native {
     }
     pub fn plugins_stopped(&self) -> bool {
         self.plugins.host.resources().0 == 0
+    }
+    fn binding_states(&self) -> Vec<(String, u64, rad_plugin_host::State)> {
+        self.plugins
+            .host
+            .bindings()
+            .map(|(m, g, s)| (m.id.clone(), g, s))
+            .collect()
     }
 }

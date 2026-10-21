@@ -94,11 +94,14 @@ impl Server {
         }
         Ok(())
     }
-    pub(super) fn poll_credentials(&mut self) -> Result<(), RuntimeError> {
+    /// Applies what the credential worker finished; `true` when it finished anything.
+    pub(super) fn poll_credentials(&mut self) -> Result<bool, RuntimeError> {
+        let mut advanced = false;
         while let Some(event) = self.credentials.worker.poll() {
             let Event::Finished(done) = event else {
                 continue;
             };
+            advanced = true;
             if done.state == VaultState::Unknown {
                 self.credentials.loaded.clear();
                 for binding in bindings(&self.actor) {
@@ -176,7 +179,7 @@ impl Server {
             }
         }
         if self.shutting_down {
-            return Ok(());
+            return Ok(advanced);
         }
         let current = bindings(&self.actor);
         self.credentials.loaded.retain(|id, generation| {
@@ -206,7 +209,7 @@ impl Server {
                 }
             }
         }
-        Ok(())
+        Ok(advanced)
     }
 }
 

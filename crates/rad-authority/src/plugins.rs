@@ -552,7 +552,11 @@ pub(super) struct Barrier {
     change: PluginChange,
     revision: i64,
 }
-/// Move to the worker and return unchanged. Dropping does NOT release the barrier.
+/// Proof of the single plugin administrative change in progress. While its barrier
+/// stands, Authority refuses configuration edits, undo/redo and any other plugin change
+/// (`PublicationPending`). Move it to the worker and return it unchanged. Dropping does
+/// NOT release the barrier: only `finish_plugin_change` does, so a lost permit leaves
+/// the barrier up.
 pub struct PluginPermit(std::sync::Arc<Barrier>);
 impl PluginPermit {
     pub fn change(&self) -> &PluginChange {
@@ -563,6 +567,10 @@ impl PluginPermit {
     }
 }
 impl Authority {
+    /// Starts an install, update, rollback, reinstall or uninstall: validates it against
+    /// the published configuration and raises the barrier. Editor only. Refused while
+    /// another change or a publication is pending. The administrator calls it before any
+    /// durable plugin I/O and must finish the permit it gets with `finish_plugin_change`.
     pub fn begin_plugin_change(
         &mut self,
         origin: Origin,
@@ -589,6 +597,10 @@ impl Authority {
         self.plugin_barrier = Some(std::sync::Arc::clone(&barrier));
         Ok(PluginPermit(barrier))
     }
+    /// Lowers the barrier of `permit`, which must be the current one (and the revision
+    /// unchanged), else `PluginError::InvalidPermit`. The administrator calls it once the
+    /// durable result is known. Without it no edit or other plugin change is possible.
+    ///
     /// Call only for a KNOWN durable result. Uncertain retains the permit and barrier.
     /// Applied retires logical executors; Host Ready must register the selected version later.
     pub fn finish_plugin_change(
@@ -650,6 +662,12 @@ impl Authority {
 }
 
 impl Authority {
+    /// Declares the committed selection of `permit` applied: retires the previous logical
+    /// executors of that plugin while the barrier stays, so the new version's manifest can
+    /// be registered once its Host process is Ready. Call it only after the durable commit
+    /// reported `Applied`, once per permit. Only after it can the selected manifest be
+    /// registered while the barrier stands; if it is skipped,
+    /// `finish_plugin_change(applied = true)` retires the old executors itself.
     pub fn allow_plugin_activation(&mut self, permit: &PluginPermit) -> Result<(), PluginError> {
         let barrier = self
             .plugin_barrier

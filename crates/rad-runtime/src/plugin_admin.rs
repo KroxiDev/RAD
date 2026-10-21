@@ -106,6 +106,22 @@ impl Drop for WakeOnExit {
         (self.0)();
     }
 }
+/// Observable state of the administrator and the host bindings, compared around `poll`.
+#[derive(PartialEq)]
+struct ProgressMark {
+    state: AdminState,
+    error: Option<&'static str>,
+    busy: bool,
+    locked: bool,
+    stop_sent: bool,
+    unsent: bool,
+    downloading: bool,
+    startup: usize,
+    installed: usize,
+    attempted: usize,
+    active: Option<String>,
+    bindings: Vec<(String, u64, State)>,
+}
 pub(crate) struct Admin {
     tx: mpsc::SyncSender<Job>,
     rx: mpsc::Receiver<Reply>,
@@ -270,7 +286,36 @@ impl Admin {
             AdminState::Idle
         };
     }
-    pub fn poll(&mut self, actor: &mut Authority, host: &mut Host, now: u64) {
+    /// Advances the administrator by whatever is ready (worker reply, finished download,
+    /// startup registration, activation, demand) and reports whether it changed anything
+    /// observable: its own state, or the host's bindings. `false` means a repeated call
+    /// would do nothing until something outside changes, so the turn may stop settling.
+    pub fn poll(&mut self, actor: &mut Authority, host: &mut Host, now: u64) -> bool {
+        let before = self.progress_mark(host);
+        self.advance(actor, host, now);
+        before != self.progress_mark(host)
+    }
+    /// Everything `advance` can change that another step of the turn may be waiting on.
+    fn progress_mark(&self, host: &Host) -> ProgressMark {
+        ProgressMark {
+            state: self.state,
+            error: self.error,
+            busy: self.busy,
+            locked: self.locked,
+            stop_sent: self.stop_sent,
+            unsent: self.unsent.is_some(),
+            downloading: self.fetcher.active(),
+            startup: self.startup.len(),
+            installed: self.installed.len(),
+            attempted: self.attempted.len(),
+            active: self.active.as_ref().map(|a| a.id.clone()),
+            bindings: host
+                .bindings()
+                .map(|(m, g, s)| (m.id.clone(), g, s))
+                .collect(),
+        }
+    }
+    fn advance(&mut self, actor: &mut Authority, host: &mut Host, now: u64) {
         if let Some(job) = self.unsent.take() {
             self.send(job);
         }
