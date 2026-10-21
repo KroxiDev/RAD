@@ -324,7 +324,7 @@ impl App {
     fn select(&mut self, position: usize, id: Option<String>) {
         self.credentials.clear();
         self.plugins.dependency_credentials = None;
-        self.plugins.form = None;
+        self.plugins.clear_form();
         self.selected_slot = Some(position);
         self.control.select(id);
         self.inspection = None;
@@ -341,6 +341,7 @@ impl App {
                 if position.is_some() {
                     self.selected_slot = position;
                 } else {
+                    self.plugins.clear_form();
                     self.control.select(None);
                     self.inspection = None;
                     self.draft = Draft::default();
@@ -508,8 +509,7 @@ impl App {
                     }
                 }
                 Ok(Reply::PluginForm { target, loaded }) => {
-                    self.plugins.form_loading = false;
-                    self.plugins.form = Some((target, loaded));
+                    self.plugins.accept_form(target, loaded);
                 }
                 Ok(Reply::PluginVisuals { revision, visuals }) => {
                     self.accept_plugin_visuals(ctx, &revision, visuals);
@@ -655,6 +655,7 @@ impl App {
                         }
                         self.board = Some(board);
                         if changed_folder {
+                            self.plugins.clear_form();
                             self.control.select(None);
                             self.selected_slot = None;
                             self.inspection = None;
@@ -664,8 +665,8 @@ impl App {
                         if let Some((position, action)) = self.pending_action.take()
                             && let Some(id) = self.slot_id(position)
                         {
+                            self.select(position, Some(id.clone()));
                             self.add_action(&id, &action);
-                            self.select(position, Some(id));
                         }
                     }
                 }
@@ -972,7 +973,6 @@ impl eframe::App for App {
         self.credentials.pump(&mut self.credential_worker);
         if self.credential_selection != self.selected() {
             self.credentials.clear();
-            self.plugins.form = None;
             self.credential_selection = self.selected();
         }
         self.plugins

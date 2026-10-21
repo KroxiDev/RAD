@@ -22,6 +22,8 @@ pub(super) struct PluginUi {
     pub admin_pending: bool,
     pub form_pending: bool,
     pub form_loading: bool,
+    // Only one load is admitted until its result is consumed, even if invalidated.
+    form_load_current: bool,
     pub settings_reload: Option<String>,
     pub log_selected: String,
     pub log: Option<rad_api::PluginLogView>,
@@ -48,6 +50,17 @@ pub(super) struct PluginUi {
     schedule: crate::schedule::Schedule,
 }
 impl PluginUi {
+    /// Invalidating a load does not release its credit until the result is consumed.
+    pub fn clear_form(&mut self) {
+        self.form = None;
+        self.form_load_current = false;
+    }
+    pub fn accept_form(&mut self, target: FormTarget, loaded: LoadedForm) {
+        self.form_loading = false;
+        if std::mem::take(&mut self.form_load_current) {
+            self.form = Some((target, loaded));
+        }
+    }
     pub fn reconnect(&mut self) {
         self.dependencies.reset();
         self.dependency_status_due = true;
@@ -537,6 +550,7 @@ impl App {
             self.plugins.dependency_credentials = None;
             self.plugins.form = None;
             self.plugins.form_loading = true;
+            self.plugins.form_load_current = true;
         }
     }
     /// The Plugins tab of the settings: installed plugins and their administration.
@@ -548,7 +562,7 @@ impl App {
         }
         let idle = self.plugins.can_administer(self.connected);
         if let Some((id, slots)) = dependency_list(ui, &mut self.plugins, idle, self.es) {
-            self.plugins.form = None;
+            self.plugins.clear_form();
             self.credentials.bind(
                 &format!("dependency:{id}"),
                 &format!("{id}:credentials"),
