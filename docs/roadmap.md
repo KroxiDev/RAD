@@ -188,7 +188,7 @@ distinguen esos fixtures del ejecutable de producto y no certifican hardware rea
 
 B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
 
-### B1 · El deck está fijado al puerto USB 1-5
+### B1 · El deck está fijado al puerto USB 1-5 — hecho (cff2593)
 
 - **Evidencia:** `crates/rad-deck/src/hidraw.rs:19`; `DeviceConfig` vacío
   (`crates/rad-deck/src/lib.rs:90–97`).
@@ -197,6 +197,8 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   actuales.
 - **Pruebas:** sysfs sintético con el dispositivo en otro puerto, dos nodos, ausencia
   y driver ajeno.
+- **Resultado:** con varios XL conectados se usa el de menor número de serie (decisión
+  del usuario); un XL sin serial válido no es elegible. Sin verificar con el XL real.
 
 ### B2 · Salidas, modo recuperación, servicio y dispositivo como ajuste
 
