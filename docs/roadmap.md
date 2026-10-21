@@ -233,7 +233,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
 - **Pruebas:** actualizar desde otro origen exige confirmación y registra el nuevo
   origen.
 
-### B5 · Un worker de UI muerto queda ocupado
+### B5 · Un worker de UI muerto queda ocupado — hecho (b51b9ce)
 
 - **Evidencia:** si `run(job)` hace panic, `poll` convierte Disconnected en None y
   `busy` no se limpia nunca, así que el editor espera para siempre
