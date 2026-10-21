@@ -152,6 +152,15 @@ impl Server {
             .map_err(|_| RuntimeError::Transport)
     }
     fn error(&self, context: IncomingContext, code: &str, mutation: bool) -> Response {
+        self.error_with_details(context, code, json!({}), mutation)
+    }
+    fn error_with_details(
+        &self,
+        context: IncomingContext,
+        code: &str,
+        details: Value,
+        mutation: bool,
+    ) -> Response {
         Response {
             v: 1,
             id: Some(context.request_id.to_string()),
@@ -161,7 +170,7 @@ impl Server {
             error: Some(Error {
                 code: rad_api::ErrorCode::parse(code).expect("defined response code"),
                 message: "Request rejected".into(),
-                details: json!({}),
+                details,
                 outcome: mutation.then_some(Outcome::NotApplied),
             }),
         }
@@ -419,7 +428,12 @@ impl Server {
                 operation,
                 External::PluginAdmin(_) | External::PluginRetry { .. }
             );
-            let result = self.plugin_external(context, operation);
+            let result = match operation {
+                External::PluginAdmin(request) => self.plugin_admin(context, request),
+                operation => self
+                    .plugin_external(context, operation)
+                    .map_err(crate::plugin_admin::Rejection::from),
+            };
             let response = match result {
                 Ok(data) => Response {
                     v: 1,
@@ -430,7 +444,9 @@ impl Server {
                         .map_err(|_| RuntimeError::Protocol)?,
                     error: None,
                 },
-                Err(code) => self.error(context, code, mutation),
+                Err(rejection) => {
+                    self.error_with_details(context, rejection.code, rejection.details, mutation)
+                }
             };
             return self.respond(key, response);
         }
@@ -464,23 +480,33 @@ impl Server {
         };
         self.respond(key, response)
     }
+    fn plugin_admin(
+        &mut self,
+        context: IncomingContext,
+        request: rad_protocol::PluginAdmin,
+    ) -> Result<Value, crate::plugin_admin::Rejection> {
+        if context.origin != Origin::Editor {
+            return Err("permission_denied".into());
+        }
+        let residual = request.plugin_id.as_ref().is_some_and(|id| {
+            self.native.as_ref().is_some_and(|native| {
+                native.plugin_host().state(id) == Some(rad_plugin_host::State::Failed)
+            })
+        });
+        if residual {
+            return Err("plugin_residual".into());
+        }
+        self.plugin_admin
+            .as_mut()
+            .ok_or("executor_unavailable")?
+            .submit(context.origin, request, &self.actor)
+    }
     fn plugin_external(
         &mut self,
         context: IncomingContext,
         operation: External,
     ) -> Result<Value, &'static str> {
         match operation {
-            External::PluginAdmin(request) => {
-                if context.origin != Origin::Editor { return Err("permission_denied"); }
-                let residual = request.plugin_id.as_ref().is_some_and(|id| {
-                    self.native.as_ref().is_some_and(|native| {
-                        native.plugin_host().state(id) == Some(rad_plugin_host::State::Failed)
-                    })
-                });
-                if residual { return Err("plugin_residual"); }
-                self.plugin_admin.as_mut().ok_or("executor_unavailable")?
-                    .submit(context.origin, request, &self.actor)
-            }
             External::PluginLog { plugin_id } => {
                 if context.origin != Origin::Editor { return Err("permission_denied"); }
                 let host = self.native.as_ref().ok_or("executor_unavailable")?.plugin_host();

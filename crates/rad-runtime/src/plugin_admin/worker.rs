@@ -79,6 +79,11 @@ fn prepare(
         .as_deref()
         .map(rad_plugin_manager::GithubSource::parse)
         .transpose()?;
+    // Only the identity of the confirmed origin matters; the Admin already vetted the request.
+    let replaces = request
+        .replaces_source
+        .as_deref()
+        .and_then(|url| rad_plugin_manager::GithubSource::parse(url).ok());
     let id = request.plugin_id.unwrap_or_default();
     let operation = match request.operation {
         rad_protocol::PluginOperation::Install => Operation::Install,
@@ -87,7 +92,12 @@ fn prepare(
         rad_protocol::PluginOperation::Rollback => Operation::Rollback(id),
         rad_protocol::PluginOperation::Uninstall => Operation::Uninstall(id),
     };
-    manager.prepare_from_source(operation, package.as_deref(), source.as_ref())
+    manager.prepare_from_source(
+        operation,
+        package.as_deref(),
+        source.as_ref(),
+        replaces.as_ref(),
+    )
 }
 
 fn open_store(root: &std::path::Path) -> Result<Manager, Error> {
@@ -252,6 +262,7 @@ mod prepare_recovery_tests {
             operation: rad_protocol::PluginOperation::Install,
             plugin_id: None,
             source: Some("https://github.com/owner/repo".into()),
+            replaces_source: None,
         };
         let prepare = || Job::Prepare {
             request: request.clone(),

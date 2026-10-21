@@ -22,6 +22,11 @@ const CODES: &[&str] = &[
     "io",
     "confirmation_required",
     "recovery_required",
+    "plugin_already_installed",
+    "plugin_mismatch",
+    "plugin_same_version",
+    "plugin_failed",
+    "source_changed",
 ];
 fn rejected(id: u64, code: &str) -> Response {
     Response {
@@ -52,6 +57,19 @@ fn plugin_error_roundtrip_is_closed_and_correlated() {
         invalid["error"]["code"] = json!(code);
         assert!(decode(&serde_json::to_vec(&invalid).unwrap(), 167, Some(SESSION)).is_err());
     }
+}
+#[test]
+fn source_changed_carries_both_origins_to_the_client() {
+    let details = json!({
+        "registered": "https://github.com/owner/repo",
+        "requested": "https://github.com/other/repo/releases/tag/v2",
+    });
+    let mut original = rejected(167, "source_changed");
+    original.error.as_mut().unwrap().details = details.clone();
+    let bytes = serde_json::to_vec(&original).unwrap();
+    let decoded = decode(&bytes, 167, Some(SESSION)).unwrap();
+    assert_eq!(decoded, original);
+    assert_eq!(decoded.error.unwrap().details, details);
 }
 #[test]
 fn plugin_admin_rejections_keep_not_applied_and_connection_usable() {

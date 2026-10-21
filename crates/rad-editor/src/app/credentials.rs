@@ -134,6 +134,7 @@ pub(super) fn start(runtime: std::path::PathBuf) -> CredentialWorker {
                 crate::session::Error {
                     code: error.code.into(),
                     cause: None,
+                    source_change: None,
                     unknown: false,
                 }
             })?;
@@ -176,6 +177,7 @@ fn decode_state(
     let error = || crate::session::Error {
         code: "invalid_request".into(),
         cause: None,
+        source_change: None,
         unknown: mutating,
     };
     if status != rad_client::response::Status::Ok {
@@ -272,6 +274,7 @@ impl Panel {
                         field.error = wrote.then(|| crate::session::Error {
                             code: "worker_lost".into(),
                             cause: None,
+                            source_change: None,
                             unknown: true,
                         });
                     }
@@ -346,6 +349,7 @@ impl Panel {
                             field.error = Some(crate::session::Error {
                                 code: "runtime_unavailable".into(),
                                 cause: None,
+                                source_change: None,
                                 unknown: false,
                             });
                         }

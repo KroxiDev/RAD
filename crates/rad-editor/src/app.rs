@@ -627,6 +627,9 @@ impl App {
                     }
                     if event.plugin_admin {
                         self.plugins.admin_pending = false;
+                        if let Some(change) = e.source_change.clone() {
+                            self.plugins.source_refused(change);
+                        }
                     }
                     if event.plugin_apply {
                         self.plugins.form_pending = false;
@@ -1252,6 +1255,7 @@ mod connection_loss_tests {
                 result: Err(crate::session::Error {
                     code: "runtime_unavailable".into(),
                     cause: None,
+                    source_change: None,
                     unknown: false,
                 }),
             }

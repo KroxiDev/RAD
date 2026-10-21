@@ -24,6 +24,9 @@ pub enum Error {
     AlreadyInstalled,
     PluginMismatch,
     SameVersion,
+    /// The new source is another repository than the registered one, and that change
+    /// was not confirmed against the registered origin.
+    SourceChanged,
 }
 impl From<std::io::Error> for Error {
     fn from(_: std::io::Error) -> Self {

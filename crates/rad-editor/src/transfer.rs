@@ -59,6 +59,7 @@ pub fn io_error() -> Error {
     Error {
         code: "file_error".into(),
         cause: None,
+        source_change: None,
         unknown: false,
     }
 }

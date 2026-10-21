@@ -26,6 +26,7 @@ fn unavailable() -> Event {
         Err(crate::session::Error {
             code: "runtime_unavailable".into(),
             cause: None,
+            source_change: None,
             unknown: false,
         }),
     )

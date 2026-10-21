@@ -151,6 +151,50 @@ la liberación. La liberación envía `End` al mismo trabajo; su fallo se reflej
 el resultado original y cambia el aviso `execution`. No se crea ni se repite otra
 ejecución para compensarlo. Los clientes releen ese resultado al invalidarse.
 
+### Administración de plugins
+
+`plugin_admin` es exclusiva del editor (otro origen recibe `permission_denied`) y es
+una mutación: un rechazo lleva `outcome: not_applied`.
+
+| Campo | Uso |
+|---|---|
+| `operation` | `install`, `update`, `reinstall`, `rollback` o `uninstall` |
+| `plugin_id` | obligatorio salvo en `install` |
+| `source` | enlace público de GitHub (repositorio o release); obligatorio en `install`, `update` y `reinstall`, y prohibido en el resto |
+| `trusted` | debe ser `true` cuando hay `source`; si no, `confirmation_required` |
+| `replaces_source` | solo en `update` y `reinstall`: el origen registrado que el usuario vio y confirmó |
+
+La respuesta es `{operation_id, state: "preparing"}`: la petición se admite y el
+trabajo sigue en segundo plano. El resultado se lee en `plugin_status`
+(`state`, `operation_id`, `error` e `items`, con el `source` registrado de cada
+plugin); el aviso `plugins` indica cuándo releerlo. Solo corre una operación a la vez.
+
+Rechazos de la petición, sin descargar nada: `invalid_request` (combinación de
+campos no válida, incluido `replaces_source` fuera de `update` y `reinstall`),
+`confirmation_required`, `resource_exhausted` (otra operación en curso),
+`plugin_in_use`, `plugin_residual`, `publication_pending` y `source_changed`.
+Los fallos de la operación ya admitida aparecen en `plugin_status.error`:
+`invalid_source`, `invalid_package`, `incompatible_plugin`, `network`, `deadline`,
+`io`, `cancelled`, `plugin_already_installed`, `plugin_mismatch`,
+`plugin_same_version`, `plugin_failed` y `recovery_required`.
+
+**Origen.** El origen de un plugin es el `owner/repo` de GitHub de su enlace, sin
+distinguir mayúsculas; otro tag o release del mismo repositorio no es otro origen.
+Si un `update` o `reinstall` pide otro `owner/repo` que el registrado, el runtime
+lo rechaza con `source_changed` sin descargar, salvo que `replaces_source`
+identifique ese mismo origen registrado. El rechazo lleva en `details` las dos
+direcciones canónicas:
+
+```json
+{"code":"source_changed","details":{"registered":"https://github.com/owner/repo","requested":"https://github.com/otro/repo/releases/tag/v2"}}
+```
+
+El cliente muestra ambos orígenes y, si el usuario confirma, repite la petición con
+`replaces_source` igual a `registered`. Si el origen registrado cambió entretanto,
+`replaces_source` ya no coincide y vuelve `source_changed` con el origen vigente.
+Tras aplicarse, el nuevo origen queda registrado. Un plugin sin origen registrado
+no pide confirmación y registra el nuevo.
+
 ### Editor plugin settings, repair and recent log
 
 `plugin_manifest {plugin_id}` returns the opaque manifest document; consumers use

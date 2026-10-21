@@ -82,6 +82,21 @@ impl AdminState {
         }
     }
 }
+/// Why `submit` refused a request: the wire code and, for the few codes that carry one,
+/// the structured details the client needs to explain it.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Rejection {
+    pub code: &'static str,
+    pub details: Value,
+}
+impl From<&'static str> for Rejection {
+    fn from(code: &'static str) -> Self {
+        Self {
+            code,
+            details: json!({}),
+        }
+    }
+}
 pub(crate) struct Admin {
     tx: mpsc::SyncSender<Job>,
     rx: mpsc::Receiver<Reply>,
@@ -149,16 +164,17 @@ impl Admin {
         origin: Origin,
         request: PluginAdmin,
         actor: &Authority,
-    ) -> Result<Value, &'static str> {
+    ) -> Result<Value, Rejection> {
         if origin != Origin::Editor {
-            return Err("permission_denied");
+            return Err("permission_denied".into());
         }
         if self.busy || self.fetcher.active() || self.locked || self.stopping {
-            return Err("resource_exhausted");
+            return Err("resource_exhausted".into());
         }
         if let Some(id) = &request.plugin_id {
             actor.plugin_change_allowed(id).map_err(plugin_error)?;
         }
+        self.confirm_source(&request)?;
         let next = self.next.checked_add(1).ok_or("resource_exhausted")?;
         self.fetcher
             .start(request, &self.cancel)
@@ -168,6 +184,44 @@ impl Admin {
         self.error = None;
         self.state = AdminState::Preparing;
         Ok(json!({"operation_id":next.to_string(),"state":"preparing"}))
+    }
+    /// An update from another repository than the registered one must carry the user's
+    /// confirmation of exactly that registered origin. Refusing here, before any download,
+    /// also covers a registered origin that changed since the user looked at it.
+    fn confirm_source(&self, request: &PluginAdmin) -> Result<(), Rejection> {
+        use rad_plugin_manager::GithubSource;
+        use rad_protocol::PluginOperation::{Reinstall, Update};
+        if !matches!(request.operation, Update | Reinstall) {
+            return Ok(());
+        }
+        let registered = self
+            .installed
+            .iter()
+            .find(|item| Some(&item.manifest.id) == request.plugin_id.as_ref())
+            .and_then(|item| item.source.as_deref());
+        let (Some(registered), Some(requested)) = (registered, request.source.as_deref()) else {
+            return Ok(());
+        };
+        // An unreadable request is the downloader's `invalid_source`; an unreadable
+        // registered origin cannot happen (the ledger only keeps canonical ones).
+        let (Ok(known), Ok(wanted)) = (
+            GithubSource::parse(registered),
+            GithubSource::parse(requested),
+        ) else {
+            return Ok(());
+        };
+        let confirmed = request
+            .replaces_source
+            .as_deref()
+            .and_then(|url| GithubSource::parse(url).ok())
+            .is_some_and(|replaces| replaces.same_origin(&known));
+        if known.same_origin(&wanted) || confirmed {
+            return Ok(());
+        }
+        Err(Rejection {
+            code: "source_changed",
+            details: json!({"registered": known.canonical_url(), "requested": wanted.canonical_url()}),
+        })
     }
     fn send(&mut self, job: Job) {
         // Only continuation of the current operation: never a second admin request.
@@ -550,6 +604,7 @@ fn manager_error(e: rad_plugin_manager::Error) -> &'static str {
         E::AlreadyInstalled => "plugin_already_installed",
         E::PluginMismatch => "plugin_mismatch",
         E::SameVersion => "plugin_same_version",
+        E::SourceChanged => "source_changed",
         // No wildcard: a new manager error must choose its code, not inherit this one.
         E::CorruptState | E::WrongOwner | E::InvalidOperation | E::RecoveryRequired => {
             "recovery_required"
@@ -597,6 +652,7 @@ mod tests {
                     operation: rad_protocol::PluginOperation::Install,
                     plugin_id: None,
                     source: Some("https://github.com/owner/repo".into()),
+                    replaces_source: None,
                 },
                 &actor,
             )
@@ -656,10 +712,11 @@ mod tests {
             operation: rad_protocol::PluginOperation::Install,
             plugin_id: None,
             source: Some("https://github.com/KroxiDev/rad-plugin-fixture".into()),
+            replaces_source: None,
         };
         assert_eq!(
             admin.submit(Origin::Automation, request.clone(), &actor),
-            Err("permission_denied")
+            Err("permission_denied".into())
         );
         assert!(
             admin
@@ -672,7 +729,7 @@ mod tests {
         }
         assert_eq!(
             admin.submit(Origin::Editor, request.clone(), &actor),
-            Err("resource_exhausted")
+            Err("resource_exhausted".into())
         );
         admin.shutdown(); // Closing/shutdown cannot make a blocked worker disappear.
         assert!(!admin.stopped());
@@ -775,6 +832,7 @@ mod lifecycle_tests {
             operation: serde_json::from_value(serde_json::json!(op)).unwrap(),
             plugin_id: (op != "install").then(|| "org.rad.fixture".into()),
             source: version.map(|v| format!("https://github.com/owner/repo/releases/tag/v{v}")),
+            replaces_source: None,
         }
     }
     #[test]
@@ -857,7 +915,7 @@ mod lifecycle_tests {
         assert!(effects.iter().any(|e| matches!(e, Effect::Accepted { .. })));
         assert_eq!(
             admin.submit(Origin::Editor, request("update", Some(2)), &actor),
-            Err("plugin_in_use")
+            Err("plugin_in_use".into())
         );
         let end = Instant::now() + Duration::from_secs(3);
         while actor.plugin_change_allowed("org.rad.fixture").is_err() {
@@ -1013,7 +1071,7 @@ mod lifecycle_tests {
         assert_eq!(held["state"], "preparing", "A's operation stays visible");
         assert_eq!(
             admin.submit(Origin::Editor, request("install", Some(2)), &actor),
-            Err("resource_exhausted"),
+            Err("resource_exhausted".into()),
             "one administrative operation at a time"
         );
         release.store(true, Ordering::SeqCst);
@@ -1070,11 +1128,15 @@ mod lifecycle_tests {
             settle(&mut admin, &mut actor, &mut ports, 0);
             let status = admin.status(&ports.host);
             assert_eq!(status["error"], code, "{op}");
+            assert_status_decodes(status.clone(), code);
             assert_eq!(status["locked"], false, "{op}: nothing to recover");
             assert_eq!(status["items"][0]["selected"]["major"], 1);
             assert_eq!(ports.host.state("org.rad.fixture"), None);
             assert_eq!(actor.plugin_manifests().count(), 1);
         }
+        // A plugin that dies while activating reports `plugin_failed` the same way.
+        admin.error = Some("plugin_failed");
+        assert_status_decodes(admin.status(&ports.host), "plugin_failed");
         admin.shutdown();
         ports.host.shutdown();
         let end = Instant::now() + Duration::from_secs(3);
@@ -1084,6 +1146,214 @@ mod lifecycle_tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+    const REGISTERED: &str = "https://github.com/owner/repo/releases/tag/v1";
+    const OTHER: &str = "https://github.com/other/repo/releases/tag/v2";
+    fn replacing(op: &str, source: &str, replaces: Option<&str>) -> PluginAdmin {
+        PluginAdmin {
+            source: Some(source.into()),
+            replaces_source: replaces.map(str::to_owned),
+            ..request(op, None)
+        }
+    }
+    /// An Admin whose downloader counts its calls and serves v2 for anything but `/v1`.
+    fn counting_admin(root: &std::path::Path) -> (Admin, Arc<std::sync::atomic::AtomicUsize>) {
+        let (v1, v2) = (package(1), package(2));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        let admin = Admin::new(
+            root.to_path_buf(),
+            Arc::new(|| {}),
+            Box::new(move |source, _| {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(if source.ends_with("/v1") {
+                    v1.clone()
+                } else {
+                    v2.clone()
+                })
+            }),
+        );
+        (admin, calls)
+    }
+    fn actor_for(seed: u128) -> Authority {
+        Authority::new(
+            Configuration::prepare_new(&IdentityRegistry::new(seed).unwrap()).unwrap(),
+            1,
+            std::num::NonZeroU128::new(seed + 100).unwrap(),
+        )
+    }
+    fn registered_source(admin: &Admin, ports: &crate::plugin_dispatch::Plugins) -> Value {
+        admin.status(&ports.host)["items"][0]["source"].clone()
+    }
+    fn shut(
+        mut admin: Admin,
+        actor: &mut Authority,
+        mut ports: crate::plugin_dispatch::Plugins,
+        root: PathBuf,
+    ) {
+        admin.shutdown();
+        ports.host.shutdown();
+        let end = Instant::now() + Duration::from_secs(3);
+        while !admin.stopped() || ports.host.resources().0 > 0 {
+            tick(&mut admin, actor, &mut ports, 0);
+            assert!(Instant::now() < end);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn another_repository_is_refused_without_downloading_until_the_registered_origin_is_confirmed()
+    {
+        for op in ["update", "reinstall"] {
+            let root =
+                std::env::temp_dir().join(format!("rad-b4-confirm-{op}-{}", std::process::id()));
+            assert!(!root.exists());
+            let (mut admin, calls) = counting_admin(&root);
+            let mut actor = actor_for(201);
+            let mut ports = crate::plugin_dispatch::Plugins::default();
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            admin
+                .submit(Origin::Editor, request("install", Some(1)), &actor)
+                .unwrap();
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            assert_eq!(registered_source(&admin, &ports), REGISTERED);
+            let downloads = calls.load(std::sync::atomic::Ordering::SeqCst);
+            // Missing and wrong confirmations are both refused, with both origins named.
+            for replaces in [None, Some("https://github.com/third/repo")] {
+                let refused = admin
+                    .submit(Origin::Editor, replacing(op, OTHER, replaces), &actor)
+                    .unwrap_err();
+                assert_eq!(refused.code, "source_changed", "{op} {replaces:?}");
+                assert_eq!(
+                    refused.details,
+                    json!({"registered": REGISTERED, "requested": OTHER})
+                );
+                assert_eq!(
+                    calls.load(std::sync::atomic::Ordering::SeqCst),
+                    downloads,
+                    "nothing downloaded"
+                );
+                assert!(!admin.busy && !admin.fetcher.active() && admin.error.is_none());
+                assert_eq!(registered_source(&admin, &ports), REGISTERED);
+            }
+            // The confirmed origin (any case, any tag) lets the change through.
+            admin
+                .submit(
+                    Origin::Editor,
+                    replacing(op, OTHER, Some("https://github.com/OWNER/Repo")),
+                    &actor,
+                )
+                .unwrap();
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            assert_eq!(admin.error, None, "{op}");
+            assert_eq!(
+                calls.load(std::sync::atomic::Ordering::SeqCst),
+                downloads + 1
+            );
+            assert_eq!(registered_source(&admin, &ports), OTHER, "{op}");
+            assert_eq!(
+                admin.status(&ports.host)["items"][0]["selected"]["major"],
+                2
+            );
+            shut(admin, &mut actor, ports, root);
+        }
+    }
+    #[test]
+    fn same_repository_needs_no_confirmation_whatever_the_tag_or_case() {
+        for (n, (op, next, registered)) in [
+            (
+                "update",
+                "https://github.com/owner/repo/releases/tag/v2",
+                "https://github.com/owner/repo/releases/tag/v2",
+            ),
+            (
+                "update",
+                "https://github.com/OWNER/REPO.git",
+                "https://github.com/OWNER/REPO",
+            ),
+            (
+                "reinstall",
+                "https://github.com/owner/repo/releases/tag/v2",
+                "https://github.com/owner/repo/releases/tag/v2",
+            ),
+            (
+                "reinstall",
+                "https://github.com/OWNER/REPO.git",
+                "https://github.com/OWNER/REPO",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let root = std::env::temp_dir().join(format!("rad-b4-same-{n}-{}", std::process::id()));
+            assert!(!root.exists());
+            let (mut admin, _) = counting_admin(&root);
+            let mut actor = actor_for(202);
+            let mut ports = crate::plugin_dispatch::Plugins::default();
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            admin
+                .submit(Origin::Editor, request("install", Some(1)), &actor)
+                .unwrap();
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            admin
+                .submit(Origin::Editor, replacing(op, next, None), &actor)
+                .unwrap_or_else(|r| panic!("{op} {next}: {r:?}"));
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            assert_eq!(admin.error, None, "{op} {next}");
+            assert_eq!(registered_source(&admin, &ports), registered, "{op} {next}");
+            shut(admin, &mut actor, ports, root);
+        }
+    }
+    #[test]
+    fn a_plugin_without_registered_origin_takes_the_new_one_without_confirmation() {
+        use std::os::unix::fs::DirBuilderExt;
+        let root = std::env::temp_dir().join(format!("rad-b4-unregistered-{}", std::process::id()));
+        assert!(!root.exists());
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&root)
+            .unwrap();
+        {
+            // A plugin installed before origins were recorded.
+            let mut manager = rad_plugin_manager::Manager::create(
+                &root,
+                rad_plugin_contract::HOST_API,
+                rad_plugin_host::TARGET,
+            )
+            .unwrap();
+            let mut change = Some(
+                manager
+                    .prepare(rad_plugin_manager::Operation::Install, Some(&package(1)))
+                    .unwrap(),
+            );
+            manager.commit(&mut change).unwrap();
+        }
+        let (mut admin, _) = counting_admin(&root);
+        let mut actor = actor_for(203);
+        let mut ports = crate::plugin_dispatch::Plugins::default();
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        assert_eq!(registered_source(&admin, &ports), Value::Null);
+        admin
+            .submit(Origin::Editor, replacing("update", OTHER, None), &actor)
+            .unwrap();
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        assert_eq!(admin.error, None);
+        assert_eq!(registered_source(&admin, &ports), OTHER);
+        shut(admin, &mut actor, ports, root);
+    }
+    /// The status the editor polls must decode with the wire vocabulary: a code outside
+    /// `ErrorCode` made the server fail the whole response and end the runtime.
+    fn assert_status_decodes(status: Value, code: &str) {
+        let data = rad_api::ResponseData::decode(
+            rad_api::Operation::PluginStatus,
+            rad_api::Status::Ok,
+            status,
+        )
+        .unwrap_or_else(|_| panic!("plugin_status with error {code} must decode"));
+        let rad_api::ResponseData::PluginStatus(view) = data else {
+            panic!("plugin_status data");
+        };
+        assert_eq!(view.error.map(|e| e.to_string()).as_deref(), Some(code));
     }
 }
 

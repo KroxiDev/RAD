@@ -210,7 +210,8 @@ requests! {
         operation:PluginOperation,
         #[serde(default,skip_serializing_if="Option::is_none")] plugin_id:Option<String>,
         #[serde(default,skip_serializing_if="Option::is_none")] source:Option<String>,
-        #[serde(default,skip_serializing_if="Option::is_none")] trusted:Option<bool>
+        #[serde(default,skip_serializing_if="Option::is_none")] trusted:Option<bool>,
+        #[serde(default,skip_serializing_if="Option::is_none")] replaces_source:Option<String>
     },
     CredentialStatus => "credential_status", false { plugin_id:String, slot:String },
     CredentialReplace => "credential_replace", true { plugin_id:String, slot:String, secret:String },

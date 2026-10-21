@@ -298,3 +298,131 @@ fn missing_plugin_retains_settings_bytes_without_an_editable_form() {
     assert!(loaded.form.is_none());
     assert!(session.is_open());
 }
+
+mod source_change {
+    use super::*;
+    use rad_api::PluginOperation;
+    use rad_editor::plugins::{SourceChange, admin_request};
+
+    const REGISTERED: &str = "https://github.com/owner/repo/releases/tag/v1";
+
+    #[test]
+    fn another_repository_asks_for_confirmation_naming_both_origins() {
+        let change = SourceChange::between(Some(REGISTERED), "https://github.com/other/repo")
+            .expect("another repository must be confirmed");
+        assert_eq!(change.registered, REGISTERED);
+        assert_eq!(change.requested, "https://github.com/other/repo");
+        assert!(
+            SourceChange::between(Some(REGISTERED), "https://github.com/owner/repo-fork").is_some()
+        );
+    }
+
+    #[test]
+    fn same_repository_other_tag_or_case_needs_no_confirmation() {
+        for requested in [
+            "https://github.com/owner/repo",
+            "https://github.com/owner/repo/releases/tag/v9",
+            "https://github.com/owner/repo/releases/latest",
+            "https://github.com/OWNER/Repo.git",
+        ] {
+            assert_eq!(
+                SourceChange::between(Some(REGISTERED), requested),
+                None,
+                "{requested}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_registered_origin_or_a_readable_address_there_is_nothing_to_confirm() {
+        assert_eq!(
+            SourceChange::between(None, "https://github.com/other/repo"),
+            None
+        );
+        // The runtime rejects an unreadable address on its own terms.
+        assert_eq!(SourceChange::between(Some(REGISTERED), "not a link"), None);
+        assert_eq!(SourceChange::between(Some(REGISTERED), ""), None);
+    }
+
+    #[test]
+    fn details_of_a_refusal_name_both_origins_and_anything_else_is_ignored() {
+        let change = SourceChange::from_details(&json!({
+            "registered": REGISTERED,
+            "requested": "https://github.com/other/repo",
+        }))
+        .unwrap();
+        assert_eq!(change.registered, REGISTERED);
+        assert_eq!(SourceChange::from_details(&json!({})), None);
+        assert_eq!(
+            SourceChange::from_details(&json!({"registered": REGISTERED})),
+            None
+        );
+        assert_eq!(
+            SourceChange::from_details(&json!({"registered": 1, "requested": 2})),
+            None
+        );
+    }
+
+    #[test]
+    fn the_request_carries_the_confirmed_registered_origin_only_when_confirmed() {
+        let change =
+            SourceChange::between(Some(REGISTERED), "https://github.com/other/repo").unwrap();
+        let source = Some("https://github.com/other/repo".to_owned());
+        let id = Some("org.rad.fixture".to_owned());
+        let plain = admin_request(
+            PluginOperation::Update,
+            id.clone(),
+            source.clone(),
+            true,
+            None,
+        );
+        assert!(plain.arguments().get("replaces_source").is_none());
+        for operation in [PluginOperation::Update, PluginOperation::Reinstall] {
+            let confirmed =
+                admin_request(operation, id.clone(), source.clone(), true, Some(&change));
+            assert_eq!(
+                confirmed.arguments(),
+                json!({"operation":operation,"plugin_id":"org.rad.fixture",
+                       "source":"https://github.com/other/repo","trusted":true,
+                       "replaces_source":REGISTERED})
+            );
+        }
+    }
+
+    #[test]
+    fn a_source_changed_refusal_reaches_the_caller_with_its_origins() {
+        struct Refuses;
+        impl Port for Refuses {
+            fn call(&mut self, _: rad_api::Request) -> Result<Response, Failure> {
+                Ok(Response {
+                    v: 1,
+                    id: Some("1".into()),
+                    session_id: None,
+                    status: rad_api::Status::Error,
+                    data: rad_api::ResponseData::None,
+                    error: Some(rad_api::Error {
+                        code: rad_api::ErrorCode::SourceChanged,
+                        message: String::new(),
+                        details: json!({"registered":REGISTERED,"requested":"https://github.com/other/repo"}),
+                        outcome: Some(rad_api::Outcome::NotApplied),
+                    }),
+                })
+            }
+        }
+        let error = Session::new(Refuses)
+            .request(admin_request(
+                PluginOperation::Update,
+                Some("org.rad.fixture".into()),
+                Some("https://github.com/other/repo".into()),
+                true,
+                None,
+            ))
+            .unwrap_err();
+        assert_eq!(error.code, "source_changed");
+        assert!(error.source_change.is_some());
+        assert_eq!(
+            error.source_change,
+            SourceChange::between(Some(REGISTERED), "https://github.com/other/repo")
+        );
+    }
+}

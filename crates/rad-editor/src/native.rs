@@ -325,6 +325,7 @@ pub fn start_with_clock(
                 .map_err(|e| Error {
                     code: e.code.into(),
                     cause: None,
+                    source_change: None,
                     unknown: false,
                 })
         } else {
@@ -350,6 +351,7 @@ pub fn start_with_clock(
                         Err(Error {
                             code: e.code.into(),
                             cause: None,
+                            source_change: None,
                             unknown: false,
                         })
                     }
@@ -359,6 +361,7 @@ pub fn start_with_clock(
                 None => Err(Error {
                     code: "runtime_unavailable".into(),
                     cause: None,
+                    source_change: None,
                     unknown: false,
                 }),
                 Some(s) => match other {
@@ -384,6 +387,7 @@ pub fn start_with_clock(
                                     Err(Error {
                                         code: "operation_not_allowed".into(),
                                         cause: None,
+                                        source_change: None,
                                         unknown: false,
                                     })
                                 }
@@ -437,6 +441,7 @@ pub fn start_with_clock(
                             Err(Error {
                                 code: "busy".into(),
                                 cause: None,
+                                source_change: None,
                                 unknown: false,
                             })
                         } else {
@@ -518,6 +523,7 @@ fn options_session<'a>(
         let client = Client::connect(runtime, Endpoint::Editor).map_err(|e| Error {
             code: e.code.into(),
             cause: None,
+            source_change: None,
             unknown: false,
         })?;
         *connection = Some((Session::new(client), Instant::now()));

@@ -51,6 +51,7 @@ impl PluginUi {
                     let lost = Error {
                         code: "runtime_unavailable".into(),
                         cause: None,
+                        source_change: None,
                         unknown: false,
                     };
                     form.accept_answer(self.tickets, Err(lost));
@@ -94,6 +95,7 @@ impl PluginUi {
             let lost = Error {
                 code: "runtime_unavailable".into(),
                 cause: None,
+                source_change: None,
                 unknown: false,
             };
             form.accept_answer(ticket, Err(lost));
@@ -289,6 +291,7 @@ mod tests {
             Err(code) => Err(Error {
                 code: code.into(),
                 cause: None,
+                source_change: None,
                 unknown: false,
             }),
         };

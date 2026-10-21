@@ -34,6 +34,11 @@ impl GithubSource {
             tag: parts.get(4).map(|s| (*s).into()),
         })
     }
+    /// Same `owner/repo`, ignoring case; the tag or release does not make another origin.
+    pub fn same_origin(&self, other: &Self) -> bool {
+        self.owner.eq_ignore_ascii_case(&other.owner)
+            && self.repository.eq_ignore_ascii_case(&other.repository)
+    }
     pub fn canonical_url(&self) -> String {
         let base = format!("https://github.com/{}/{}", self.owner, self.repository);
         self.tag

@@ -173,6 +173,7 @@ fn panel_confirms_only_ack_and_discards_unsubmitted_drafts_on_context_change() {
         .send(Err(crate::session::Error {
             code: "storage_uncertain".into(),
             cause: None,
+            source_change: None,
             unknown: true,
         }))
         .unwrap();
@@ -463,6 +464,7 @@ fn saved_hint_pending_and_error_never_expose_or_claim_saved_bytes() {
     field.error = Some(crate::session::Error {
         code: "storage_uncertain".into(),
         cause: None,
+        source_change: None,
         unknown: true,
     });
     let failed = frame(&ctx, &mut field, vec![]);
@@ -592,6 +594,7 @@ fn decode_state(
         .map_err(|_| crate::session::Error {
             code: "invalid_request".into(),
             cause: None,
+            source_change: None,
             unknown: mutating,
         })?;
     super::decode_state(data, mutating, status)

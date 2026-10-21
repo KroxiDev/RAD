@@ -118,6 +118,65 @@ use crate::{
     Request,
     session::{Error, Port, Session},
 };
+/// An update or reinstall that would replace where a plugin comes from: both origins, as
+/// canonical GitHub addresses, so the user sees what changes before agreeing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceChange {
+    pub registered: String,
+    pub requested: String,
+}
+impl SourceChange {
+    /// The confirmation owed before `requested` may replace `registered`; none when the
+    /// plugin has no registered origin or both are the same repository (a tag is not an origin).
+    /// An address that is not a GitHub repository is left to the runtime to refuse.
+    pub fn between(registered: Option<&str>, requested: &str) -> Option<Self> {
+        let registered = registered?;
+        let (known, wanted) = (repository(registered)?, repository(requested)?);
+        (known != wanted).then(|| Self {
+            registered: registered.trim().to_owned(),
+            requested: requested.trim().to_owned(),
+        })
+    }
+    /// The two origins the runtime named in a `source_changed` refusal.
+    pub fn from_details(details: &Value) -> Option<Self> {
+        Some(Self {
+            registered: details["registered"].as_str()?.to_owned(),
+            requested: details["requested"].as_str()?.to_owned(),
+        })
+    }
+}
+/// `owner/repo` of a GitHub address, lowercase: the identity of an origin.
+fn repository(url: &str) -> Option<(String, String)> {
+    let path = url.trim().strip_prefix("https://github.com/")?;
+    let mut parts = path.split('/');
+    let (owner, repository) = (parts.next()?, parts.next()?);
+    let repository = repository.strip_suffix(".git").unwrap_or(repository);
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    };
+    (valid(owner) && valid(repository))
+        .then(|| (owner.to_ascii_lowercase(), repository.to_ascii_lowercase()))
+}
+/// The `plugin_admin` request for `operation`. A confirmed origin change adds the registered
+/// origin the user saw, which the runtime checks against what it still has registered.
+pub fn admin_request(
+    operation: rad_api::PluginOperation,
+    plugin_id: Option<String>,
+    source: Option<String>,
+    trusted: bool,
+    confirmed: Option<&SourceChange>,
+) -> Request {
+    Request::PluginAdmin {
+        operation,
+        plugin_id,
+        source,
+        trusted: Some(trusted),
+        replaces_source: confirmed.map(|change| change.registered.clone()),
+    }
+}
 #[derive(Debug, Clone)]
 pub struct CatalogEntry {
     pub type_key: String,

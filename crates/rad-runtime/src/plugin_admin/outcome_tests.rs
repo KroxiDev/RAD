@@ -69,10 +69,11 @@ fn unconfirmed_and_uncertain_keep_barrier_credit_but_confirmed_not_applied_relea
             operation: rad_protocol::PluginOperation::Uninstall,
             plugin_id: Some("org.rad.fixture".into()),
             source: None,
+            replaces_source: None,
         };
         assert_eq!(
             admin.submit(Origin::Editor, request.clone(), &actor),
-            Err("resource_exhausted")
+            Err("resource_exhausted".into())
         );
         assert!(matches!(jobs.try_recv(), Err(mpsc::TryRecvError::Empty)));
         let outcome = if uncertain {
@@ -104,7 +105,7 @@ fn unconfirmed_and_uncertain_keep_barrier_credit_but_confirmed_not_applied_relea
             );
             assert_eq!(
                 admin.submit(Origin::Editor, request, &actor),
-                Err("resource_exhausted")
+                Err("resource_exhausted".into())
             );
         } else {
             assert!(!admin.busy && !admin.locked);

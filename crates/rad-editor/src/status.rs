@@ -45,6 +45,7 @@ pub fn describe_error(code: &str, es: impl Into<crate::preferences::Language> + 
         "plugin_already_installed" => "Plugin already installed — use Update",
         "plugin_mismatch" => "That package belongs to a different plugin",
         "plugin_same_version" => "That version is already selected — nothing to update",
+        "source_changed" => "The plugin's source changed — review it and confirm",
         "network" => "Plugin download failed",
         "deadline" => "Plugin operation timed out",
         "io" => "Plugin storage operation failed",

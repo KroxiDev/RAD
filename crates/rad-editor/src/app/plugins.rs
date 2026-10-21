@@ -1,6 +1,6 @@
 //! Plugin presentation only; publication/activation belong to the runtime.
 use super::{App, Job, look::Look, string, tr};
-use crate::plugins::{CatalogEntry, FormDraft, FormTarget, LoadedForm, Visual};
+use crate::plugins::{CatalogEntry, FormDraft, FormTarget, LoadedForm, SourceChange, Visual};
 use eframe::egui;
 use serde_json::Value;
 #[cfg(test)]
@@ -47,7 +47,19 @@ pub(super) struct PluginUi {
     password_request: Option<(String, Vec<String>)>,
     update_request: bool,
     retry_request: Option<String>,
+    /// An update or reinstall waiting for the user to agree to a different origin.
+    confirmation: Option<Confirmation>,
+    /// The last operation sent to the administration, to repeat it once confirmed.
+    submitted: Option<&'static str>,
     schedule: crate::schedule::Schedule,
+}
+/// An origin change the user is looking at, for the plugin and link it was raised for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Confirmation {
+    operation: &'static str,
+    plugin: String,
+    source: String,
+    change: SourceChange,
 }
 impl PluginUi {
     /// Invalidating a load does not release its credit until the result is consumed.
@@ -88,6 +100,7 @@ impl PluginUi {
         self.status = Value::Null;
         self.catalog_loaded = false;
         self.trusted = false;
+        self.confirmation = None;
         self.source.clear();
         self.selected.clear();
         self.source_edited = true;
@@ -153,6 +166,7 @@ impl PluginUi {
             && matches!(self.status["state"].as_str(), Some("idle" | "failed"))
     }
     fn select(&mut self, id: &str) {
+        self.confirmation = None;
         self.selected = id.into();
         self.source_edited = false;
         self.source = self
@@ -167,6 +181,70 @@ impl PluginUi {
             .as_array()?
             .iter()
             .find(|v| v["id"] == self.selected)
+    }
+    /// What the administration should receive for `operation`, or `None` when the user must
+    /// first agree to an update that comes from another origin than the registered one.
+    fn next_admin_request(&mut self, operation: &'static str) -> Option<crate::Request> {
+        if matches!(operation, "update" | "reinstall")
+            && let Some(change) = SourceChange::between(
+                self.selected_item()
+                    .and_then(|item| item["source"].as_str()),
+                &self.source,
+            )
+        {
+            self.confirmation = Some(Confirmation {
+                operation,
+                plugin: self.selected.clone(),
+                source: self.source.clone(),
+                change,
+            });
+            return None;
+        }
+        Some(self.admin_request(operation, None))
+    }
+    /// The origin change on display, while the plugin and link it was raised for are still
+    /// the ones selected and typed.
+    fn pending_confirmation(&self) -> Option<&Confirmation> {
+        self.confirmation
+            .as_ref()
+            .filter(|c| c.plugin == self.selected && c.source == self.source)
+    }
+    /// The user agreed to the origin change on display: the request that carries it.
+    fn confirm(&mut self) -> Option<crate::Request> {
+        let confirmation = self.pending_confirmation()?.clone();
+        self.confirmation = None;
+        Some(self.admin_request(confirmation.operation, Some(&confirmation.change)))
+    }
+    /// The runtime refused an update because the origin changed; ask about the two it names.
+    pub(super) fn source_refused(&mut self, change: SourceChange) {
+        if let Some(operation) = self.submitted {
+            self.confirmation = Some(Confirmation {
+                operation,
+                plugin: self.selected.clone(),
+                source: self.source.clone(),
+                change,
+            });
+        }
+    }
+    fn admin_request(&self, operation: &str, confirmed: Option<&SourceChange>) -> crate::Request {
+        let remote = matches!(operation, "install" | "update" | "reinstall");
+        let operation_code = match operation {
+            "install" => rad_api::PluginOperation::Install,
+            "update" => rad_api::PluginOperation::Update,
+            "reinstall" => rad_api::PluginOperation::Reinstall,
+            "rollback" => rad_api::PluginOperation::Rollback,
+            _ => rad_api::PluginOperation::Uninstall,
+        };
+        crate::plugins::admin_request(
+            operation_code,
+            (operation != "install").then(|| self.selected.clone()),
+            remote.then(|| self.source.trim().to_owned()),
+            !remote
+                || self.trusted
+                || (operation == "update" && self.trusted_update())
+                || confirmed.is_some(),
+            confirmed,
+        )
     }
     fn trusted_update(&self) -> bool {
         self.trusted
@@ -678,11 +756,33 @@ impl App {
         {
             self.plugins.trusted = false;
             self.plugins.source_edited = true;
+            self.plugins.confirmation = None;
         }
         ui.checkbox(
             &mut self.plugins.trusted,
             tr(self.es, "I trust this native code (not sandboxed)"),
         );
+        if let Some(asked) = self.plugins.pending_confirmation().cloned() {
+            ui.label(
+                tr(
+                    self.es,
+                    "This plugin comes from {registered}, but the package you chose is from {requested}. Continue only if you trust the new source.",
+                )
+                .replace("{registered}", &asked.change.registered)
+                .replace("{requested}", &asked.change.requested),
+            );
+            ui.horizontal(|ui| {
+                if ui.button(tr(self.es, "Confirm")).clicked()
+                    && let Some(request) = self.plugins.confirm()
+                {
+                    self.send_admin(asked.operation, request);
+                }
+                if ui.button(tr(self.es, "Cancel")).clicked() {
+                    self.plugins.confirmation = None;
+                }
+            });
+            return;
+        }
         let selected = self.plugins.selected_item();
         let source_ok =
             self.plugins.trusted && installation_source(self.plugins.source.trim()).is_some();
@@ -715,37 +815,16 @@ impl App {
             self.submit_plugin_operation(operation);
         }
     }
-    fn submit_plugin_operation(&mut self, operation: &str) {
-        let remote = matches!(operation, "install" | "update" | "reinstall");
-        let operation_code = match operation {
-            "install" => rad_api::PluginOperation::Install,
-            "update" => rad_api::PluginOperation::Update,
-            "reinstall" => rad_api::PluginOperation::Reinstall,
-            "uninstall" => rad_api::PluginOperation::Uninstall,
-            "rollback" => rad_api::PluginOperation::Rollback,
-            _ => return,
-        };
-        let request = crate::Request::PluginAdmin {
-            operation: operation_code,
-            plugin_id: if operation == "install" {
-                None
-            } else {
-                Some(self.plugins.selected.clone())
-            },
-            source: if remote {
-                Some(self.plugins.source.trim().to_owned())
-            } else {
-                None
-            },
-            trusted: Some(
-                !remote
-                    || self.plugins.trusted
-                    || (operation == "update" && self.plugins.trusted_update()),
-            ),
-        };
+    fn submit_plugin_operation(&mut self, operation: &'static str) {
+        if let Some(request) = self.plugins.next_admin_request(operation) {
+            self.send_admin(operation, request);
+        }
+    }
+    fn send_admin(&mut self, operation: &'static str, request: crate::Request) {
         if self.command(Job::Request(request)) {
             self.plugins.admin_pending = true;
             self.plugins.trusted = false;
+            self.plugins.submitted = Some(operation);
             // Keep the selected origin visible; backend status confirms persisted consent.
         }
     }
@@ -1570,5 +1649,113 @@ mod restored_tests {
             installation_source("https://github.com/o/r/releases/tag/v2/").as_deref(),
             Some("https://github.com/o/r/releases/tag/v2")
         );
+    }
+}
+
+#[cfg(test)]
+mod source_change_tests {
+    use super::*;
+    const REGISTERED: &str = "https://github.com/owner/repo/releases/tag/v1";
+    const OTHER: &str = "https://github.com/other/repo/releases/tag/v2";
+    fn ui(source: &str) -> PluginUi {
+        let mut plugins = PluginUi {
+            status: json!({"state":"idle","items":[{"id":"fixture","source":REGISTERED,"source_trusted":true}]}),
+            ..Default::default()
+        };
+        plugins.select("fixture");
+        plugins.source = source.into();
+        plugins.source_edited = true;
+        plugins.trusted = true;
+        plugins
+    }
+    fn args(request: &crate::Request) -> Value {
+        request.arguments()
+    }
+    #[test]
+    fn another_repository_waits_for_the_user_and_then_sends_the_registered_origin() {
+        for operation in ["update", "reinstall"] {
+            let mut plugins = ui(OTHER);
+            assert!(
+                plugins.next_admin_request(operation).is_none(),
+                "{operation} must not be sent before the user agrees"
+            );
+            let asked = plugins.confirmation.clone().expect("confirmation opens");
+            assert_eq!(asked.change.registered, REGISTERED);
+            assert_eq!(asked.change.requested, OTHER);
+            let request = plugins.confirm().expect("the confirmed request");
+            assert_eq!(
+                args(&request),
+                json!({"operation":operation,"plugin_id":"fixture","source":OTHER,
+                       "trusted":true,"replaces_source":REGISTERED})
+            );
+            assert!(plugins.confirmation.is_none());
+        }
+    }
+    #[test]
+    fn same_repository_other_tag_or_case_is_sent_without_confirmation() {
+        for source in [
+            "https://github.com/owner/repo/releases/tag/v2",
+            "https://github.com/OWNER/REPO",
+        ] {
+            let mut plugins = ui(source);
+            let request = plugins.next_admin_request("update").unwrap();
+            assert!(args(&request).get("replaces_source").is_none(), "{source}");
+            assert!(plugins.confirmation.is_none());
+        }
+    }
+    #[test]
+    fn other_operations_and_plugins_without_origin_never_ask() {
+        let mut plugins = ui(OTHER);
+        for operation in ["install", "uninstall", "rollback"] {
+            assert!(
+                plugins.next_admin_request(operation).is_some(),
+                "{operation}"
+            );
+        }
+        plugins.status["items"][0]["source"] = Value::Null;
+        plugins.select("fixture");
+        plugins.source = OTHER.into();
+        plugins.trusted = true;
+        assert!(plugins.next_admin_request("update").is_some());
+    }
+    #[test]
+    fn a_confirmation_does_not_outlive_the_plugin_or_the_link_it_was_raised_for() {
+        let mut plugins = ui(OTHER);
+        assert!(plugins.next_admin_request("update").is_none());
+        assert!(plugins.pending_confirmation().is_some());
+        plugins.source = "https://github.com/third/repo".into();
+        assert!(plugins.pending_confirmation().is_none(), "another link");
+        plugins.source = OTHER.into();
+        assert!(plugins.pending_confirmation().is_some());
+        plugins.status["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"second"}));
+        plugins.selected = "second".into();
+        assert!(plugins.pending_confirmation().is_none(), "another plugin");
+        assert!(plugins.confirm().is_none(), "nothing valid to confirm");
+    }
+    #[test]
+    fn a_refusal_from_the_runtime_opens_the_confirmation_with_the_origins_it_names() {
+        let mut plugins = ui("https://github.com/owner/repo/releases/tag/v2");
+        plugins.submitted = Some("update");
+        // The registered origin changed meanwhile: the runtime names the current one.
+        let change = SourceChange::from_details(&json!({
+            "registered":"https://github.com/moved/repo","requested":"https://github.com/owner/repo/releases/tag/v2"
+        }))
+        .unwrap();
+        plugins.source_refused(change.clone());
+        assert_eq!(plugins.pending_confirmation().unwrap().change, change);
+        let request = plugins.confirm().unwrap();
+        assert_eq!(args(&request)["operation"], "update");
+        assert_eq!(
+            args(&request)["replaces_source"],
+            "https://github.com/moved/repo"
+        );
+        assert_eq!(args(&request)["trusted"], true);
+        // Without a remembered operation there is nothing to repeat.
+        let mut idle = ui(OTHER);
+        idle.source_refused(change);
+        assert!(idle.pending_confirmation().is_none());
     }
 }

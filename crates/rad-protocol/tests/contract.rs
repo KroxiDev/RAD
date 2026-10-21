@@ -1350,6 +1350,39 @@ fn plugin_administration_is_editor_only_and_schema_uses_contract_fields() {
 }
 
 #[test]
+fn replaced_origin_travels_only_with_operations_that_replace_one() {
+    use rad_protocol::{External, PluginOperation};
+    let mut a = actor();
+    let base = |operation: &str| {
+        json!({"operation":operation,"plugin_id":"fixture","source":"https://github.com/other/repo","trusted":true,
+               "replaces_source":"https://github.com/owner/repo"})
+    };
+    for operation in ["update", "reinstall"] {
+        let Resolution::External(External::PluginAdmin(admin)) =
+            call(&mut a, Origin::Editor, "plugin_admin", base(operation))
+        else {
+            panic!("{operation} with a confirmed origin reaches the runtime");
+        };
+        assert_eq!(
+            admin.replaces_source.as_deref(),
+            Some("https://github.com/owner/repo")
+        );
+        assert!(matches!(
+            admin.operation,
+            PluginOperation::Update | PluginOperation::Reinstall
+        ));
+    }
+    for operation in ["install", "uninstall", "rollback"] {
+        let mut args = base(operation);
+        if operation != "install" {
+            args["source"] = json!(null);
+        }
+        let r = response(call(&mut a, Origin::Editor, "plugin_admin", args));
+        assert_eq!(r.error.unwrap().code, "invalid_request", "{operation}");
+    }
+}
+
+#[test]
 fn opaque_plugin_configuration_is_preserved_and_consultation_filtered() {
     use rad_core::configuration::*;
     use rad_core::permissions::{LocalPermissions, Permissions};

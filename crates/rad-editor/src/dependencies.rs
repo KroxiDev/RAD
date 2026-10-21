@@ -52,6 +52,7 @@ impl Dependencies {
             return Err(Error {
                 code: "cursor_expired".into(),
                 cause: None,
+                source_change: None,
                 unknown: false,
             });
         }
