@@ -47,8 +47,8 @@ Una vista que supera el presupuesto de respuesta de 48 KiB produce
 
 `deck` distingue `disabled`, `connected`, `disconnected` e `inaccessible`.
 `inaccessible` incluye el deck que el runtime no pudo iniciar: no termina por ello.
-`storage` distingue `ready`, `uncertain`, `recovery_required`. Estos códigos no
-prometen que el modo recuperación de arranque (fase 3) ya esté implementado.
+`storage` distingue `ready`, `uncertain`, `recovery_required`. El modo recuperación
+de arranque es otra cosa: ver «Modo recuperación».
 `last_restart` es `clean` o `recovered_previous` según la reconciliación de inicio.
 
 `previous_exit` aparece en `overview` y en el `status` del Editor solo cuando el
@@ -103,6 +103,37 @@ cliente no puede asegurar el resultado: vuelve a leer el estado o consulta el
 resultado de ejecución conocido. **No se reintenta la acción automáticamente.**
 Solo una nueva decisión del usuario puede repetirla. Los errores conservan código
 y causa técnica; el editor traduce códigos con su catálogo, no usa prosa del servidor.
+
+## Modo recuperación
+
+Si el runtime no puede abrir la configuración (ADR 0011) no sale: conserva el lock de
+instancia y los sockets, no toma el deck ni lanza plugins, y solo atiende lo siguiente.
+El editor nunca escribe la configuración por su cuenta.
+
+- `hello` se responde igual (mismos `limits`) con solo las operaciones de recuperación:
+  Editor `hello`, `recovery`, `recovery_reset`; Automation `hello`.
+- `recovery {}` (solo Editor; Automation recibe `permission_denied`) devuelve
+  `{cause, actions, detail:{code, counters_read}}`.
+
+| `cause` | Cuándo | `detail.code` | `actions` |
+|---|---|---|---|
+| `unreadable` | La base no tiene ninguna revisión válida | `corrupt`, `invalid` | `reset`, `details` |
+| `newer_version` | La escribió una versión más nueva de RAD | `unsupported_version` | `details` |
+| `unsafe_folder` | La carpeta de datos o `state.sqlite3` no es privado y propio (ni enlace) | `unsafe_directory`, `unsafe_database_file` | `details` |
+
+  `counters_read` es `true` si se pudieron leer los contadores de identidad del archivo
+  dañado (solo se intenta con `unreadable`).
+- `recovery_reset {confirm}` (solo Editor; mutación) es «Empezar de nuevo». Sin
+  `confirm: true` responde `confirmation_required`; con una causa distinta de
+  `unreadable`, `operation_not_allowed`; si falla antes de reemplazar la base,
+  `storage_error` y sigue en recuperación (ambos `not_applied`). Si tiene éxito responde
+  `applied` con `{changed, revision}`: el archivo dañado queda como
+  `state.sqlite3.damaged-<ms>` (con sus sidecars), la configuración nueva no reutiliza los
+  IDs que se pudieron leer, y el runtime pasa a modo normal **en el mismo proceso**. Las
+  conexiones abiertas siguen sirviendo: el editor relee sus vistas.
+- Todo lo demás, en ambos endpoints, responde `recovery_required` (`not_applied` si es una
+  mutación). En modo normal `recovery` y `recovery_reset` no se anuncian ni se atienden.
+- «Restaurar una copia» llegará como otra acción de `actions`.
 
 ## CLI JSON y salida de proceso
 
@@ -268,6 +299,8 @@ gets `permission_denied`.
 | `notice_dropped` | | A notice could not be queued; the next one recovers it. |
 | `connection_failed` | count | Connections that could not be taken in (closed, or left queued while the process is out of descriptors), reported at most once a minute with how many since the previous report. |
 | `export_failed` | | An export's snapshot could not be made; that export got an error and its lease went back. |
+| `recovery_mode` | cause | The runtime could not open the configuration and entered recovery mode (`unreadable`, `newer_version`, `unsafe_folder`). |
+| `recovery_reset` | | «Empezar de nuevo» finished; the runtime went on in normal mode. |
 
 Board and Overview notices invalidate independent views. The editor fetches only the
 invalidated view, while Board and Inspector still require matching revisions before

@@ -218,7 +218,7 @@ fn binary_help_and_invalid_environment_never_start_runtime() {
 
 #[cfg(feature = "fixture-tests")]
 #[test]
-fn binary_private_session_shutdown_and_corrupt_startup_preserve_material() {
+fn binary_private_session_shutdown_and_corrupt_startup_enter_recovery_and_start_again() {
     use rad_client::connection::{Client, Endpoint};
     use std::{
         fs,
@@ -315,10 +315,56 @@ fn binary_private_session_shutdown_and_corrupt_startup_preserve_material() {
     assert!(database.is_file());
     let invalid = b"not a sqlite database; preserve this material";
     fs::write(&database, invalid).unwrap();
-    let output = command().output().unwrap();
-    assert_eq!(output.status.code(), Some(1), "unexpected, not blocking");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Material conservado"), "{stderr}");
-    assert!(stderr.contains("restaurar manualmente"));
-    assert_eq!(fs::read(database).unwrap(), invalid);
+    // Not a reason to exit: the runtime keeps serving recovery mode, in this same process.
+    let mut child = ChildGuard(command().spawn().unwrap());
+    let mut client = loop {
+        if let Ok(client) = Client::connect(&base.join("runtime"), Endpoint::Editor) {
+            break client;
+        }
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "a damaged database must not end the runtime"
+        );
+        assert!(Instant::now() < deadline, "recovery readiness timeout");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let view = client.request("recovery", serde_json::json!({})).unwrap();
+    assert_eq!(
+        serde_json::to_value(&view.data).unwrap()["cause"],
+        "unreadable"
+    );
+    let refused = client.request("overview", serde_json::json!({})).unwrap();
+    assert_eq!(refused.error.unwrap().code, "recovery_required");
+    assert_eq!(fs::read(&database).unwrap(), invalid);
+    let reset = client
+        .request("recovery_reset", serde_json::json!({"confirm":true}))
+        .unwrap();
+    assert_eq!(reset.status, rad_client::response::Status::Applied);
+    let evidence: Vec<_> = fs::read_dir(base.join("data/rad"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("state.sqlite3.damaged-")
+        })
+        .collect();
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(fs::read(&evidence[0]).unwrap(), invalid);
+    // The same process, the same connection, now the normal runtime.
+    assert!(child.0.try_wait().unwrap().is_none());
+    let overview = client.request("overview", serde_json::json!({})).unwrap();
+    assert!(overview.error.is_none(), "{overview:?}");
+    drop(client);
+    assert_eq!(unsafe { libc::kill(child.0.id() as i32, libc::SIGTERM) }, 0);
+    let end = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(Instant::now() < end, "shutdown readiness timeout");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }

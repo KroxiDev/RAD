@@ -1944,3 +1944,88 @@ fn runtime_log_is_announced_to_the_editor_and_never_to_automation() {
         );
     }
 }
+
+#[test]
+fn recovery_hello_announces_only_the_recovery_subset_with_the_normal_limits() {
+    use rad_api::Operation as Op;
+    let session = NonZeroU128::new(7).unwrap();
+    assert_eq!(
+        rad_protocol::recovery_operations(Origin::Editor),
+        [Op::Hello, Op::Recovery, Op::RecoveryReset]
+    );
+    assert_eq!(
+        rad_protocol::recovery_operations(Origin::Automation),
+        [Op::Hello]
+    );
+
+    let normal = |origin| {
+        let value = serde_json::to_vec(&json!({"v":1,"id":"1","op":"hello","args":{}})).unwrap();
+        let mut bytes = (value.len() as u32).to_be_bytes().to_vec();
+        bytes.extend(value);
+        let request = rad_wire::Session::default()
+            .accept(rad_wire::read_frame(&bytes).unwrap().unwrap())
+            .unwrap();
+        let hello = response(Protocol::new(session).handle(
+            &mut actor(),
+            IncomingContext {
+                request_id: 1,
+                connection: 4,
+                origin,
+            },
+            &request,
+        ));
+        serde_json::to_value(&hello.data).unwrap()
+    };
+    for origin in [Origin::Editor, Origin::Automation] {
+        let reduced = serde_json::to_value(rad_protocol::recovery_hello(session, origin)).unwrap();
+        let usual = normal(origin);
+        assert_eq!(reduced["limits"], usual["limits"], "{origin:?}");
+        assert_eq!(reduced["protocol"], usual["protocol"]);
+        assert_eq!(reduced["session_id"], usual["session_id"]);
+        // The normal hello never announces what only recovery mode serves.
+        let announced = usual["capabilities"].as_array().unwrap();
+        assert!(!announced.contains(&json!("recovery")), "{origin:?}");
+        assert!(!announced.contains(&json!("recovery_reset")), "{origin:?}");
+    }
+    let editor =
+        serde_json::to_value(rad_protocol::recovery_hello(session, Origin::Editor)).unwrap();
+    assert_eq!(
+        editor["capabilities"],
+        json!(["hello", "recovery", "recovery_reset"])
+    );
+}
+
+#[test]
+fn recovery_operations_are_not_served_in_normal_mode() {
+    for (op, args, mutation) in [
+        ("recovery", json!({}), false),
+        ("recovery_reset", json!({"confirm":true}), true),
+    ] {
+        let mut session = rad_wire::Session::default();
+        let mut request = None;
+        for (id, op, args) in [(1, "hello", json!({})), (2, op, args)] {
+            let value = serde_json::to_vec(&json!({"v":1,"id":id.to_string(),"op":op,"args":args}))
+                .unwrap();
+            let mut bytes = (value.len() as u32).to_be_bytes().to_vec();
+            bytes.extend(value);
+            request = Some(
+                session
+                    .accept(rad_wire::read_frame(&bytes).unwrap().unwrap())
+                    .unwrap(),
+            );
+        }
+        let request = request.unwrap();
+        let answer = response(Protocol::new(NonZeroU128::new(7).unwrap()).handle(
+            &mut actor(),
+            IncomingContext {
+                request_id: 2,
+                connection: 4,
+                origin: Origin::Editor,
+            },
+            &request,
+        ));
+        let error = answer.error.expect("rejected");
+        assert_eq!(error.code, "invalid_request", "{op}");
+        assert_eq!(error.outcome.is_some(), mutation, "{op}");
+    }
+}

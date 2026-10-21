@@ -259,6 +259,7 @@ pub enum ResponseData {
     PluginSettings(PluginSettingsView),
     PluginLog(PluginLogView),
     RuntimeLog(RuntimeLogView),
+    Recovery(RecoveryView),
     Catalog(CatalogPage),
     Configuration(ConfigurationPage),
     Dependencies(DependenciesPage),
@@ -324,6 +325,7 @@ impl ResponseData {
             Operation::PluginSettings => decode!(PluginSettings),
             Operation::PluginLog => decode!(PluginLog),
             Operation::RuntimeLog => decode!(RuntimeLog),
+            Operation::Recovery => decode!(Recovery),
             Operation::PluginConfiguration => decode!(Configuration),
             Operation::PluginDependencies => decode!(Dependencies),
             Operation::Options => {

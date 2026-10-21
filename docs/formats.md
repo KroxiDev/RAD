@@ -256,6 +256,15 @@ evidencia. `recovery.hold=0` permite la recolección normal; un valor positivo
 conserva la evidencia hasta descarte explícito. `meta.barrier`, inicialmente cero,
 se incrementa con una escritura real para reconciliar durabilidad incierta.
 
+Una base que no se puede abrir nunca se borra: al reemplazarla queda como
+`state.sqlite3.damaged-<ms>`, con sus `-journal`, `-wal` y `-shm` renombrados a
+`state.sqlite3.damaged-<ms>-journal` (y análogos) para que un journal caliente no se
+aplique a la base nueva. El reemplazo es un intercambio atómico y se niega si ya existe
+una evidencia con ese sello. Para no reutilizar IDs, los contadores de la base ilegible
+se leen en solo lectura (`immutable=1`: sin locks, sin tocar sidecars ni escribir) y sin
+exigir el `digest`: se toma el máximo entre `counters`, `identities` y, para `serial`,
+solo las filas de la `meta.installation` legible.
+
 El runtime configura páginas de 4.096 bytes, máximo 262.144 páginas, límite SQLite
 de valores de 2 MiB, `journal_mode=DELETE`, `synchronous=EXTRA`,
 `foreign_keys=ON`, `trusted_schema=OFF` y espera de busy cero.

@@ -8,7 +8,8 @@
 //! |---|---|---|---|
 //! | 0 | Clean | SIGTERM or SIGINT served | does not restart |
 //! | 75 | Blocking | another live instance, unusable socket, invalid environment or arguments, unsafe runtime directory | `RestartPreventExitStatus=75`: does not restart |
-//! | 1 | Unexpected | unreadable configuration, unsafe data directory, storage, clock, internal protocol | `Restart=on-failure` with growing delay, at most 5 starts in 300 s |
+//! | none | Recovery, does not exit | configuration without a valid revision, written by a newer version, or an unsafe data folder | the process stays up serving [`crate::recovery`] |
+//! | 1 | Unexpected | storage, clock, internal protocol, a failed startup | `Restart=on-failure` with growing delay, at most 5 starts in 300 s |
 //! | 101 | Unexpected | panic of the main thread (Rust's default code) | same as 1 |
 //!
 //! 75 is `EX_TEMPFAIL`, reserved for what keeps the runtime from serving requests and
@@ -108,7 +109,7 @@ impl From<RuntimeError> for Exit {
             ),
             RuntimeError::Startup => Self::Unexpected(
                 Reason::Startup,
-                "no se pudo abrir la configuración. Material conservado: no se crea una configuración sustitutiva ni se mueve la base. Opciones: salir y conservar los archivos, o restaurar manualmente un respaldo válido con RAD detenido antes de reintentar.",
+                "falló el arranque del runtime; los archivos de datos se conservan",
             ),
             RuntimeError::Transport => {
                 Self::Unexpected(Reason::Transport, "falló el transporte local del runtime")

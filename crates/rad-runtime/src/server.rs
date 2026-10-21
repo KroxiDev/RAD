@@ -81,23 +81,22 @@ pub struct Server {
     storage_seen: rad_authority::StorageState,
 }
 impl Server {
+    /// Binds and opens in one step; recovery mode is an error here (see [`crate::startup`]).
     pub fn new(runtime: &Path, data: &Path, session: NonZeroU128) -> Result<Self, RuntimeError> {
-        // Instance lock precedes opening Store, so a second process cannot reaffirm it.
-        let transport = Transport::bind(runtime, session.get()).map_err(|error| match error {
-            // What keeps requests from being served, and no restart fixes.
-            TransportError::InstanceBusy | TransportError::UnsafePath | TransportError::Io => {
-                RuntimeError::Blocked
-            }
-            _ => RuntimeError::Transport,
-        })?;
-        // After the instance lock, so a refused second instance never consumes the record.
-        let previous_exit = crate::exit::take_previous(data);
-        let boot = bootstrap::open(
-            data,
-            session,
-            monotonic_ms().map_err(|_| RuntimeError::Clock)?,
-        )
-        .map_err(|_| RuntimeError::Startup)?;
+        match crate::startup::Bound::bind(runtime, session)?.open(data)? {
+            crate::startup::Opened::Serving(server) => Ok(*server),
+            crate::startup::Opened::Recovery(_) => Err(RuntimeError::Startup),
+        }
+    }
+    /// The server over an open Store. `events` already holds what happened before.
+    pub(crate) fn from_parts(
+        transport: Transport,
+        boot: bootstrap::Bootstrap,
+        data: &Path,
+        session: NonZeroU128,
+        previous_exit: Option<rad_api::PreviousExit>,
+        mut events: crate::events::Events,
+    ) -> Result<Self, RuntimeError> {
         let wake = Arc::new(
             transport
                 .worker_waker()
@@ -120,8 +119,6 @@ impl Server {
             .expect("Editor view")
             .brightness;
         let credentials = credentials::Credentials::new(data.to_path_buf(), wake.clone())?;
-        let mut events = crate::events::Events::new();
-        events.record(EventCode::Started, None);
         if let Some(previous) = &previous_exit {
             events.record(EventCode::PreviousExit, Some(&previous.code));
         }

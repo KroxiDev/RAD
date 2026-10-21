@@ -6,7 +6,9 @@ pub mod exit;
 pub mod lifecycle;
 pub mod native;
 pub mod persistence;
+pub mod recovery;
 pub mod server;
+pub mod startup;
 pub mod storage;
 pub mod transfers;
 

@@ -209,3 +209,59 @@ pub struct OverviewView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_exit: Option<PreviousExit>,
 }
+
+/// Why the runtime is in recovery mode (ADR 0011).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryCause {
+    /// The configuration has no valid revision.
+    Unreadable,
+    /// The configuration was written by a newer version of RAD.
+    NewerVersion,
+    /// The data folder or the database file is not private and owned by the user.
+    UnsafeFolder,
+}
+impl RecoveryCause {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unreadable => "unreadable",
+            Self::NewerVersion => "newer_version",
+            Self::UnsafeFolder => "unsafe_folder",
+        }
+    }
+}
+/// What the Editor may ask the runtime to do about it; closed, so the Editor shows a
+/// control only for what exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryAction {
+    /// `recovery_reset`: start again with an empty configuration.
+    Reset,
+    /// Show the detail; always available.
+    Details,
+}
+/// The finer reason behind a [`RecoveryCause`], for «Ver detalles».
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryDetailCode {
+    Corrupt,
+    Invalid,
+    UnsupportedVersion,
+    UnsafeDirectory,
+    UnsafeDatabaseFile,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryDetail {
+    pub code: RecoveryDetailCode,
+    /// Whether the identity counters of the damaged file could be read, so that a new
+    /// configuration does not reuse its identifiers.
+    pub counters_read: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryView {
+    pub cause: RecoveryCause,
+    pub actions: Vec<RecoveryAction>,
+    pub detail: RecoveryDetail,
+}

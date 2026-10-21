@@ -39,6 +39,8 @@ event_codes! {
     CatalogResponseInvalid => "catalog_response_invalid",
     ConnectionFailed => "connection_failed",
     ExportFailed => "export_failed",
+    RecoveryMode => "recovery_mode",
+    RecoveryReset => "recovery_reset",
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
