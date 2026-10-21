@@ -97,6 +97,15 @@ impl From<&'static str> for Rejection {
         }
     }
 }
+/// Wakes the runtime loop when a thread ends, normally or by panic: `stopped()`
+/// reads `is_finished`, which no readiness source reports, so a loop asleep in
+/// `wait` would otherwise never check shutdown completion again.
+struct WakeOnExit(Arc<dyn Fn() + Send + Sync>);
+impl Drop for WakeOnExit {
+    fn drop(&mut self) {
+        (self.0)();
+    }
+}
 pub(crate) struct Admin {
     tx: mpsc::SyncSender<Job>,
     rx: mpsc::Receiver<Reply>,
@@ -128,7 +137,10 @@ impl Admin {
         let worker_wake = wake.clone();
         let worker = thread::Builder::new()
             .name("rad-plugin-admin".into())
-            .spawn(move || worker::run(root, jobs, results, worker_wake))
+            .spawn(move || {
+                let _wake_on_exit = WakeOnExit(worker_wake.clone());
+                worker::run(root, jobs, results, worker_wake)
+            })
             .ok();
         let failed = worker.is_none();
         Self {
@@ -616,9 +628,95 @@ mod tests {
     use super::*;
     use rad_core::{configuration::Configuration, identity::IdentityRegistry};
     use std::{
-        sync::atomic::{AtomicBool, Ordering},
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
         time::{Duration, Instant},
     };
+    /// Counts loop wakes; the boot reply is the admin worker's first wake.
+    fn counting_admin(root: &std::path::Path, download: Download) -> (Admin, Arc<AtomicUsize>) {
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = wakes.clone();
+        let admin = Admin::new(
+            root.to_path_buf(),
+            Arc::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }),
+            download,
+        );
+        (admin, wakes)
+    }
+    fn booted(admin: &mut Admin, wakes: &AtomicUsize, actor: &mut Authority, host: &mut Host) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while admin.busy || wakes.load(Ordering::SeqCst) == 0 {
+            admin.poll(actor, host, 0);
+            assert!(Instant::now() < deadline, "admin worker did not boot");
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+    #[test]
+    fn the_admin_worker_wakes_the_loop_when_it_ends() {
+        let root = std::env::temp_dir().join(format!("rad-admin-exit-wake-{}", std::process::id()));
+        let (mut admin, wakes) = counting_admin(&root, Box::new(|_, _| Ok(vec![])));
+        let c = Configuration::prepare_new(&IdentityRegistry::new(505).unwrap()).unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(507).unwrap());
+        let mut host = Host::default();
+        booted(&mut admin, &wakes, &mut actor, &mut host);
+        let before = wakes.load(Ordering::SeqCst);
+        admin.shutdown();
+        while !admin.stop_sent {
+            admin.poll(&mut actor, &mut host, 0);
+        }
+        // No more polls: a loop asleep in `wait` only learns that the worker ended
+        // through a wake, or `shutdown_complete` would never be checked again.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !admin.stopped() {
+            assert!(Instant::now() < deadline, "admin worker did not stop");
+            thread::sleep(Duration::from_millis(1));
+        }
+        let after = wakes.load(Ordering::SeqCst);
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(after > before, "the ended worker never woke the loop");
+    }
+    #[test]
+    fn a_panicking_download_still_wakes_the_loop() {
+        let root =
+            std::env::temp_dir().join(format!("rad-admin-fetch-wake-{}", std::process::id()));
+        let (mut admin, wakes) = counting_admin(
+            &root,
+            Box::new(|_, _| panic!("synthetic downloader failure")),
+        );
+        let c = Configuration::prepare_new(&IdentityRegistry::new(505).unwrap()).unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(507).unwrap());
+        let mut host = Host::default();
+        booted(&mut admin, &wakes, &mut actor, &mut host);
+        let before = wakes.load(Ordering::SeqCst);
+        admin
+            .submit(
+                Origin::Editor,
+                PluginAdmin {
+                    operation: rad_protocol::PluginOperation::Install,
+                    plugin_id: None,
+                    source: Some("https://github.com/owner/repo".into()),
+                    replaces_source: None,
+                },
+                &actor,
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !admin.fetcher.stopped() {
+            assert!(Instant::now() < deadline, "download thread did not end");
+            thread::sleep(Duration::from_millis(1));
+        }
+        let after = wakes.load(Ordering::SeqCst);
+        admin.shutdown();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !admin.stopped() {
+            admin.poll(&mut actor, &mut host, 0);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(after > before, "the failed download never woke the loop");
+    }
     #[test]
     fn shutdown_cancels_cooperative_download_and_joins_admin_worker() {
         let root =

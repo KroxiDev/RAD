@@ -76,6 +76,8 @@ impl Fetcher {
         let thread = thread::Builder::new()
             .name("rad-plugin-fetch".into())
             .spawn(move || {
+                // Also when the downloader panics: `collect` then reports the lost result.
+                let _wake_on_exit = WakeOnExit(wake);
                 let fetched = {
                     // A panicking downloader poisons the lock; the next fetch still runs.
                     let download = download.lock().unwrap_or_else(|e| e.into_inner());
@@ -92,7 +94,6 @@ impl Fetcher {
                     }
                 };
                 let _ = tx.send(fetched);
-                wake();
             })?;
         self.stage = Some(Stage::Downloading {
             request,
