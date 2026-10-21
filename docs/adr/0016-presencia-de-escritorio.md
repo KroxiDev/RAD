@@ -1,6 +1,6 @@
 # 0016 · Presencia de escritorio sin editor residente
 
-**Estado:** aceptada, 2026-10-21 (E1 y E3 de la fase 3.5).
+**Estado:** aceptada, 2026-10-21 (E1, E2 y E3 de la fase 3.5).
 
 RAD necesita identidad de aplicación y una bandeja mientras el runtime funciona,
 incluso tras cerrar el editor o después del autoinicio. El runtime sigue siendo
@@ -8,6 +8,9 @@ la única autoridad y no incorpora escritorio, GIO ni GPU.
 
 - `packaging/rad.png` es la única fuente del ícono de ventana, entrada de menú y
   bandeja. El app_id estable es `io.github.KroxiDev.RAD`.
+- Al abrir, el editor instala la entrada `.desktop` y el ícono de 256 px en
+  `$XDG_DATA_HOME` (o `~/.local/share`) con el criterio de ADR 0012: los escribe
+  cuando faltan o cambiaron, con `Exec=` al editor en uso. Un fallo no impide abrirlo.
 - Un cliente separado, `rad-tray`, publica StatusNotifierItem y DBusMenu en el bus
   D-Bus de sesión con GIO. Se registra cuando aparece el watcher, también si llega
   tarde o se reinicia. Sin watcher, no muestra nada y el runtime sigue funcionando.
@@ -38,5 +41,4 @@ La propiedad del cgroup y la colocación visual de la bandeja se verifican en la
 sesión real, no se
 certifican con los tests aislados. Estos prueban bus privado, watcher tardío y
 reemplazado, activación única, parada sin reinicio solicitada y fin del proceso.
-La instalación automática de la entrada `.desktop` (E2) queda pendiente.
 Una compilación parcial sin `rad-tray` no impide arrancar la autoridad.

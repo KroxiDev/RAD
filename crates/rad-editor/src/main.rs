@@ -14,6 +14,12 @@ fn main() -> Result<(), eframe::Error> {
                 None
             }
         };
+    // The menu entry follows the editor in use (E2); failing to write it never blocks the editor.
+    std::thread::spawn(|| {
+        if let Err(error) = rad_editor::desktop::install_for_user() {
+            eprintln!("RAD menu entry not installed: {error}");
+        }
+    });
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_default();

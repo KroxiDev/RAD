@@ -50,17 +50,18 @@ Screenshots use a demo configuration.
 
 ```bash
 cargo build --release
-target/release/rad-runtime  # terminal 1: no hardware by default
-target/release/rad-editor   # terminal 2
+target/release/rad-editor
 ```
 
-Keep `rad-launcher-helper` beside `rad-runtime`. The runtime starts without the
-deck and takes it when "Use the Stream Deck with RAD" is turned on in the editor's
-settings.
+The first time, open `rad-editor` from RAD's `target/release` folder: it adds RAD
+to the applications menu and starts the runtime; from then on, open RAD from the
+menu. Keep `rad-runtime`, `rad-tray` and `rad-launcher-helper` beside the editor.
+The runtime starts without the deck and takes it when "Use the Stream Deck with
+RAD" is turned on in the editor's settings.
 
 Never run two deck controllers together. RAD does not read or modify data of other
-applications. Closing the editor leaves the runtime running; Ctrl+C
-in the runtime's terminal requests shutdown.
+applications. Closing the editor leaves the runtime running; "Quit RAD" in the tray
+icon stops it.
 
 Data lives in `$XDG_DATA_HOME/rad` or `~/.local/share/rad`; local sockets live
 under `$XDG_RUNTIME_DIR/rad`.

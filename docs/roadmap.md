@@ -301,16 +301,19 @@ con lo que diga. E1–E3 son independientes de E4–E5.
   a 16, 24, 48 y 256 px; cuatro tests existentes de íconos y clippy de biblioteca y
   binario del editor. Sin ventanas ni hardware.
 
-### E2 · RAD en el menú de aplicaciones
+### E2 · RAD en el menú de aplicaciones — hecho (commit `feat: install the RAD menu entry from the editor`)
 
-- **Hoy:** solo se abre desde la terminal.
-- **Decisión:** ADR 0016. Propuesta: el editor instala la entrada (`.desktop`) y el
-  ícono en `~/.local/share/` con el mismo criterio que la unidad
-  ([ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md)): cuando faltan, y los
-  reescribe si una versión nueva los cambia, apuntando al editor en uso. La primera
-  vez se abre desde la carpeta de RAD; el README lo explica.
-- **Pruebas:** contra un HOME temporal, instala, no reescribe sin cambios y reescribe
-  cuando cambian; la entrada es válida y apunta al editor.
+- **Entrega:** [ADR 0016](adr/0016-presencia-de-escritorio.md). Al abrir, el editor
+  instala en `$XDG_DATA_HOME` (o `~/.local/share`) la plantilla `.desktop` y el ícono
+  de 256 px de E1 con el criterio de [ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md):
+  los escribe cuando faltan o cambiaron, con `Exec=` al editor en uso, escapado según
+  la especificación; un fallo no impide abrirlo. La primera vez se abre desde la
+  carpeta de RAD; ambos README lo explican.
+- **Validación focal:** contra un directorio temporal, instala, no reescribe sin
+  cambios, reescribe la entrada, el ícono o el editor cambiados, escapa caracteres
+  reservados y rechaza rutas relativas; tests de servicio, fmt y clippy del editor.
+- **Límite:** sin escribir en el HOME real; la aparición en el lanzador del
+  escritorio no se ha verificado.
 
 ### E3 · Ícono en la bandeja mientras RAD corre — hecho (commit `feat: add runtime-bound desktop tray`)
 

@@ -240,10 +240,14 @@ pub fn render_unit(template: &str, runtime: &Path) -> Result<String, String> {
 
 /// Writes `contents` to `path` whole or not at all: a 0644 temporary in the same directory,
 /// renamed over the target, then the directory is flushed.
-fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
-    let dir = path.parent().expect("unit path has a directory");
+pub(crate) fn write_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let dir = path.parent().expect("the path has a directory");
     std::fs::create_dir_all(dir)?;
-    let temporary = dir.join(format!(".{UNIT}.{}.tmp", std::process::id()));
+    let name = path
+        .file_name()
+        .expect("the path names a file")
+        .to_string_lossy();
+    let temporary = dir.join(format!(".{name}.{}.tmp", std::process::id()));
     let _ = std::fs::remove_file(&temporary);
     let written = (|| {
         let mut file = OpenOptions::new()
@@ -252,7 +256,7 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
             .mode(0o644)
             .open(&temporary)?;
         file.set_permissions(std::fs::Permissions::from_mode(0o644))?;
-        file.write_all(contents.as_bytes())?;
+        file.write_all(contents)?;
         file.sync_all()?;
         std::fs::rename(&temporary, path)?;
         File::open(dir)?.sync_all()
@@ -339,7 +343,7 @@ impl<S: Systemctl> Service<S> {
             if std::fs::read(&path).is_ok_and(|current| current == wanted.as_bytes()) {
                 continue;
             }
-            write_atomic(&path, &wanted).map_err(|e| {
+            write_atomic(&path, wanted.as_bytes()).map_err(|e| {
                 Failure::could_not_start(format!("could not write {}: {e}", path.display()))
             })?;
             changed = true;

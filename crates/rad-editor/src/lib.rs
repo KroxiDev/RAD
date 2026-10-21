@@ -24,6 +24,7 @@ pub mod app;
 pub mod app_icon;
 pub mod catalog;
 pub mod commands;
+pub mod desktop;
 pub mod icons;
 pub mod native;
 pub mod options;
