@@ -10,6 +10,8 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 use std::collections::BTreeMap;
+/// Width of the list of installed plugins; the chosen one takes the rest.
+const LIST_WIDTH: f32 = 280.;
 #[derive(Default)]
 pub(super) struct PluginUi {
     pub catalog: Vec<CatalogEntry>,
@@ -47,10 +49,17 @@ pub(super) struct PluginUi {
     trusted: bool,
     source_edited: bool,
     selected: String,
-    status_page: usize,
     password_request: Option<(String, Vec<String>)>,
     update_request: bool,
     retry_request: Option<String>,
+    /// Remove, reinstall, roll back or install from a link: clicked, not yet sent.
+    operation_request: Option<&'static str>,
+    /// The current release of an official plugin, clicked to install.
+    official_install: Option<&'static str>,
+    /// The user agreed to the origin change on display.
+    confirmed: bool,
+    /// The plugin whose settings were last asked for, so they are asked once per visit.
+    pub settings_asked: Option<String>,
     /// An update or reinstall waiting for the user to agree to a different origin.
     confirmation: Option<Confirmation>,
     /// The last operation sent to the administration, to repeat it once confirmed.
@@ -168,6 +177,14 @@ impl PluginUi {
             && !self.admin_pending
             && self.status["locked"] != true
             && matches!(self.status["state"].as_str(), Some("idle" | "failed"))
+    }
+    /// «Add plugin» instead of an installed one, with an empty link.
+    fn add(&mut self) {
+        self.confirmation = None;
+        self.selected.clear();
+        self.source.clear();
+        self.source_edited = true;
+        self.trusted = false;
     }
     fn select(&mut self, id: &str) {
         self.confirmation = None;
@@ -319,128 +336,301 @@ fn version(v: &Value) -> String {
     }
     format!("{}.{}.{}", v["major"], v["minor"], v["patch"])
 }
-/// The manager admits at most 32 installed plugins. Page controls never hide a tail.
-fn plugin_status_list(
+/// What the list and the detail call a plugin: an official one by its name, any other by
+/// the name it declares or the last part of its ID.
+fn plugin_name(item: &Value, es: impl Into<crate::preferences::Language> + Copy) -> String {
+    let id = item["id"].as_str().unwrap_or("");
+    if let Some(official) = crate::official::find(id) {
+        return tr(es, official.name).to_owned();
+    }
+    item["name"]
+        .as_str()
+        .or_else(|| id.rsplit('.').next())
+        .unwrap_or(id)
+        .to_owned()
+}
+/// Where an update comes from: an official plugin's current release when it is newer or
+/// needed, any other plugin's trusted registered origin when it needs one. `true` marks the
+/// official release, which the click itself trusts.
+fn update_source(item: &Value) -> Option<(String, bool)> {
+    let needed = crate::status::PluginState::of(item) == crate::status::PluginState::NeedsUpdate;
+    if let Some(official) = item["id"].as_str().and_then(crate::official::find) {
+        return (needed || official.newer_than(&item["selected"]))
+            .then(|| (official.source.to_owned(), true));
+    }
+    (needed && item["source_trusted"] == true)
+        .then(|| item["source"].as_str().and_then(installation_source))
+        .flatten()
+        .map(|source| (source, false))
+}
+/// An operation under way: how far its download is, or only that it is working.
+fn operation_progress(
+    ui: &mut egui::Ui,
+    status: &Value,
+    es: impl Into<crate::preferences::Language> + Copy,
+) {
+    if matches!(status["state"].as_str(), None | Some("idle" | "failed")) {
+        return;
+    }
+    let bar = match status["progress"].as_u64() {
+        Some(percent) => egui::ProgressBar::new(percent.min(100) as f32 / 100.)
+            .text(tr(es, "Downloading {percent} %").replace("{percent}", &percent.to_string())),
+        None => egui::ProgressBar::new(0.)
+            .animate(true)
+            .text(tr(es, "Working…")),
+    };
+    ui.add(bar);
+    ui.add_space(6.);
+}
+/// Left column: «Add plugin», then every installed plugin with its state and version. The
+/// manager admits at most 32; the list scrolls, so none is out of reach.
+fn plugin_list(
     ui: &mut egui::Ui,
     plugins: &mut PluginUi,
-    idle: bool,
     es: impl Into<crate::preferences::Language> + Copy,
 ) -> bool {
-    const PAGE_SIZE: usize = 8;
     const MAX_PLUGINS: usize = 32;
     let items = plugins.status["items"]
         .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
+        .cloned()
+        .unwrap_or_default();
     if items.len() > MAX_PLUGINS {
         ui.label(tr(es, "Invalid plugin status: more than 32 entries"));
         return false;
     }
-    let pages = items.len().div_ceil(PAGE_SIZE).max(1);
-    plugins.status_page = plugins.status_page.min(pages - 1);
-    let mut selected_id = None;
-    for item in items
-        .iter()
-        .skip(plugins.status_page * PAGE_SIZE)
-        .take(PAGE_SIZE)
+    let row = egui::vec2(ui.available_width(), 30.);
+    let adding = plugins.selected_item().is_none();
+    if ui
+        .add(egui::Button::selectable(adding, tr(es, "+ Add plugin")).min_size(row))
+        .clicked()
     {
-        let id = string(&item["id"]);
-        let name = item["name"]
-            .as_str()
-            .or_else(|| id.rsplit('.').next())
-            .unwrap_or(&id);
-        if idle {
-            if ui.selectable_label(plugins.selected == id, name).clicked() {
-                selected_id = Some(id.clone());
-            }
-        } else {
-            ui.label(name);
-        }
-        let state = crate::status::PluginState::of(item);
-        ui.label(state.label(es));
-        if idle {
-            match state {
-                crate::status::PluginState::NotWorking if item["can_retry"] == true => {
-                    if ui.button(tr(es, "Retry")).clicked() {
-                        plugins.retry_request = Some(id.clone());
-                    }
+        plugins.add();
+    }
+    ui.add_space(4.);
+    egui::ScrollArea::vertical()
+        .id_salt("plugin-list")
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for item in &items {
+                let id = string(&item["id"]);
+                let state = crate::status::PluginState::of(item);
+                let detail = format!("{} · {}", state.label(es), version(&item["selected"]));
+                let button = egui::Button::selectable(
+                    !adding && plugins.selected == id,
+                    plugin_name(item, es),
+                )
+                .right_text(egui::RichText::new(detail).weak())
+                .min_size(row);
+                if ui.add(button).clicked() {
+                    plugins.select(&id);
                 }
-                crate::status::PluginState::NeedsPassword => {
-                    let slots: Vec<String> = plugins
-                        .dependencies
-                        .items()
-                        .into_iter()
-                        .flatten()
-                        .find(|dependency| dependency["id"] == id)
-                        .into_iter()
-                        .flat_map(|dependency| {
-                            dependency["credential_slots"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                        })
-                        .filter_map(|slot| slot.as_str().map(str::to_owned))
-                        .collect();
-                    if !slots.is_empty() && ui.button(tr(es, "Enter password")).clicked() {
-                        plugins.password_request = Some((id.clone(), slots));
-                    }
-                }
-                crate::status::PluginState::NeedsUpdate
-                    if item["source_trusted"] == true
-                        && item["source"]
-                            .as_str()
-                            .and_then(installation_source)
-                            .is_some()
-                        && ui.button(tr(es, "Update")).clicked() =>
-                {
-                    selected_id = Some(id.clone());
-                    plugins.update_request = true;
-                }
-                _ => {}
-            }
-        }
-        ui.collapsing(tr(es, "View details"), |ui| {
-            ui.label(format!(
-                "{} {} · {} {} · {}",
-                tr(es, "Selected"),
-                version(&item["selected"]),
-                tr(es, "Previous"),
-                version(&item["previous"]),
-                item["host"].as_str().unwrap_or("absent")
-            ));
-            if let Some(code) = item["diagnostic"].as_str() {
-                ui.label(code);
-            }
-            if let Some((_, resources)) = plugins.resources.get(&id) {
-                resource_details(ui, resources, es);
-            } else if idle
-                && plugins.manifest_pending.is_none()
-                && ui.button(tr(es, "Declared resources")).clicked()
-            {
-                plugins.manifest_request = Some(id.clone());
             }
         });
-    }
-    if pages > 1 {
-        ui.horizontal(|ui| {
-            ui.label(
-                tr(es, "Page {page}/{pages} · {count} plugins")
-                    .replace("{page}", &(plugins.status_page + 1).to_string())
-                    .replace("{pages}", &pages.to_string())
-                    .replace("{count}", &items.len().to_string()),
-            );
-            if plugins.status_page > 0 && ui.button(tr(es, "Previous")).clicked() {
-                plugins.status_page -= 1;
-            }
-            if plugins.status_page + 1 < pages && ui.button(tr(es, "Next")).clicked() {
-                plugins.status_page += 1;
-            }
-        });
-    }
-    if let Some(id) = selected_id {
-        plugins.select(&id);
-    }
     true
+}
+/// Top of the chosen plugin: its name, state and version, the action its state asks for,
+/// and the question when an update would come from another origin.
+fn plugin_summary(
+    ui: &mut egui::Ui,
+    plugins: &mut PluginUi,
+    idle: bool,
+    es: impl Into<crate::preferences::Language> + Copy,
+) {
+    let Some(item) = plugins.selected_item().cloned() else {
+        return;
+    };
+    let id = string(&item["id"]);
+    let state = crate::status::PluginState::of(&item);
+    ui.heading(plugin_name(&item, es));
+    ui.label(
+        egui::RichText::new(format!(
+            "{} · {}",
+            state.label(es),
+            version(&item["selected"])
+        ))
+        .weak(),
+    );
+    if let Some(asked) = plugins.pending_confirmation().cloned() {
+        ui.label(
+            tr(
+                es,
+                "This plugin comes from {registered}, but the package you chose is from {requested}. Continue only if you trust the new source.",
+            )
+            .replace("{registered}", &asked.change.registered)
+            .replace("{requested}", &asked.change.requested),
+        );
+        ui.horizontal(|ui| {
+            if ui.button(tr(es, "Confirm")).clicked() {
+                plugins.confirmed = true;
+            }
+            if ui.button(tr(es, "Cancel")).clicked() {
+                plugins.confirmation = None;
+            }
+        });
+        return;
+    }
+    if !idle {
+        return;
+    }
+    ui.horizontal(|ui| {
+        match state {
+            crate::status::PluginState::NotWorking if item["can_retry"] == true => {
+                if ui.button(tr(es, "Retry")).clicked() {
+                    plugins.retry_request = Some(id.clone());
+                }
+            }
+            crate::status::PluginState::NeedsPassword => {
+                let slots: Vec<String> = plugins
+                    .dependencies
+                    .items()
+                    .into_iter()
+                    .flatten()
+                    .find(|dependency| dependency["id"] == id)
+                    .into_iter()
+                    .flat_map(|dependency| {
+                        dependency["credential_slots"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                    })
+                    .filter_map(|slot| slot.as_str().map(str::to_owned))
+                    .collect();
+                if !slots.is_empty() && ui.button(tr(es, "Enter password")).clicked() {
+                    plugins.password_request = Some((id.clone(), slots));
+                }
+            }
+            _ => {}
+        }
+        if let Some((source, official)) = update_source(&item)
+            && ui.button(tr(es, "Update")).clicked()
+        {
+            plugins.source = source;
+            plugins.source_edited = official;
+            plugins.trusted = official;
+            plugins.update_request = true;
+        }
+    });
+}
+/// Bottom of the chosen plugin: Remove, and its details with the rarely needed operations.
+fn plugin_more(
+    ui: &mut egui::Ui,
+    look: &Look,
+    plugins: &mut PluginUi,
+    idle: bool,
+    es: impl Into<crate::preferences::Language> + Copy,
+) {
+    let Some(item) = plugins.selected_item().cloned() else {
+        return;
+    };
+    let id = string(&item["id"]);
+    ui.add_space(8.);
+    if idle && ui.add(look.dangerous(tr(es, "Remove"))).clicked() {
+        plugins.operation_request = Some("uninstall");
+    }
+    ui.collapsing(tr(es, "View details"), |ui| {
+        ui.label(format!(
+            "{} {} · {} {} · {}",
+            tr(es, "Selected"),
+            version(&item["selected"]),
+            tr(es, "Previous"),
+            version(&item["previous"]),
+            item["host"].as_str().unwrap_or("absent")
+        ));
+        if let Some(source) = item["source"].as_str() {
+            ui.label(source);
+        }
+        if let Some(code) = item["diagnostic"].as_str() {
+            ui.label(code);
+        }
+        if let Some((_, resources)) = plugins.resources.get(&id) {
+            resource_details(ui, resources, es);
+        } else if idle
+            && plugins.manifest_pending.is_none()
+            && ui.button(tr(es, "Declared resources")).clicked()
+        {
+            plugins.manifest_request = Some(id.clone());
+        }
+        if !idle {
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            let registered = item["source"].as_str().and_then(installation_source);
+            if item["source_trusted"] == true
+                && let Some(source) = registered
+                && ui.button(tr(es, "Reinstall")).clicked()
+            {
+                plugins.source = source;
+                plugins.trusted = true;
+                plugins.operation_request = Some("reinstall");
+            }
+            if !item["previous"].is_null() && ui.button(tr(es, "Rollback")).clicked() {
+                plugins.operation_request = Some("rollback");
+            }
+        });
+    });
+}
+/// «Add plugin»: each official plugin with one button, or another one from its link.
+fn add_plugin(
+    ui: &mut egui::Ui,
+    look: &Look,
+    plugins: &mut PluginUi,
+    idle: bool,
+    es: impl Into<crate::preferences::Language> + Copy,
+) {
+    ui.heading(tr(es, "Add plugin"));
+    ui.add_space(6.);
+    ui.label(look.section(tr(es, "Official plugins")));
+    for official in &crate::official::OFFICIAL {
+        let installed = plugins.status["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["id"] == official.id));
+        ui.horizontal(|ui| {
+            ui.label(tr(es, official.name));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if installed {
+                    ui.label(look.muted_text(tr(es, "Installed")));
+                } else if idle && ui.add(look.primary(tr(es, "Install"))).clicked() {
+                    plugins.official_install = Some(official.source);
+                }
+            });
+        });
+    }
+    ui.add_space(12.);
+    ui.label(look.section(tr(es, "Another plugin")));
+    ui.label(look.muted_text(tr(es, "Public GitHub repository / release URL")));
+    if ui
+        .add(
+            egui::TextEdit::singleline(&mut plugins.source)
+                .char_limit(2048)
+                .desired_width(f32::INFINITY),
+        )
+        .changed()
+    {
+        plugins.trusted = false;
+        plugins.source_edited = true;
+        plugins.confirmation = None;
+    }
+    ui.checkbox(
+        &mut plugins.trusted,
+        tr(es, "I trust this native code (not sandboxed)"),
+    );
+    let ready = idle && plugins.trusted && installation_source(plugins.source.trim()).is_some();
+    if ui
+        .add_enabled(ready, egui::Button::new(tr(es, "Install")))
+        .clicked()
+    {
+        plugins.operation_request = Some("install");
+    }
+}
+/// Installing an official plugin: its current release, trusted by the click itself.
+fn official_request(source: &str) -> crate::Request {
+    crate::plugins::admin_request(
+        rad_api::PluginOperation::Install,
+        None,
+        Some(source.to_owned()),
+        true,
+        None,
+    )
 }
 /// Conservative public-source projection; the runtime still validates the package and source.
 fn installation_source(origin: &str) -> Option<String> {
@@ -657,22 +847,15 @@ impl App {
             self.form_leave.reset();
         }
     }
-    /// The Plugins section of the settings: installed plugins and their administration.
+    /// The Plugins section of the settings: the installed plugins on the left, the chosen
+    /// one (or «Add plugin») on the right.
     pub(super) fn plugin_settings(&mut self, ui: &mut egui::Ui, look: &Look) {
-        // Nothing happening is not worth a line; an operation under way is.
-        let state = string(&self.plugins.status["state"]);
-        if !state.is_empty() && state != "idle" {
-            ui.label(tr(self.es, "Working…"));
-        }
+        operation_progress(ui, &self.plugins.status, self.es);
         let idle = self.plugins.can_administer(self.connected);
         if let Some((id, slots)) = dependency_list(ui, &mut self.plugins, idle, self.es) {
-            self.plugins.clear_form();
-            self.credentials.bind(
-                &format!("dependency:{id}"),
-                &format!("{id}:credentials"),
-                &slots,
-            );
-            self.plugins.dependency_credentials = Some(id);
+            // The password is typed next to the plugin that asks for it.
+            self.plugins.select(&id);
+            self.plugins.password_request = Some((id, slots));
         }
         if self
             .plugins
@@ -687,14 +870,6 @@ impl App {
             self.plugins.dependency_credentials = None;
             self.credentials.clear();
         }
-        if self.plugins.dependency_credentials.is_some() {
-            self.credentials
-                .show(ui, &mut self.credential_worker, self.connected, self.es);
-            if ui.button(tr(self.es, "Close credentials")).clicked() {
-                self.credentials.clear();
-                self.plugins.dependency_credentials = None;
-            }
-        }
         if self.plugins.status["locked"] == true {
             ui.label(tr(self.es, "Restart RAD to recover plugin administration"));
         }
@@ -704,14 +879,78 @@ impl App {
                 ui.label(code);
             });
         }
-        // Known only once the status has arrived; until then nothing is claimed.
-        let installed = self.plugins.status["items"].as_array().map(Vec::len);
-        if installed == Some(0) {
-            ui.label(egui::RichText::new(tr(self.es, "No plugins installed yet")).weak());
+        let height = ui.available_height();
+        let mut listed = true;
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(LIST_WIDTH, height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(LIST_WIDTH);
+                    listed = plugin_list(ui, &mut self.plugins, self.es);
+                },
+            );
+            ui.separator();
+            ui.vertical(|ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("plugin-detail")
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        if !listed {
+                            return;
+                        }
+                        if self.plugins.selected_item().is_none() {
+                            add_plugin(ui, look, &mut self.plugins, idle, self.es);
+                        } else {
+                            self.plugin_detail(ui, look, idle);
+                        }
+                    });
+            });
+        });
+        self.plugin_intents();
+    }
+    /// The chosen plugin: summary, password or settings, then Remove and details.
+    fn plugin_detail(&mut self, ui: &mut egui::Ui, look: &Look, idle: bool) {
+        plugin_summary(ui, &mut self.plugins, idle, self.es);
+        let id = self.plugins.selected.clone();
+        // A plugin's settings belong to it: choosing another one closes them.
+        let shown = match &self.plugins.form {
+            Some((FormTarget::Settings(form), _)) => Some(form.clone()),
+            _ => None,
+        };
+        if shown.as_ref().is_some_and(|form| *form != id) {
+            self.plugins.clear_form();
+            self.credentials.clear();
         }
-        if !plugin_status_list(ui, &mut self.plugins, idle, self.es) {
-            return;
+        if self.plugins.dependency_credentials.as_ref() == Some(&id) {
+            ui.add_space(8.);
+            self.credentials
+                .show(ui, &mut self.credential_worker, self.connected, self.es);
+            if ui.button(tr(self.es, "Close credentials")).clicked() {
+                self.credentials.clear();
+                self.plugins.dependency_credentials = None;
+                self.plugins.settings_asked = None;
+            }
+        } else if shown.as_ref() == Some(&id) {
+            ui.add_space(8.);
+            ui.label(look.section(tr(self.es, "Plugin settings")));
+            self.plugin_form_ui(ui, look);
+        } else if idle
+            && self.connected
+            && self.plugins.settings_asked.as_ref() != Some(&id)
+            && self
+                .plugins
+                .selected_item()
+                .is_some_and(|item| item["has_settings"] == true)
+        {
+            // Its settings are shown with it, asked for once per visit.
+            self.plugins.settings_asked = Some(id.clone());
+            self.open_plugin_form(&id, None, FormTarget::Settings(id.clone()));
         }
+        plugin_more(ui, look, &mut self.plugins, idle, self.es);
+    }
+    /// What the clicks of this frame asked for, sent once drawing is over.
+    fn plugin_intents(&mut self) {
         if let Some(plugin_id) = self.plugins.manifest_request.take()
             && self.command(Job::Request(crate::Request::PluginManifest {
                 plugin_id: plugin_id.clone(),
@@ -722,34 +961,8 @@ impl App {
         if let Some(plugin_id) = self.plugins.retry_request.take() {
             self.send(crate::Request::PluginRetry { plugin_id });
         }
-        // A plugin's settings belong to it: choosing another one closes them.
-        let shown = match &self.plugins.form {
-            Some((FormTarget::Settings(id), _)) => Some(id.clone()),
-            _ => None,
-        };
-        if shown
-            .as_ref()
-            .is_some_and(|id| *id != self.plugins.selected)
-        {
-            self.plugins.clear_form();
-            self.credentials.clear();
-        }
-        if shown.as_ref() == Some(&self.plugins.selected) {
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.label(look.section(tr(self.es, "Plugin settings")));
-                self.plugin_form_ui(ui, look);
-            });
-        } else if idle
-            && self
-                .plugins
-                .selected_item()
-                .is_some_and(|item| item["has_settings"] == true)
-            && ui.button(tr(self.es, "Plugin settings")).clicked()
-        {
-            let id = self.plugins.selected.clone();
-            self.open_plugin_form(&id, None, FormTarget::Settings(id.clone()));
-        }
         if let Some((id, slots)) = self.plugins.password_request.take() {
+            self.plugins.clear_form();
             self.credentials.bind(
                 &format!("dependency:{id}"),
                 &format!("{id}:credentials"),
@@ -760,81 +973,17 @@ impl App {
         if std::mem::take(&mut self.plugins.update_request) {
             self.submit_plugin_operation("update");
         }
-        if !idle {
-            return;
-        }
-        // A line between the installed plugins and the form to install another.
-        if installed.is_some_and(|count| count > 0) {
-            ui.add_space(6.);
-            ui.separator();
-        }
-        self.plugin_admin_controls(ui);
-    }
-    fn plugin_admin_controls(&mut self, ui: &mut egui::Ui) {
-        ui.label(tr(self.es, "Public GitHub repository / release URL"));
-        if ui
-            .add(egui::TextEdit::singleline(&mut self.plugins.source).char_limit(2048))
-            .changed()
-        {
-            self.plugins.trusted = false;
-            self.plugins.source_edited = true;
-            self.plugins.confirmation = None;
-        }
-        ui.checkbox(
-            &mut self.plugins.trusted,
-            tr(self.es, "I trust this native code (not sandboxed)"),
-        );
-        if let Some(asked) = self.plugins.pending_confirmation().cloned() {
-            ui.label(
-                tr(
-                    self.es,
-                    "This plugin comes from {registered}, but the package you chose is from {requested}. Continue only if you trust the new source.",
-                )
-                .replace("{registered}", &asked.change.registered)
-                .replace("{requested}", &asked.change.requested),
-            );
-            ui.horizontal(|ui| {
-                if ui.button(tr(self.es, "Confirm")).clicked()
-                    && let Some(request) = self.plugins.confirm()
-                {
-                    self.send_admin(asked.operation, request);
-                }
-                if ui.button(tr(self.es, "Cancel")).clicked() {
-                    self.plugins.confirmation = None;
-                }
-            });
-            return;
-        }
-        let selected = self.plugins.selected_item();
-        let source_ok =
-            self.plugins.trusted && installation_source(self.plugins.source.trim()).is_some();
-        let operations = [
-            ("install", "Install", source_ok),
-            (
-                "update",
-                "Update",
-                selected.is_some()
-                    && self.plugins.trusted_update()
-                    && installation_source(self.plugins.source.trim()).is_some(),
-            ),
-            ("reinstall", "Reinstall", selected.is_some() && source_ok),
-            ("uninstall", "Uninstall", selected.is_some()),
-            (
-                "rollback",
-                "Rollback",
-                selected.is_some_and(|item| !item["previous"].is_null()),
-            ),
-        ];
-        let mut chosen = None;
-        ui.horizontal_wrapped(|ui| {
-            for (operation, en, allowed) in operations {
-                if allowed && ui.button(tr(self.es, en)).clicked() {
-                    chosen = Some(operation);
-                }
-            }
-        });
-        if let Some(operation) = chosen {
+        if let Some(operation) = self.plugins.operation_request.take() {
             self.submit_plugin_operation(operation);
+        }
+        if let Some(source) = self.plugins.official_install.take() {
+            self.send_admin("install", official_request(source));
+        }
+        if std::mem::take(&mut self.plugins.confirmed)
+            && let Some(operation) = self.plugins.pending_confirmation().map(|c| c.operation)
+            && let Some(request) = self.plugins.confirm()
+        {
+            self.send_admin(operation, request);
         }
     }
     fn submit_plugin_operation(&mut self, operation: &'static str) {
@@ -1283,37 +1432,60 @@ pub(super) fn form_ui(
 mod administration_tests {
     use super::*;
 
-    fn frame(
+    fn click(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            },
+        ]
+    }
+    /// One frame of the Plugins section without the App: the list, and the chosen plugin or
+    /// «Add plugin». Returns every text drawn, with where.
+    fn frame_with(
         ctx: &egui::Context,
         plugins: &mut PluginUi,
-        click: Option<egui::Pos2>,
+        events: Vec<egui::Event>,
+        height: f32,
     ) -> Vec<(String, egui::Rect)> {
-        let mut input = egui::RawInput {
+        let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(900., 800.),
+                egui::vec2(900., height),
             )),
+            events,
             ..Default::default()
         };
-        if let Some(pos) = click {
-            input.events = vec![
-                egui::Event::PointerMoved(pos),
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: Default::default(),
-                },
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: Default::default(),
-                },
-            ];
-        }
+        let look = Look::new(&Default::default());
         let output = ctx.run_ui(input, |ui| {
-            plugin_status_list(ui, plugins, true, false);
+            operation_progress(ui, &plugins.status.clone(), false);
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(LIST_WIDTH, height - 40.),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(LIST_WIDTH);
+                        plugin_list(ui, plugins, false);
+                    },
+                );
+                ui.vertical(|ui| {
+                    if plugins.selected_item().is_none() {
+                        add_plugin(ui, &look, plugins, true, false);
+                    } else {
+                        plugin_summary(ui, plugins, true, false);
+                        plugin_more(ui, &look, plugins, true, false);
+                    }
+                });
+            });
         });
         output
             .shapes
@@ -1328,6 +1500,13 @@ mod administration_tests {
             })
             .collect()
     }
+    fn frame(
+        ctx: &egui::Context,
+        plugins: &mut PluginUi,
+        at: Option<egui::Pos2>,
+    ) -> Vec<(String, egui::Rect)> {
+        frame_with(ctx, plugins, at.map(click).unwrap_or_default(), 800.)
+    }
     #[test]
     fn resource_metadata_is_requested_only_from_details() {
         let ctx = egui::Context::default();
@@ -1337,6 +1516,7 @@ mod administration_tests {
             status: json!({"items":[{"id":"fixture","host":"ready"}]}),
             ..Default::default()
         };
+        plugins.select("fixture");
         let text = frame(&ctx, &mut plugins, None);
         assert!(!text.iter().any(|(text, _)| text == "Declared resources"));
         let at = text
@@ -1373,6 +1553,7 @@ mod administration_tests {
             document: serde_json::from_value(serde_json::to_value(manifest).unwrap()).unwrap(),
         };
         plugins.accept_manifest(view(&manifest)).unwrap();
+        plugins.select(&manifest.id);
         let ctx = egui::Context::default();
         ctx.style_mut_of(egui::Theme::Dark, |style| style.animation_time = 0.0);
         ctx.style_mut_of(egui::Theme::Light, |style| style.animation_time = 0.0);
@@ -1414,6 +1595,7 @@ mod administration_tests {
             status: json!({"items":[{"id":"fixture","host":"failed","can_retry":false}]}),
             ..Default::default()
         };
+        plugins.select("fixture");
         assert!(
             !frame(&ctx, &mut plugins, None)
                 .iter()
@@ -1449,60 +1631,159 @@ mod administration_tests {
         assert!(!p.trusted_update());
         assert!(!p.trusted);
     }
-    #[test]
-    fn every_installed_plugin_state_and_selector_is_reachable_with_bounded_pages() {
-        let ctx = egui::Context::default();
-        let mut plugins = PluginUi {
-            status: json!({"items": (1..=32).map(|i| json!({
+    fn synthetic(count: usize) -> Value {
+        json!({"items": (1..=count).map(|i| json!({
             "id":format!("plugin{i}"), "selected":{"major":i,"minor":0,"patch":0},
             "previous":{"major":0,"minor":0,"patch":1}, "host":"failed"
-        })).collect::<Vec<_>>() }),
-            ..Default::default()
-        };
-        let mut text = frame(&ctx, &mut plugins, None);
-        for first in [1, 9, 17, 25] {
-            for id in first..first + 8 {
-                assert!(
-                    text.iter().any(|(s, _)| s == &format!("plugin{id}")),
-                    "missing plugin{id}"
+        })).collect::<Vec<_>>() })
+    }
+    #[test]
+    fn every_installed_plugin_is_reachable_by_scrolling_the_list_with_8_and_32() {
+        for count in [8, 32] {
+            let ctx = egui::Context::default();
+            ctx.style_mut_of(egui::Theme::Dark, |style| style.animation_time = 0.0);
+            let mut plugins = PluginUi {
+                status: synthetic(count),
+                ..Default::default()
+            };
+            let name = |i: usize| format!("plugin{i}");
+            let mut seen = std::collections::BTreeSet::new();
+            let mut text = frame_with(&ctx, &mut plugins, vec![], 500.);
+            for _ in 0..40 {
+                seen.extend(
+                    text.iter()
+                        .filter(|(s, _)| s.starts_with("plugin"))
+                        .map(|(s, _)| s.clone()),
                 );
-                assert!(text.iter().any(|(s, _)| { s == "Not working" }));
+                if seen.contains(&name(count)) {
+                    break;
+                }
+                let list = egui::pos2(LIST_WIDTH / 2., 250.);
+                text = frame_with(
+                    &ctx,
+                    &mut plugins,
+                    vec![
+                        egui::Event::PointerMoved(list),
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(0., -120.),
+                            phase: egui::TouchPhase::Move,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    500.,
+                );
             }
-            assert!(!text.iter().any(|(s, _)| s.starts_with("Selected ")));
-            assert_eq!(
-                text.iter().filter(|(s, _)| s.starts_with("plugin")).count(),
-                8
-            );
-            let at = text
+            assert_eq!(seen.len(), count, "every plugin appears: {seen:?}");
+            // Wheel scrolling is smooth: let the list come to rest before clicking.
+            for _ in 0..60 {
+                text = frame_with(&ctx, &mut plugins, vec![], 500.);
+            }
+            assert!(text.iter().any(|(s, _)| {
+                s == "Not working · {count}.0.0"
+                    .replace("{count}", &count.to_string())
+                    .as_str()
+            }));
+            let last = text
                 .iter()
-                .find(|(s, _)| s == &format!("plugin{first}"))
+                .find(|(s, _)| *s == name(count))
                 .unwrap()
                 .1
                 .center();
-            text = frame(&ctx, &mut plugins, Some(at));
-            assert_eq!(plugins.selected, format!("plugin{first}"));
-            if first != 25 {
-                let next = text
-                    .iter()
-                    .find(|(s, _)| s == "Next")
-                    .expect("all installed plugins must be reachable, not truncated")
-                    .1
-                    .center();
-                frame(&ctx, &mut plugins, Some(next));
-                text = frame(&ctx, &mut plugins, None);
-            }
+            frame_with(&ctx, &mut plugins, click(last), 500.);
+            assert_eq!(plugins.selected, name(count), "the last one can be chosen");
+            assert!(!text.iter().any(|(s, _)| s == "Next"), "no pages");
         }
-        assert!(!text.iter().any(|(s, _)| s == "Next"));
+        let ctx = egui::Context::default();
+        let mut plugins = PluginUi {
+            status: synthetic(32),
+            ..Default::default()
+        };
         plugins.status["items"]
             .as_array_mut()
             .unwrap()
             .push(json!({"id":"plugin33"}));
-        text = frame(&ctx, &mut plugins, None);
+        let text = frame(&ctx, &mut plugins, None);
         assert!(
             text.iter()
                 .any(|(s, _)| s == "Invalid plugin status: more than 32 entries")
         );
         assert!(!text.iter().any(|(s, _)| s.starts_with("plugin")));
+    }
+    #[test]
+    fn installing_an_official_plugin_sends_its_current_release_trusted_by_the_click() {
+        let ctx = egui::Context::default();
+        let mut plugins = PluginUi {
+            status: json!({"state":"idle","items":[{"id":"org.rad.media","host":"ready",
+                "selected":{"major":0,"minor":2,"patch":0}}]}),
+            ..Default::default()
+        };
+        let text = frame(&ctx, &mut plugins, None);
+        assert!(
+            text.iter().any(|(s, _)| s == "Installed"),
+            "Media is installed"
+        );
+        let audio = text.iter().find(|(s, _)| s == "Audio").unwrap().1;
+        let install = text
+            .iter()
+            .filter(|(s, r)| s == "Install" && (r.center().y - audio.center().y).abs() < 8.)
+            .map(|(_, r)| r.center())
+            .next()
+            .expect("Audio has its own Install button");
+        frame(&ctx, &mut plugins, Some(install));
+        let source = plugins.official_install.take().unwrap();
+        assert_eq!(source, crate::official::OFFICIAL[0].source);
+        let request = serde_json::to_value(official_request(source)).unwrap();
+        let text = request.to_string();
+        assert!(text.contains(source), "{text}");
+        assert!(text.contains("\"install\""), "{text}");
+        assert!(
+            text.contains("true"),
+            "the click trusts the official release: {text}"
+        );
+        assert!(plugins.operation_request.is_none(), "nothing else is sent");
+    }
+    #[test]
+    fn the_bar_follows_the_download_from_0_to_100_and_then_goes() {
+        let ctx = egui::Context::default();
+        let mut plugins = PluginUi {
+            status: json!({"state":"preparing","items":[]}),
+            ..Default::default()
+        };
+        let text = frame(&ctx, &mut plugins, None);
+        assert!(
+            text.iter().any(|(s, _)| s == "Working…"),
+            "size still unknown"
+        );
+        for percent in [0, 50, 100] {
+            plugins.status["progress"] = json!(percent);
+            let text = frame(&ctx, &mut plugins, None);
+            let shown = format!("Downloading {percent} %");
+            assert!(text.iter().any(|(s, _)| *s == shown), "{shown}");
+        }
+        plugins.status = json!({"state":"idle","items":[]});
+        let text = frame(&ctx, &mut plugins, None);
+        assert!(!text.iter().any(|(s, _)| s.starts_with("Downloading")));
+    }
+    #[test]
+    fn an_official_plugin_with_a_newer_release_offers_its_update_and_others_their_origin() {
+        let official = json!({"id":"org.rad.audio","host":"ready","source_trusted":true,
+            "source":"https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.1.0",
+            "selected":{"major":0,"minor":1,"patch":0}});
+        assert_eq!(
+            update_source(&official),
+            Some((crate::official::OFFICIAL[0].source.into(), true))
+        );
+        let mut current = official.clone();
+        current["selected"] = json!({"major":0,"minor":2,"patch":0});
+        assert_eq!(update_source(&current), None, "already current");
+        let third = json!({"id":"com.example.x","host":"ready","source_trusted":true,
+            "source":"https://github.com/o/r","diagnostic":"incompatible_plugin",
+            "selected":{"major":1,"minor":0,"patch":0}});
+        assert_eq!(
+            update_source(&third),
+            Some(("https://github.com/o/r".into(), false))
+        );
     }
 }
 

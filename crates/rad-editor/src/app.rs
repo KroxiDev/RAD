@@ -607,6 +607,8 @@ impl App {
                     self.plugins.form_pending = false;
                     if r.status == rad_client::response::Status::Applied {
                         self.plugins.form = None;
+                        // A plugin's settings come back with what was just saved.
+                        self.plugins.settings_asked = None;
                         self.force = true;
                         self.inspect_needed = self.selected().is_some();
                         self.say(tr(self.es, "Saved"));

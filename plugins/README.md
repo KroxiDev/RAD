@@ -14,6 +14,8 @@ Contract v1 uses a major version and negotiated capabilities, immutable settings
 snapshots, source-observed visual renewal, and bounded nonblocking SDK output.
 The old linear host APIs 2/3 are not contract v1. Use matching host and plugin
 releases; installing a new RAD does not silently update installed packages.
+The editor's list of official plugins (`crates/rad-editor/src/official.rs`) names
+each one's current release: publishing an official release updates its line there.
 Previously installed prerelease packages remain read-only inventory until updated:
 their original metadata and previous version are preserved, but their old protocol
 is never executed as contract v1. Package administration remains available.

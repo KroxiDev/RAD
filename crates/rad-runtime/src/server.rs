@@ -652,12 +652,13 @@ impl Server {
         self.plugin_admin = Some(crate::plugin_admin::Admin::new(
             self.plugin_root.clone(),
             notify.clone(),
-            Box::new(|source, cancel| {
+            Box::new(|source, cancel, progress| {
                 let source = rad_plugin_manager::GithubSource::parse(source)?;
                 rad_plugin_manager::Downloader::new().download(
                     &source,
                     rad_plugin_host::TARGET,
                     cancel.clone(),
+                    progress.clone(),
                 )
             }),
         ));

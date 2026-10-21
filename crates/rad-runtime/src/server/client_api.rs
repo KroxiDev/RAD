@@ -348,7 +348,7 @@ mod tests {
         let mut admin = crate::plugin_admin::Admin::new(
             package_root,
             Arc::new(|| {}),
-            Box::new(|_, _| panic!("no downloads")),
+            Box::new(|_, _, _| panic!("no downloads")),
         );
         let mut host = rad_plugin_host::Host::default();
         let end = std::time::Instant::now() + Duration::from_secs(3);

@@ -82,9 +82,12 @@ Official plugins and releases: [KroxiDev/rad-plugins](https://github.com/KroxiDe
 | OBS | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.2.0) | Program scene, filters, scene items, recording and streaming |
 | Metrics | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.2.0) | CPU, RAM, NVIDIA GPU and VRAM visuals |
 
-In **Settings → Plugins**, paste a public GitHub release URL, confirm that you
-trust its native code, and choose **Install**. Use the tagged release links above
-to select a specific plugin. Updates, reinstalls, rollback and removal are manual.
+In **Settings → Plugins → + Add plugin**, install an official plugin with its
+button, or paste a public GitHub release URL for another one, confirm that you
+trust its native code and choose **Install**; a bar shows the download. An official
+plugin offers **Update** when a newer release is out; any other plugin updates
+from the origin it was installed from. Reinstall and rollback are under
+**View details**.
 Releases 0.1.x predate plugin contract v1: RAD keeps them installed but does not
 run them until you update to 0.2.0.
 Plugins run as native processes, **not in a security sandbox**; install only code

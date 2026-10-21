@@ -179,7 +179,7 @@ pub enum PluginAdminState {
     Activating,
 }
 dto!(PluginStatusItem { id: String, selected: PluginVersion, previous: Option<PluginVersion>, source: Option<String>, source_trusted: bool, diagnostic: Option<String>, host: String, #[serde(default,skip_serializing_if="Option::is_none")] needs_credentials: Option<bool>, #[serde(default)] can_retry: bool, #[serde(default)] has_settings: bool });
-dto!(PluginStatusView { state: PluginAdminState, operation_id: Option<String>, error: Option<ErrorCode>, locked: bool, items: Vec<PluginStatusItem> });
+dto!(PluginStatusView { state: PluginAdminState, operation_id: Option<String>, error: Option<ErrorCode>, locked: bool, items: Vec<PluginStatusItem>, #[serde(default, skip_serializing_if = "Option::is_none")] progress: Option<u8> });
 dto!(VisualChunk { hex: String, next_offset: Option<String> });
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -231,6 +231,8 @@ La respuesta es `{operation_id, state: "preparing"}`: la petición se admite y e
 trabajo sigue en segundo plano. El resultado se lee en `plugin_status`
 (`state`, `operation_id`, `error` e `items`, con el `source` registrado de cada
 plugin); el aviso `plugins` indica cuándo releerlo. Solo corre una operación a la vez.
+Mientras descarga un paquete de tamaño conocido, `progress` dice el porcentaje
+recibido (0–100); cada porcentaje nuevo produce un aviso `plugins`.
 
 Rechazos de la petición, sin descargar nada: `invalid_request` (combinación de
 campos no válida, incluido `replaces_source` fuera de `update` y `reinstall`),

@@ -59,6 +59,7 @@ pub mod dependencies;
 pub mod diagnostics;
 pub mod machine;
 pub mod notices;
+pub mod official;
 pub mod recovery;
 pub mod schedule;
 pub mod screens;

@@ -84,10 +84,12 @@ Plugins oficiales y releases: [KroxiDev/rad-plugins](https://github.com/KroxiDev
 | OBS | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.2.0) | Escena Program, filtros, elementos, grabación y transmisión |
 | Métricas | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.2.0) | Visuales de CPU, RAM, GPU NVIDIA y VRAM |
 
-En **Ajustes → Plugins**, pega una URL pública de release de GitHub, confirma que
-confías en su código nativo y pulsa **Instalar**. Usa los enlaces etiquetados de
-arriba para elegir un plugin concreto. Actualizar, reinstalar, revertir y
-desinstalar son operaciones manuales. Las releases 0.1.x son anteriores al
+En **Ajustes → Plugins → + Añadir plugin**, instala un plugin oficial con su botón,
+o pega la URL pública de release de GitHub de otro, confirma que confías en su
+código nativo y pulsa **Instalar**; una barra muestra la descarga. Un plugin oficial
+ofrece **Actualizar** cuando sale una release más nueva; los demás se actualizan
+desde el origen con que se instalaron. Reinstalar y revertir están en **Ver
+detalles**. Las releases 0.1.x son anteriores al
 contrato de plugins v1: RAD las conserva instaladas, pero no las ejecuta hasta
 que actualices a 0.2.0. Los plugins son procesos nativos,
 **no un sandbox de seguridad**: instala solo código en el que confíes.

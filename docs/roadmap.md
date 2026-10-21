@@ -357,22 +357,29 @@ con lo que diga. E1–E3 son independientes de E4–E5.
   se dibuja y Esc vuelve o pregunta; suite del editor, fmt y clippy.
 - **Límite:** sin capturas; el usuario revisa el aspecto en la app real.
 
-### E5 · Pantalla de Plugins para 6–8 o más
+### E5 · Pantalla de Plugins para 6–8 o más — hecho (commit `feat: list plugins beside the chosen one and install officials with a progress bar`)
 
-- **Hoy:** la lista va en páginas de 8 dentro de la ventana de 440 px, con un 70 % de
-  alto y scroll; los controles dependen de seleccionar un plugin; instalar exige pegar
-  un enlace, también para los oficiales, y el progreso se muestra en bytes
-  (`crates/rad-editor/src/app/plugins.rs:319–442,656–830`; `app.rs:961`).
-- **Cambio:** absorbe UX6 y UX7. Propuesta, a ajustar después de verla: lista a la
-  izquierda con nombre, estado (los cuatro de [ux.md](ux.md)) y versión; a la
-  derecha, el plugin elegido con su acción (Reintentar, Escribir la contraseña,
-  Actualizar), sus ajustes, Quitar y Ver detalles. «Añadir plugin» muestra los
-  oficiales (audio, multimedia, OBS, métricas) con un botón cada uno, y uno de
-  terceros se añade pegando su enlace. Las descargas muestran una barra de progreso.
-  Cómo se obtiene la versión vigente de cada oficial se decide al diseñar; hoy son
-  releases por etiqueta en `KroxiDev/rad-plugins`.
-- **Pruebas:** con 8 y con 32 plugins sintéticos todos se alcanzan; instalar un
-  oficial envía su origen; la barra avanza de 0 a 100 con un downloader falso.
+- **Entrega:** la sección Plugins ocupa la ventana: a la izquierda «+ Añadir plugin» y
+  cada plugin con su nombre, uno de los cuatro estados y su versión, en una lista con
+  scroll y sin páginas; a la derecha, el elegido con su acción (Reintentar, Escribir
+  la contraseña, Actualizar), sus ajustes cargados al elegirlo, «Quitar» y «Ver
+  detalles» (versiones, origen, recursos, Reinstalar y Volver a anterior). «Añadir
+  plugin» muestra los oficiales con un botón cada uno y, para otro, su enlace con la
+  casilla de confianza. Una barra muestra la descarga.
+- **Versión vigente de los oficiales:** `crates/rad-editor/src/official.rs` nombra la
+  release actual de cada uno en `KroxiDev/rad-plugins`; publicar una release
+  oficial actualiza su línea. Un oficial más viejo ofrece «Actualizar» con esa
+  release (mismo origen, sin confirmación); los demás, su origen registrado.
+- **Progreso:** el descargador informa el porcentaje con el tamaño que declara la
+  release; el runtime lo publica como `progress` en `plugin_status` y cada
+  porcentaje nuevo despierta el bucle y produce un aviso `plugins`.
+- **Validación focal:** con 8 y con 32 plugins sintéticos todos aparecen al hacer
+  scroll y el último se elige; instalar un oficial envía su release con confianza;
+  la barra sigue 0 → 50 → 100 y desaparece; actualización oficial y de terceros;
+  progreso por bloques en el descargador y de 0 a 100 en el runtime con un
+  descargador falso. Workspace principal: build, tests y clippy.
+- **Límite:** sin capturas ni descargas reales; el usuario revisa el aspecto en la
+  app. Las copias de seguridad siguen mostrando bytes (UX6, abajo).
 
 ### E6 · Limpieza — hecha (3bcf3d3)
 
@@ -391,7 +398,7 @@ con lo que diga. E1–E3 son independientes de E4–E5.
 ## Fase UX · En paralelo
 
 Norma: [ux.md](ux.md). Sobre la API actual: UX1, UX2 y UX3. Con la fase 2: UX4 y
-UX8. Con la fase 3: UX5. UX6 y UX7 pasan a la fase 3.5 (E5).
+UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase 3.5 (E5).
 
 | Ítem | Hoy | Cambio |
 |---|---|---|
@@ -400,8 +407,8 @@ UX8. Con la fase 3: UX5. UX6 y UX7 pasan a la fase 3.5 (E5).
 | UX3 | Los permisos de automatización aparecen en cada tecla y en Ajustes (`inspector.rs:598–608`; `crates/rad-editor/src/app/settings.rs:49–50`) | «Avanzado → Automatización», ocultos salvo que se activen |
 | UX4 — hecho (379bee2) | Estados y mensajes técnicos, y códigos en bruto (`crates/rad-editor/src/app/plugins.rs:76–100`; `crates/rad-editor/src/status.rs:23,103,132`) | Los cuatro estados de plugin, mensajes con acción y resolución automática |
 | UX5 — hecho (ad92e89, bb1f667) | Poner en marcha RAD exige la terminal (`crates/rad-editor/src/app/bar.rs:77–78`; `README.md:53,61,93`) | Servicio gestionado por el editor (B2) |
-| UX6 → fase 3.5 (E5) | El progreso se muestra en bytes (`crates/rad-editor/src/app.rs:618`) | Barra de progreso |
-| UX7 → fase 3.5 (E5) | Instalar un plugin exige pegar un enlace, también para los oficiales, y actualizar lo vuelve a pedir | Lista de oficiales y actualización desde el origen registrado |
+| UX6 — plugins hecho (E5) | Las copias de seguridad muestran su progreso en bytes (`crates/rad-editor/src/app.rs`, `TransferProgress`); las descargas de plugins ya tienen barra | Barra de progreso en las copias |
+| UX7 — hecho (E5) | Instalar un plugin exige pegar un enlace, también para los oficiales, y actualizar lo vuelve a pedir | Lista de oficiales y actualización desde el origen registrado |
 | UX8 — hecho (379bee2) | Unos 200 pares de traducción escritos en el código (`crates/rad-editor/src/app.rs:111`) | Catálogos por idioma |
 
 ## Fase 4 · Medición

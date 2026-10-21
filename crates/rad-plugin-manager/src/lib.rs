@@ -43,7 +43,7 @@ mod files;
 mod ledger;
 
 mod download;
-pub use download::{Cancellation, Downloader};
+pub use download::{Cancellation, Downloader, Progress};
 
 #[cfg(feature = "fixture-tests")]
 #[doc(hidden)]

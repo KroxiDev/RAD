@@ -70,6 +70,7 @@ impl App {
             self.credentials.clear();
         }
         self.plugins.section_open = false;
+        self.plugins.settings_asked = None;
     }
     pub(super) fn settings_screen(&mut self, ui: &mut egui::Ui, look: &Look) {
         let Screen::Settings(section) = self.navigation.screen() else {
@@ -117,6 +118,11 @@ impl App {
         egui::CentralPanel::default()
             .frame(look.panel(look.background, 18))
             .show(ui, |ui| {
+                if section == Section::Plugins {
+                    // Two columns that scroll on their own, across the whole window.
+                    ui.add_enabled_ui(self.connected, |ui| self.plugin_settings(ui, look));
+                    return;
+                }
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .show(ui, |ui| {
@@ -136,7 +142,7 @@ impl App {
             |ui| match section {
                 Section::General => self.device(ui, look),
                 Section::Backup => self.backup(ui, look),
-                Section::Plugins => self.plugin_settings(ui, look),
+                Section::Plugins => {}
                 Section::Automation => {
                     ui.label(look.muted_text(tr(
                         self.es,

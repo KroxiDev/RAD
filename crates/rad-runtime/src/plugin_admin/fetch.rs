@@ -5,7 +5,7 @@
 //! package validation, staging, permits and publication stay with the worker and
 //! the coordinator.
 use super::*;
-use rad_plugin_manager::{Cancellation, Error, GithubSource};
+use rad_plugin_manager::{Cancellation, Error, GithubSource, Progress};
 use std::sync::Mutex;
 
 pub(super) type Fetched = Result<Option<Vec<u8>>, Error>;
@@ -13,6 +13,7 @@ pub(super) type Fetched = Result<Option<Vec<u8>>, Error>;
 enum Stage {
     Downloading {
         request: PluginAdmin,
+        progress: Progress,
         thread: thread::JoinHandle<()>,
         ended: crate::thread_end::Ended,
         done: mpsc::Receiver<Fetched>,
@@ -40,6 +41,13 @@ impl Fetcher {
     /// An operation is downloading or waiting for the worker to take its result.
     pub fn active(&self) -> bool {
         self.stage.is_some()
+    }
+    /// How much of the package has arrived, while it is downloading and its size is known.
+    pub fn percent(&self) -> Option<u8> {
+        match &self.stage {
+            Some(Stage::Downloading { progress, .. }) => progress.percent(),
+            _ => None,
+        }
     }
     /// False once no download thread is left running.
     pub fn stopped(&self) -> bool {
@@ -74,6 +82,12 @@ impl Fetcher {
         let (tx, done) = mpsc::sync_channel(1);
         let (download, wake, cancel) = (self.download.clone(), self.wake.clone(), cancel.clone());
         let url = request.source.clone().unwrap_or_default();
+        // Each new percent wakes the loop, so the editor hears of it.
+        let progress = Progress::new({
+            let wake = self.wake.clone();
+            move || wake()
+        });
+        let reported = progress.clone();
         // Also when the downloader panics: `collect` then reports the lost result.
         let (end, ended) = crate::thread_end::end_signal(move || wake());
         let thread = thread::Builder::new()
@@ -86,19 +100,22 @@ impl Fetcher {
                     if cancel.is_cancelled() {
                         Err(Error::Cancelled)
                     } else {
-                        (download)(&url, &cancel).map(Some).and_then(|p| {
-                            if cancel.is_cancelled() {
-                                Err(Error::Cancelled)
-                            } else {
-                                Ok(p)
-                            }
-                        })
+                        (download)(&url, &cancel, &reported)
+                            .map(Some)
+                            .and_then(|p| {
+                                if cancel.is_cancelled() {
+                                    Err(Error::Cancelled)
+                                } else {
+                                    Ok(p)
+                                }
+                            })
                     }
                 };
                 let _ = tx.send(fetched);
             })?;
         self.stage = Some(Stage::Downloading {
             request,
+            progress,
             thread,
             ended,
             done,

@@ -20,7 +20,11 @@ use std::{
     thread,
 };
 type Download = Box<
-    dyn Fn(&str, &rad_plugin_manager::Cancellation) -> Result<Vec<u8>, rad_plugin_manager::Error>
+    dyn Fn(
+            &str,
+            &rad_plugin_manager::Cancellation,
+            &rad_plugin_manager::Progress,
+        ) -> Result<Vec<u8>, rad_plugin_manager::Error>
         + Send,
 >;
 enum Job {
@@ -596,14 +600,18 @@ impl Admin {
                 })
             })
             .collect();
-        json!({
+        let mut status = json!({
             // The download is part of the visible operation although the worker is free.
             "state": if self.fetcher.active() { AdminState::Preparing.wire() } else { self.state.wire() },
             "operation_id": self.operation.map(|n| n.to_string()),
             "error": self.error,
             "locked": self.locked,
             "items": items,
-        })
+        });
+        if let Some(percent) = self.fetcher.percent() {
+            status["progress"] = json!(percent);
+        }
+        status
     }
 
     pub fn shutdown(&mut self) {
@@ -695,7 +703,7 @@ mod tests {
     #[test]
     fn the_admin_worker_wakes_the_loop_when_it_ends() {
         let root = std::env::temp_dir().join(format!("rad-admin-exit-wake-{}", std::process::id()));
-        let (mut admin, wakes) = counting_admin(&root, Box::new(|_, _| Ok(vec![])));
+        let (mut admin, wakes) = counting_admin(&root, Box::new(|_, _, _| Ok(vec![])));
         let c = Configuration::prepare_new(&IdentityRegistry::new(505).unwrap()).unwrap();
         let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(507).unwrap());
         let mut host = Host::default();
@@ -730,7 +738,7 @@ mod tests {
                 Arc::new(move || {
                     let _ = woken.send(());
                 }),
-                Box::new(|_, _| Ok(vec![])),
+                Box::new(|_, _, _| Ok(vec![])),
             );
             while admin.busy {
                 admin.poll(&mut actor, &mut host, 0);
@@ -758,7 +766,7 @@ mod tests {
             std::env::temp_dir().join(format!("rad-admin-fetch-wake-{}", std::process::id()));
         let (mut admin, wakes) = counting_admin(
             &root,
-            Box::new(|_, _| panic!("synthetic downloader failure")),
+            Box::new(|_, _, _| panic!("synthetic downloader failure")),
         );
         let c = Configuration::prepare_new(&IdentityRegistry::new(505).unwrap()).unwrap();
         let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(507).unwrap());
@@ -802,7 +810,7 @@ mod tests {
         let mut admin = Admin::new(
             root.clone(),
             Arc::new(|| {}),
-            Box::new(move |_, cancel| {
+            Box::new(move |_, cancel, _| {
                 entered.send(()).unwrap();
                 while !cancel.is_cancelled() {
                     thread::sleep(Duration::from_millis(1));
@@ -865,7 +873,7 @@ mod tests {
         let mut admin = Admin::new(
             root.clone(),
             Arc::new(|| {}),
-            Box::new(move |_, _| {
+            Box::new(move |_, _, _| {
                 e.store(true, Ordering::SeqCst);
                 while !r.load(Ordering::SeqCst) {
                     std::thread::sleep(Duration::from_millis(1));
@@ -1018,7 +1026,7 @@ mod lifecycle_tests {
         let mut admin = Admin::new(
             root.clone(),
             Arc::new(|| {}),
-            Box::new(move |source, _| {
+            Box::new(move |source, _, _| {
                 Ok(if source.ends_with("/v1") {
                     v1.clone()
                 } else {
@@ -1188,6 +1196,65 @@ mod lifecycle_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn a_download_shows_its_progress_from_zero_to_one_hundred_and_then_none() {
+        let root = std::env::temp_dir().join(format!("rad-e5-progress-{}", std::process::id()));
+        assert!(!root.exists());
+        let (gate, percents) = mpsc::channel::<u8>();
+        let fixture = package(1);
+        let mut admin = Admin::new(
+            root.clone(),
+            Arc::new(|| {}),
+            Box::new(move |_, _, progress| {
+                // Each percent the test sends is reported; any other value ends the download.
+                while let Ok(percent) = percents.recv() {
+                    if percent > 100 {
+                        break;
+                    }
+                    progress.report(percent.into(), 100);
+                }
+                Ok(fixture.clone())
+            }),
+        );
+        let c = Configuration::prepare_new(&IdentityRegistry::new(96).unwrap()).unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(24).unwrap());
+        let mut ports = crate::plugin_dispatch::Plugins::default();
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        admin
+            .submit(Origin::Editor, request("install", Some(1)), &actor)
+            .unwrap();
+        tick(&mut admin, &mut actor, &mut ports, 0);
+        assert!(
+            admin.status(&ports.host).get("progress").is_none(),
+            "unknown until the size is"
+        );
+        for percent in [0, 50, 100] {
+            gate.send(percent).unwrap();
+            let end = Instant::now() + Duration::from_secs(5);
+            while admin.status(&ports.host)["progress"] != percent {
+                tick(&mut admin, &mut actor, &mut ports, 0);
+                assert!(Instant::now() < end, "{percent} % never shown");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        gate.send(u8::MAX).unwrap();
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        let done = admin.status(&ports.host);
+        assert!(
+            done.get("progress").is_none(),
+            "nothing downloading: {done}"
+        );
+        assert_eq!(done["items"].as_array().unwrap().len(), 1, "installed");
+        admin.shutdown();
+        ports.host.shutdown();
+        let end = Instant::now() + Duration::from_secs(5);
+        while !admin.stopped() || ports.host.resources().0 > 0 {
+            tick(&mut admin, &mut actor, &mut ports, 0);
+            assert!(Instant::now() < end);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn held_download_of_one_plugin_does_not_delay_cold_start_of_another() {
         use std::sync::atomic::{AtomicBool, Ordering};
         let root = std::env::temp_dir().join(format!("rad-b6-fetch-{}", std::process::id()));
@@ -1199,7 +1266,7 @@ mod lifecycle_tests {
         let mut admin = Admin::new(
             root.clone(),
             Arc::new(|| {}),
-            Box::new(move |source, _| {
+            Box::new(move |source, _, _| {
                 if source.ends_with("/v1") {
                     return Ok(b_package.clone());
                 }
@@ -1274,7 +1341,7 @@ mod lifecycle_tests {
         let mut admin = Admin::new(
             root.clone(),
             Arc::new(|| {}),
-            Box::new(move |source, _| {
+            Box::new(move |source, _, _| {
                 Ok(if source.ends_with("/v1") {
                     v1.clone()
                 } else {
@@ -1338,7 +1405,7 @@ mod lifecycle_tests {
         let admin = Admin::new(
             root.to_path_buf(),
             Arc::new(|| {}),
-            Box::new(move |source, _| {
+            Box::new(move |source, _, _| {
                 counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 Ok(if source.ends_with("/v1") {
                     v1.clone()
@@ -1550,7 +1617,7 @@ mod repair_tests {
         let mut admin = Admin::new(
             root.clone(),
             Arc::new(|| {}),
-            Box::new(|_, _| panic!("repair must not download")),
+            Box::new(|_, _, _| panic!("repair must not download")),
         );
         let mut actor = Authority::new(
             Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap(),

@@ -8,6 +8,45 @@ impl Cancellation {
         self.0.load(std::sync::atomic::Ordering::Acquire)
     }
 }
+/// How much of the package has arrived, in whole percent, for whoever shows it; `notify`
+/// hears of each new percent. Unknown until the release says the package's size.
+#[derive(Clone, Default)]
+pub struct Progress(std::sync::Arc<ProgressState>);
+#[derive(Default)]
+struct ProgressState {
+    /// `u8::MAX` while unknown.
+    percent: std::sync::atomic::AtomicU8,
+    known: std::sync::atomic::AtomicBool,
+    notify: Option<Box<dyn Fn() + Send + Sync>>,
+}
+impl Progress {
+    pub fn new(notify: impl Fn() + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(ProgressState {
+            notify: Some(Box::new(notify)),
+            ..Default::default()
+        }))
+    }
+    pub fn percent(&self) -> Option<u8> {
+        use std::sync::atomic::Ordering;
+        self.0
+            .known
+            .load(Ordering::Acquire)
+            .then(|| self.0.percent.load(Ordering::Acquire))
+    }
+    /// `received` of `total` bytes; a total of zero says nothing.
+    pub fn report(&self, received: u64, total: u64) {
+        use std::sync::atomic::Ordering;
+        if total == 0 {
+            return;
+        }
+        let percent = (received.min(total) * 100 / total) as u8;
+        let was_known = self.0.known.swap(true, Ordering::AcqRel);
+        let changed = self.0.percent.swap(percent, Ordering::AcqRel) != percent || !was_known;
+        if changed && let Some(notify) = &self.0.notify {
+            notify();
+        }
+    }
+}
 use crate::{Error, GithubSource};
 #[derive(Default)]
 pub struct Downloader;
@@ -20,6 +59,7 @@ impl Downloader {
         source: &GithubSource,
         target: &str,
         cancel: Cancellation,
+        progress: Progress,
     ) -> Result<Vec<u8>, Error> {
         let source = source.clone();
         let target = target.to_owned();
@@ -36,8 +76,10 @@ impl Downloader {
                 std::time::Instant::now() + std::time::Duration::from_secs(15),
                 &mut hops,
                 &worker_cancel,
+                None,
             )?;
-            let url = asset_for_target(&metadata, &target)?;
+            let (url, size) = asset_for_target(&metadata, &target)?;
+            progress.report(0, size);
             let bytes = fetch_controlled(
                 &mut transport,
                 &url,
@@ -45,6 +87,7 @@ impl Downloader {
                 deadline,
                 &mut hops,
                 &worker_cancel,
+                Some((&progress, size)),
             )?;
             rad_plugin_package::Candidate::parse(&bytes, rad_plugin_contract::HOST_API, &target)
                 .map_err(|_| Error::InvalidPackage)?;
@@ -60,9 +103,10 @@ impl Downloader {
 }
 #[cfg(test)]
 fn asset(bytes: &[u8]) -> Result<String, Error> {
-    asset_for_target(bytes, "x86_64-unknown-linux-gnu")
+    asset_for_target(bytes, "x86_64-unknown-linux-gnu").map(|(url, _)| url)
 }
-fn asset_for_target(bytes: &[u8], target: &str) -> Result<String, Error> {
+/// The package for `target` and its size as the release declares it (zero when it does not).
+fn asset_for_target(bytes: &[u8], target: &str) -> Result<(String, u64), Error> {
     if bytes.len() > 1048576 {
         return Err(Error::LimitExceeded);
     }
@@ -74,6 +118,8 @@ fn asset_for_target(bytes: &[u8], target: &str) -> Result<String, Error> {
     struct Asset {
         name: String,
         browser_download_url: String,
+        #[serde(default)]
+        size: u64,
     }
     let release: Release = serde_json::from_slice(bytes).map_err(|_| Error::InvalidPackage)?;
     if release.assets.len() > 128 {
@@ -91,7 +137,7 @@ fn asset_for_target(bytes: &[u8], target: &str) -> Result<String, Error> {
     if url.len() > 8192 {
         return Err(Error::LimitExceeded);
     }
-    Ok(url.into())
+    Ok((url.into(), found.size))
 }
 #[cfg(test)]
 mod tests {
@@ -170,6 +216,7 @@ fn fetch(
         deadline,
         hops,
         &Cancellation::default(),
+        None,
     )
 }
 fn fetch_controlled(
@@ -179,6 +226,7 @@ fn fetch_controlled(
     deadline: std::time::Instant,
     hops: &mut usize,
     cancel: &Cancellation,
+    progress: Option<(&Progress, u64)>,
 ) -> Result<Vec<u8>, Error> {
     let mut url = url.to_owned();
     loop {
@@ -232,6 +280,9 @@ fn fetch_controlled(
                 return Err(Error::LimitExceeded);
             }
             bytes.extend_from_slice(&chunk[..n]);
+            if let Some((progress, total)) = progress {
+                progress.report(bytes.len() as u64, total);
+            }
         }
     }
 }
@@ -256,6 +307,39 @@ mod transport_tests {
             encoding: None,
             body: Box::new(Cursor::new(body.to_vec())),
         }
+    }
+    #[test]
+    fn progress_rises_with_each_chunk_to_one_hundred_and_notifies_only_changes() {
+        let heard = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let progress = Progress::new({
+            let heard = heard.clone();
+            move || heard.lock().unwrap().push(())
+        });
+        assert_eq!(progress.percent(), None, "unknown before the size is");
+        let body = vec![7; 40_000];
+        let mut transport = Fake([response(200, None, &body)].into());
+        let fetched = fetch_controlled(
+            &mut transport,
+            "https://github.com/o/r",
+            50_000,
+            Instant::now() + Duration::from_secs(2),
+            &mut 0,
+            &Cancellation::default(),
+            Some((&progress, 40_000)),
+        )
+        .unwrap();
+        assert_eq!(fetched.len(), 40_000);
+        assert_eq!(progress.percent(), Some(100));
+        let notified = heard.lock().unwrap().len();
+        assert_eq!(notified, 3, "16 KiB chunks: 40 %, 81 %, 100 %");
+        progress.report(40_000, 40_000);
+        assert_eq!(heard.lock().unwrap().len(), notified, "no news, no notice");
+        progress.report(1, 0);
+        assert_eq!(
+            progress.percent(),
+            Some(100),
+            "an unknown total says nothing"
+        );
     }
     #[test]
     fn bounded_transport_does_not_truncate_or_follow_untrusted_redirects() {
@@ -681,7 +765,8 @@ mod cancellation_tests {
                 10,
                 std::time::Instant::now() + std::time::Duration::from_secs(2),
                 &mut 0,
-                &cancel
+                &cancel,
+                None
             )
             .is_err()
         );
