@@ -91,10 +91,13 @@ class World:
     def start(self, expected_host='absent'):
         # The host and pactl deliberately discard PULSE_*; they are NOT our isolation.
         # Only the private fixture tree is writable. No host home/run/Pulse config or network.
+        # Both merged-/usr and traditional library layouts: mirror the host's own
+        # /lib and /lib64, wherever its dynamic loader lives.
+        libraries = [arg for path in ('/lib', '/lib64') if os.path.exists(path)
+                     for arg in ('--ro-bind', path, path)]
         isolation = ['/usr/bin/bwrap', '--die-with-parent', '--unshare-net',
                      '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin',
-                     '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib', '/lib64',
-                     '--dir', '/run', '--dir', '/home', '--dir', '/etc', '--dir', '/etc/pulse',
+                     *libraries, '--dir', '/run', '--dir', '/home', '--dir', '/etc', '--dir', '/etc/pulse',
                      '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
                      '--ro-bind', str(self.repo), str(self.repo),
                      '--bind', str(self.root), str(self.root), '--chdir', str(self.root), '--']
