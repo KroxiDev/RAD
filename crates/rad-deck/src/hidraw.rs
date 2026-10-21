@@ -1,7 +1,21 @@
 use crate::DeckError;
 use std::path::Path;
-fn locate(sys: &Path) -> Result<String, DeckError> {
-    use std::{fs, io::Read};
+/// A hidraw node together with the serial of the USB device that owns it.
+#[derive(Debug, PartialEq, Eq)]
+struct Located {
+    node: String,
+    serial: String,
+}
+/// Finds the XL through `<sys>/class/hidraw`, on any USB port (ADR 0006).
+///
+/// With several XL connected the one with the lowest serial wins, so the choice is
+/// stable across ports, hidraw numbering and reconnections; the others are never
+/// touched. A device without a valid serial has no verifiable identity and is not
+/// eligible: if no XL has one, or two share the lowest, the result is `Identity`.
+fn locate(sys: &Path) -> Result<Located, DeckError> {
+    use std::{fs, io::Read, path::PathBuf};
+    const MAX_ENTRIES: usize = 256;
+    const MAX_SERIAL: usize = 32;
     fn attribute(p: &Path) -> Result<String, DeckError> {
         let file = std::fs::File::open(p).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -11,79 +25,99 @@ fn locate(sys: &Path) -> Result<String, DeckError> {
             }
         })?;
         let mut s = String::new();
-        file.take(32)
+        file.take(64)
             .read_to_string(&mut s)
             .map_err(|_| DeckError::Io)?;
         Ok(s.trim().into())
     }
-    let device = sys.join("bus/usb/devices/1-5");
-    if attribute(&device.join("idVendor"))? != "0fd9"
-        || attribute(&device.join("idProduct"))? != "006c"
-    {
-        return Err(DeckError::Identity);
+    struct Candidate {
+        usb: PathBuf,
+        interface: PathBuf,
+        node: String,
     }
-    let interface = sys.join("bus/usb/devices/1-5:1.0");
-    let driver = fs::read_link(interface.join("driver")).map_err(|_| DeckError::Absent)?;
-    if driver.file_name() != Some(std::ffi::OsStr::new("usbhid")) {
-        return Err(DeckError::Held);
-    }
-    let mut node = None;
-    for (i, entry) in fs::read_dir(interface)
-        .map_err(|_| DeckError::Absent)?
-        .enumerate()
-    {
-        if i >= 64 {
+    let devices = fs::canonicalize(sys.join("devices")).map_err(|_| DeckError::Absent)?;
+    let class = fs::read_dir(sys.join("class/hidraw")).map_err(|_| DeckError::Absent)?;
+    let mut candidates = Vec::new();
+    for (i, entry) in class.enumerate() {
+        if i >= MAX_ENTRIES {
             return Err(DeckError::Identity);
         }
-        let path = entry.map_err(|_| DeckError::Io)?.path().join("hidraw");
-        let Ok(entries) = fs::read_dir(path) else {
+        let entry = entry.map_err(|_| DeckError::Io)?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let number = name.strip_prefix("hidraw").unwrap_or("");
+        if number.is_empty() || !number.bytes().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        // <usb device>/<interface>/<hid device>/hidraw/<node>
+        let Ok(real) = fs::canonicalize(entry.path()) else {
             continue;
         };
-        for entry in entries {
-            let name = entry.map_err(|_| DeckError::Io)?.file_name();
-            let name = name.to_str().ok_or(DeckError::Identity)?;
-            let number = name.strip_prefix("hidraw").ok_or(DeckError::Identity)?;
-            if number.is_empty() || !number.bytes().all(|c| c.is_ascii_digit()) || node.is_some() {
-                return Err(DeckError::Identity);
-            }
-            node = Some(name.into());
+        if !real.starts_with(&devices) {
+            continue;
+        }
+        let mut up = real.ancestors().skip(1);
+        let (_, _, Some(interface), Some(usb)) = (up.next(), up.next(), up.next(), up.next())
+        else {
+            continue;
+        };
+        let xl = |file, value| match attribute(&usb.join(file)) {
+            Ok(v) => Ok(v == value),
+            Err(DeckError::Absent) => Ok(false),
+            Err(e) => Err(e),
+        };
+        if xl("idVendor", "0fd9")? && xl("idProduct", "006c")? {
+            candidates.push(Candidate {
+                usb: usb.into(),
+                interface: interface.into(),
+                node: name.into(),
+            });
         }
     }
-    node.ok_or(DeckError::Absent)
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn pinned_port_requires_xl_usbhid_and_one_node_before_open() {
-        let root = std::env::temp_dir().join(format!(
-            "rad-deck-locate-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&root).unwrap();
-        assert_eq!(locate(&root), Err(DeckError::Absent));
-        let usb = root.join("bus/usb/devices/1-5");
-        std::fs::create_dir_all(&usb).unwrap();
-        std::fs::write(usb.join("idVendor"), "0fd9\n").unwrap();
-        std::fs::write(usb.join("idProduct"), "006c\n").unwrap();
-        let interface = root.join("bus/usb/devices/1-5:1.0");
-        std::fs::create_dir_all(interface.join("0003:0FD9:006C.1/hidraw/hidraw4")).unwrap();
-        std::os::unix::fs::symlink("/fixture/drivers/usbfs", interface.join("driver")).unwrap();
-        assert_eq!(locate(&root), Err(DeckError::Held));
-        std::fs::remove_file(interface.join("driver")).unwrap();
-        std::os::unix::fs::symlink("/fixture/drivers/usbhid", interface.join("driver")).unwrap();
-        assert_eq!(locate(&root), Ok("hidraw4".into()));
-        std::fs::write(usb.join("idProduct"), "9999").unwrap();
-        assert_eq!(locate(&root), Err(DeckError::Identity));
-        std::fs::write(usb.join("idProduct"), "006c").unwrap();
-        std::fs::create_dir_all(interface.join("0003:0FD9:006C.1/hidraw/hidraw5")).unwrap();
-        assert_eq!(locate(&root), Err(DeckError::Identity));
-        std::fs::remove_dir_all(root).unwrap();
+    if candidates.is_empty() {
+        return Err(DeckError::Absent);
     }
+    let mut chosen: Option<(String, &PathBuf)> = None;
+    let mut tie = false;
+    let mut seen: Vec<&PathBuf> = Vec::new();
+    for c in &candidates {
+        if seen.contains(&&c.usb) {
+            continue;
+        }
+        seen.push(&c.usb);
+        let serial = attribute(&c.usb.join("serial")).unwrap_or_default();
+        if serial.is_empty()
+            || serial.len() > MAX_SERIAL
+            || !serial.bytes().all(|b| b.is_ascii_graphic())
+        {
+            continue;
+        }
+        match &chosen {
+            Some((best, _)) if serial > *best => {}
+            Some((best, _)) if serial == *best => tie = true,
+            _ => {
+                chosen = Some((serial, &c.usb));
+                tie = false;
+            }
+        }
+    }
+    let (serial, usb) = chosen.ok_or(DeckError::Identity)?;
+    if tie {
+        return Err(DeckError::Identity);
+    }
+    let mut nodes = candidates.iter().filter(|c| &c.usb == usb);
+    let (Some(first), None) = (nodes.next(), nodes.next()) else {
+        return Err(DeckError::Identity);
+    };
+    match fs::read_link(first.interface.join("driver")) {
+        Ok(d) if d.file_name() == Some(std::ffi::OsStr::new("usbhid")) => {}
+        Ok(_) => return Err(DeckError::Held),
+        Err(_) => return Err(DeckError::Absent),
+    }
+    Ok(Located {
+        node: first.node.clone(),
+        serial,
+    })
 }
 pub(crate) trait Link: Send {
     fn raw_fd(&self) -> std::os::fd::RawFd;
@@ -109,12 +143,12 @@ fn fd(file: &std::fs::File) -> std::os::fd::RawFd {
 }
 pub(crate) fn connect_at(sys: &Path, dev: &Path) -> Result<Box<dyn Link>, DeckError> {
     use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
-    let node = locate(sys)?;
+    let located = locate(sys)?;
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
-        .open(dev.join(&node))
+        .open(dev.join(&located.node))
         .map_err(|_| DeckError::Io)?;
     if !file
         .metadata()
@@ -133,7 +167,7 @@ pub(crate) fn connect_at(sys: &Path, dev: &Path) -> Result<Box<dyn Link>, DeckEr
         return Err(DeckError::Identity);
     }
     file.try_lock().map_err(|_| DeckError::Held)?;
-    if locate(sys)? != node {
+    if locate(sys)? != located {
         return Err(DeckError::Identity);
     }
     let mut duration = [0u8; 32];
@@ -227,25 +261,133 @@ impl Drop for Hidraw {
 }
 
 #[cfg(test)]
-mod open_tests {
+mod tests {
     use super::*;
-    #[test]
-    fn regular_fixture_is_never_treated_as_hidraw_or_written() {
+    use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
+
+    fn temp_root(tag: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "rad-deck-open-{}-{}",
+            "rad-deck-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        let device = root.join("bus/usb/devices/1-5");
-        std::fs::create_dir_all(&device).unwrap();
-        std::fs::write(device.join("idVendor"), "0fd9").unwrap();
-        std::fs::write(device.join("idProduct"), "006c").unwrap();
-        let interface = root.join("bus/usb/devices/1-5:1.0");
-        std::fs::create_dir_all(interface.join("hid/hidraw/hidraw4")).unwrap();
-        std::os::unix::fs::symlink("/fixture/usbhid", interface.join("driver")).unwrap();
+        std::fs::create_dir_all(root.join("devices")).unwrap();
+        std::fs::create_dir_all(root.join("class/hidraw")).unwrap();
+        root
+    }
+    /// Builds `devices/.../usb1/<port>/<port>:1.0/<hid>/hidraw/<node>` plus the
+    /// relative `class/hidraw/<node>` symlink, as sysfs lays it out.
+    fn add(root: &Path, port: &str, ids: (&str, &str), serial: Option<&str>, nodes: &[&str]) {
+        let usb = root.join(format!("devices/pci0000:00/0000:00:14.0/usb1/{port}"));
+        let interface = usb.join(format!("{port}:1.0"));
+        std::fs::create_dir_all(&interface).unwrap();
+        std::fs::write(usb.join("idVendor"), format!("{}\n", ids.0)).unwrap();
+        std::fs::write(usb.join("idProduct"), format!("{}\n", ids.1)).unwrap();
+        if let Some(serial) = serial {
+            std::fs::write(usb.join("serial"), format!("{serial}\n")).unwrap();
+        }
+        symlink("/fixture/drivers/usbhid", interface.join("driver")).unwrap();
+        for (i, node) in nodes.iter().enumerate() {
+            let dir = interface.join(format!("0003:0FD9:006C.{i:04}/hidraw/{node}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            let target = dir.strip_prefix(root.join("devices")).unwrap();
+            symlink(
+                PathBuf::from("../../devices").join(target),
+                root.join("class/hidraw").join(node),
+            )
+            .unwrap();
+        }
+    }
+    fn xl(root: &Path, port: &str, serial: Option<&str>, nodes: &[&str]) {
+        add(root, port, ("0fd9", "006c"), serial, nodes);
+    }
+    fn found(root: &Path) -> Result<(String, String), DeckError> {
+        locate(root).map(|l| (l.node, l.serial))
+    }
+    fn pair(node: &str, serial: &str) -> Result<(String, String), DeckError> {
+        Ok((node.into(), serial.into()))
+    }
+
+    #[test]
+    fn finds_xl_on_any_port() {
+        let root = temp_root("port");
+        xl(&root, "3-2", Some("AL1"), &["hidraw7"]);
+        assert_eq!(found(&root), pair("hidraw7", "AL1"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn absent_without_entries_or_without_xl() {
+        let root = temp_root("absent");
+        assert_eq!(found(&root), Err(DeckError::Absent));
+        add(&root, "1-1", ("046d", "c52b"), Some("K1"), &["hidraw0"]);
+        add(&root, "1-2", ("0fd9", "0060"), Some("K2"), &["hidraw1"]);
+        assert_eq!(found(&root), Err(DeckError::Absent));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn two_nodes_of_one_device_are_ambiguous() {
+        let root = temp_root("nodes");
+        xl(&root, "1-5", Some("AL1"), &["hidraw4", "hidraw5"]);
+        assert_eq!(found(&root), Err(DeckError::Identity));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn foreign_driver_is_held() {
+        let root = temp_root("driver");
+        xl(&root, "1-5", Some("AL1"), &["hidraw4"]);
+        let driver = root.join("devices/pci0000:00/0000:00:14.0/usb1/1-5/1-5:1.0/driver");
+        std::fs::remove_file(&driver).unwrap();
+        symlink("/fixture/drivers/usbfs", &driver).unwrap();
+        assert_eq!(found(&root), Err(DeckError::Held));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn lowest_serial_wins_regardless_of_port_or_numbering() {
+        for (low_port, low_node, high_port, high_node) in [
+            ("1-5", "hidraw2", "3-2", "hidraw9"),
+            ("3-2", "hidraw9", "1-5", "hidraw2"),
+            ("1-5", "hidraw9", "3-2", "hidraw2"),
+        ] {
+            let root = temp_root("two");
+            xl(&root, low_port, Some("AL1"), &[low_node]);
+            xl(&root, high_port, Some("AL2"), &[high_node]);
+            assert_eq!(found(&root), pair(low_node, "AL1"));
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[test]
+    fn non_xl_device_is_never_chosen_even_with_lower_serial() {
+        let root = temp_root("other");
+        add(&root, "1-1", ("046d", "c52b"), Some("AA0"), &["hidraw0"]);
+        xl(&root, "1-5", Some("AL1"), &["hidraw4"]);
+        assert_eq!(found(&root), pair("hidraw4", "AL1"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn xl_without_valid_serial_is_not_eligible() {
+        let root = temp_root("serial");
+        xl(&root, "1-5", None, &["hidraw4"]);
+        assert_eq!(found(&root), Err(DeckError::Identity));
+        xl(&root, "3-2", Some("AL9"), &["hidraw5"]);
+        assert_eq!(found(&root), pair("hidraw5", "AL9"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn duplicate_lowest_serial_is_ambiguous() {
+        let root = temp_root("tie");
+        xl(&root, "1-5", Some("AL1"), &["hidraw4"]);
+        xl(&root, "3-2", Some("AL1"), &["hidraw5"]);
+        assert_eq!(found(&root), Err(DeckError::Identity));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn regular_fixture_is_never_treated_as_hidraw_or_written() {
+        let root = temp_root("open");
+        xl(&root, "1-5", Some("AL1"), &["hidraw4"]);
         let dev = root.join("dev");
         std::fs::create_dir(&dev).unwrap();
         std::fs::write(dev.join("hidraw4"), b"intact").unwrap();
