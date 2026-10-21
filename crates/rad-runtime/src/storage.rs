@@ -1,8 +1,10 @@
 //! Single Store/transfer owner. Only metadata and owned DTOs cross back to the actor.
+//! In recovery mode there is no Store yet: the worker then only serves transfers.
 use crate::transfers::{self, Metadata, Transfers};
 use rad_core::configuration::{Candidate, ConfigurationData};
-use rad_store::{CommitOutcome, Store, StoreError};
+use rad_store::{CommitOutcome, ReplaceError, Store, StoreError};
 use std::{
+    path::PathBuf,
     sync::{
         Arc,
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
@@ -33,6 +35,15 @@ pub enum Job {
     ReleaseMedia {
         transfer_id: String,
     },
+    /// Recovery mode: the base at `path` is replaced by a new one holding the verified
+    /// media of the transfer, and the damaged file stays as evidence.
+    ReplaceFromMedia {
+        path: PathBuf,
+        stamp: u64,
+        candidate: Candidate,
+        connection: u64,
+        transfer_id: String,
+    },
 }
 pub enum ResultValue {
     Commit(CommitOutcome),
@@ -43,6 +54,7 @@ pub enum ResultValue {
     Revision(Result<ConfigurationData, StoreError>),
     Transfer(Result<transfers::Output, transfers::Error>),
     Released(Result<(), transfers::Error>),
+    Replaced(Result<(), ReplaceError>),
 }
 struct Completion {
     id: JobId,
@@ -57,7 +69,7 @@ pub struct StorageWorker {
     next: u64,
     metadata: Option<Metadata>,
     released: Vec<String>,
-    _thread: JoinHandle<()>,
+    thread: JoinHandle<()>,
 }
 struct WakeOnExit(Arc<mio::Waker>);
 impl Drop for WakeOnExit {
@@ -67,17 +79,24 @@ impl Drop for WakeOnExit {
 }
 impl StorageWorker {
     pub fn spawn(store: Store, wake: Arc<mio::Waker>) -> Result<Self, WorkerError> {
-        Self::start(store, None, wake)
+        Self::start(Some(store), None, wake)
     }
     pub fn with_transfers(
         store: Store,
         transfers: Transfers,
         wake: Arc<mio::Waker>,
     ) -> Result<Self, WorkerError> {
-        Self::start(store, Some(transfers), wake)
+        Self::start(Some(store), Some(transfers), wake)
+    }
+    /// Recovery mode: transfers without a Store.
+    pub fn transfers_only(
+        transfers: Transfers,
+        wake: Arc<mio::Waker>,
+    ) -> Result<Self, WorkerError> {
+        Self::start(None, Some(transfers), wake)
     }
     fn start(
-        mut store: Store,
+        mut store: Option<Store>,
         mut transfers: Option<Transfers>,
         wake: Arc<mio::Waker>,
     ) -> Result<Self, WorkerError> {
@@ -92,15 +111,21 @@ impl StorageWorker {
                 let mut uncertain_collection = false;
                 while let Ok((id, job)) = commands.recv() {
                     let result = match job {
-                        Job::Commit(candidate) => ResultValue::Commit(store.commit(&candidate)),
-                        Job::ReadRevision(revision) => ResultValue::Revision(
-                            store
-                                .revision(revision)
-                                .map(|l| l.configuration.data().clone()),
-                        ),
+                        Job::Commit(candidate) => ResultValue::Commit(match store.as_mut() {
+                            Some(store) => store.commit(&candidate),
+                            None => CommitOutcome::NotApplied(StoreError::Invalid),
+                        }),
+                        Job::ReadRevision(revision) => {
+                            ResultValue::Revision(match store.as_ref() {
+                                Some(store) => store
+                                    .revision(revision)
+                                    .map(|l| l.configuration.data().clone()),
+                                None => Err(StoreError::Invalid),
+                            })
+                        }
                         Job::Transfer { context, operation } => {
                             ResultValue::Transfer(match transfers.as_mut() {
-                                Some(t) => t.execute(&mut store, context, operation),
+                                Some(t) => t.execute_with(store.as_mut(), context, operation),
                                 None => Err(transfers::Error::NotAllowed),
                             })
                         }
@@ -118,11 +143,11 @@ impl StorageWorker {
                             connection,
                             transfer_id,
                         } => {
-                            let outcome = match transfers.as_mut() {
-                                Some(t) => {
-                                    t.commit(&mut store, &candidate, connection, &transfer_id)
+                            let outcome = match (transfers.as_mut(), store.as_mut()) {
+                                (Some(t), Some(store)) => {
+                                    t.commit(store, &candidate, connection, &transfer_id)
                                 }
-                                None => CommitOutcome::NotApplied(StoreError::Invalid),
+                                _ => CommitOutcome::NotApplied(StoreError::Invalid),
                             };
                             if matches!(outcome, CommitOutcome::Uncertain { .. }) {
                                 uncertain_media = Some(transfer_id.clone());
@@ -132,8 +157,50 @@ impl StorageWorker {
                             }
                             ResultValue::Commit(outcome)
                         }
+                        Job::ReplaceFromMedia {
+                            path,
+                            stamp,
+                            candidate,
+                            connection,
+                            transfer_id,
+                        } => {
+                            let replaced = match transfers.as_mut() {
+                                Some(t) if store.is_none() => {
+                                    rad_store::replace_damaged(&path, stamp, |temporary| {
+                                        t.create_store(
+                                            temporary,
+                                            &candidate,
+                                            connection,
+                                            &transfer_id,
+                                        )
+                                    })
+                                    .map(drop)
+                                }
+                                _ => Err(ReplaceError::NotApplied(StoreError::Invalid)),
+                            };
+                            if let Some(t) = transfers.as_mut() {
+                                let outcome = match replaced {
+                                    Ok(()) => CommitOutcome::Applied {
+                                        revision: 0,
+                                        changed: true,
+                                    },
+                                    Err(ReplaceError::NotApplied(error)) => {
+                                        CommitOutcome::NotApplied(error)
+                                    }
+                                    Err(ReplaceError::AfterExchange) => CommitOutcome::Uncertain {
+                                        revision: 0,
+                                        error: StoreError::Uncertain,
+                                    },
+                                };
+                                let _ = t.resolved(&transfer_id, &outcome);
+                            }
+                            ResultValue::Replaced(replaced)
+                        }
                         Job::Reconcile => {
-                            let outcome = store.reconcile();
+                            let outcome = store.as_mut().map_or(
+                                CommitOutcome::NotApplied(StoreError::Invalid),
+                                Store::reconcile,
+                            );
                             if let Some(token) = &uncertain_media
                                 && let Some(t) = transfers.as_mut()
                             {
@@ -143,7 +210,7 @@ impl StorageWorker {
                                 uncertain_media = None;
                             }
                             if uncertain_collection {
-                                let result = collection_result(&store, outcome);
+                                let result = collection_result(store.as_ref(), outcome);
                                 uncertain_collection = matches!(
                                     &result,
                                     ResultValue::Collected {
@@ -157,7 +224,10 @@ impl StorageWorker {
                             }
                         }
                         Job::Collect(roots) => {
-                            let outcome = match store.collect(&roots) {
+                            let collected = store
+                                .as_mut()
+                                .map_or(Err(StoreError::Invalid), |store| store.collect(&roots));
+                            let outcome = match collected {
                                 Ok(()) => CommitOutcome::Applied {
                                     revision: 0,
                                     changed: false,
@@ -168,7 +238,7 @@ impl StorageWorker {
                                 },
                                 Err(error) => CommitOutcome::NotApplied(error),
                             };
-                            let result = collection_result(&store, outcome);
+                            let result = collection_result(store.as_ref(), outcome);
                             uncertain_collection = matches!(
                                 &result,
                                 ResultValue::Collected {
@@ -206,7 +276,7 @@ impl StorageWorker {
             next: 1,
             metadata,
             released: vec![],
-            _thread: handle,
+            thread: handle,
         })
     }
     pub fn submit(&mut self, job: Job) -> Result<JobId, WorkerError> {
@@ -248,6 +318,18 @@ impl StorageWorker {
             Err(TryRecvError::Disconnected) => Err(WorkerError::Unavailable),
         }
     }
+    /// Ends the thread and waits for it, so what it owned (the transfer folder) is free.
+    pub fn stop(self) {
+        let Self {
+            sender,
+            receiver,
+            thread,
+            ..
+        } = self;
+        drop(sender);
+        drop(receiver);
+        let _ = thread.join();
+    }
     pub fn transfer_metadata(&self) -> Option<&Metadata> {
         self.metadata.as_ref()
     }
@@ -256,9 +338,9 @@ impl StorageWorker {
     }
 }
 
-fn collection_result(store: &Store, outcome: CommitOutcome) -> ResultValue {
+fn collection_result(store: Option<&Store>, outcome: CommitOutcome) -> ResultValue {
     if matches!(outcome, CommitOutcome::Applied { .. }) {
-        match store.load() {
+        match store.ok_or(StoreError::Invalid).and_then(Store::load) {
             Ok(loaded) => ResultValue::Collected {
                 outcome: CommitOutcome::Applied {
                     revision: loaded.revision,

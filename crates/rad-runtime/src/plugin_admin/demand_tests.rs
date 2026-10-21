@@ -7,7 +7,8 @@ fn controlled() -> (Admin, mpsc::Receiver<Job>, Authority, Host) {
     let admin = Admin {
         tx,
         rx,
-        worker: None,
+        worker_ended: crate::thread_end::Ended::already(),
+        fetcher: fetch::Fetcher::new(Arc::new(|| {}), Box::new(|_, _| panic!("no download"))),
         unsent: None,
         state: AdminState::Idle,
         error: None,

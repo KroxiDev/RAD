@@ -153,12 +153,13 @@ impl Manager {
         operation: Operation,
         package: Option<&[u8]>,
         source: Option<&crate::GithubSource>,
+        replaces: Option<&crate::GithubSource>,
     ) -> Result<PreparedChange, Error> {
         // Only recover failures caused by this admitted operation, never older work.
         if self.state() != ManagerState::Ready {
             return Err(Error::Busy);
         }
-        let result = self.prepare_inner(operation, package, source);
+        let result = self.prepare_inner(operation, package, source, replaces);
         if result.is_err() && self.state() == ManagerState::RecoveryRequired {
             let _ = self.reconcile();
         }
@@ -170,20 +171,41 @@ impl Manager {
         operation: Operation,
         package: Option<&[u8]>,
     ) -> Result<PreparedChange, Error> {
-        self.prepare_from_source(operation, package, None)
+        self.prepare_from_source(operation, package, None, None)
     }
     pub fn prepare(
         &mut self,
         operation: Operation,
         package: Option<&[u8]>,
     ) -> Result<PreparedChange, Error> {
-        self.prepare_inner(operation, package, None)
+        self.prepare_inner(operation, package, None, None)
+    }
+    /// A source from another repository than the registered one replaces it only when the
+    /// caller confirms that same registered origin; nothing is written before this check.
+    fn confirm_source_change(
+        old: Option<&crate::ledger::Versions>,
+        source: Option<&crate::GithubSource>,
+        replaces: Option<&crate::GithubSource>,
+    ) -> Result<(), Error> {
+        let (Some(registered), Some(requested)) =
+            (old.and_then(|versions| versions.source.as_deref()), source)
+        else {
+            return Ok(());
+        };
+        let registered = crate::GithubSource::parse(registered).map_err(|_| Error::CorruptState)?;
+        if registered.same_origin(requested) || replaces.is_some_and(|r| r.same_origin(&registered))
+        {
+            Ok(())
+        } else {
+            Err(Error::SourceChanged)
+        }
     }
     fn prepare_inner(
         &mut self,
         operation: Operation,
         package: Option<&[u8]>,
         source: Option<&crate::GithubSource>,
+        replaces: Option<&crate::GithubSource>,
     ) -> Result<PreparedChange, Error> {
         if self.state() != ManagerState::Ready {
             return Err(Error::Busy);
@@ -208,6 +230,9 @@ impl Manager {
             | Operation::Uninstall(id) => id.clone(),
         };
         let old = self.index.plugins.get(&id).cloned();
+        if matches!(operation, Operation::Update(_) | Operation::Reinstall(_)) {
+            Self::confirm_source_change(old.as_ref(), source, replaces)?;
+        }
         let mut after = self.index.clone();
         after.revision = after.revision.checked_add(1).ok_or(Error::Capacity)?;
         let mut new_slot = None;
@@ -613,7 +638,7 @@ mod fault_tests {
         ));
         assert_eq!(b.state(), ManagerState::RecoveryRequired);
         assert!(matches!(
-            b.prepare_from_source(Operation::Install, Some(&bytes), None),
+            b.prepare_from_source(Operation::Install, Some(&bytes), None, None),
             Err(Error::Busy)
         ));
         assert_eq!(

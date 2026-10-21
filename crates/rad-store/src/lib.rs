@@ -11,12 +11,16 @@ mod gc;
 mod ledger;
 mod media;
 mod migration;
+mod peek;
+pub use peek::{PeekedCounters, peek_counters};
 mod reconciliation;
+mod replace;
 use rad_core::{
     configuration::{Candidate, Configuration},
     identity::IdentityRegistry,
 };
 use reconciliation::{Pending, Stamp};
+pub use replace::{ReplaceError, Replaced, replace_damaged};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::path::Path;

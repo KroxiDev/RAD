@@ -14,6 +14,8 @@ pub(super) struct Plugins {
     end_budgets: BTreeMap<DispatchId, u64>,
     hold_ends: BTreeMap<(u64, u64), rad_core::execution::ExecutionId>,
     releasing: std::collections::BTreeSet<rad_core::execution::ExecutionId>,
+    /// Events for the server to record; taken by `Native::take_events`.
+    pub events: Vec<crate::events::Occurrence>,
 }
 impl Plugins {
     pub fn sync_credentials(
@@ -259,6 +261,10 @@ impl Plugins {
             self.observed.insert(m.id.clone(), (g, s));
             if matches!(s, State::Failed | State::Reaped) && !self.host.stopped_normally(&m.id) {
                 actor.plugin_failed(&m.id, g);
+                self.events.push(crate::events::Occurrence::new(
+                    rad_api::EventCode::PluginFailed,
+                    Some(&m.id),
+                ));
             }
         }
         let mut done = vec![];
@@ -292,6 +298,10 @@ impl Plugins {
                     rad_plugin_contract::Outcome::Failure {
                         code: rad_plugin_contract::FailureCode::Unavailable,
                     } => Completion::Failed(Failure::ServiceUnavailable),
+                    // Host's deadline and a plugin's own timeout are both the action timing out.
+                    rad_plugin_contract::Outcome::Failure {
+                        code: rad_plugin_contract::FailureCode::TimedOut,
+                    } => Completion::TimedOut,
                     _ => Completion::Failed(Failure::ActionFailed),
                 };
                 done.push((id, result));
@@ -357,11 +367,15 @@ impl Plugins {
 mod tests {
     use super::*;
     use rad_authority::{Command, Effect, plugins::PluginError};
-    use rad_core::{configuration::*, execution::Target, identity::IdentityRegistry};
+    use rad_core::{
+        configuration::*,
+        execution::Target,
+        identity::{EntityIdentity, IdentityRegistry},
+    };
     use rad_plugin_contract::Manifest;
     use std::time::{Duration, Instant};
-    #[test]
-    fn external_dispatch_binds_real_process_after_wait_and_keeps_its_execution() {
+    /// A wait, then one External action in `mode`, with its fixture process Ready and installed.
+    fn world(mode: &str) -> (Authority, Plugins, EntityIdentity, u64, Instant) {
         let initial = Configuration::prepare_new(&IdentityRegistry::new(772).unwrap()).unwrap();
         let c = initial
             .configuration()
@@ -391,15 +405,17 @@ mod tests {
                         kind: ActionKind::External {
                             type_key: ExternalType::new("org.rad.fixture".into(), "run".into())
                                 .unwrap(),
-                            parameters: br#"{"schema_version":1,"values":{"mode":"echo"}}"#
-                                .to_vec(),
+                            parameters: format!(
+                                r#"{{"schema_version":1,"values":{{"mode":"{mode}"}}}}"#
+                            )
+                            .into_bytes(),
                         },
                     },
                 ],
             )
             .unwrap();
         let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(771).unwrap());
-        let manifest:Manifest=serde_json::from_value(serde_json::json!({"contract":1,"capabilities":["credentials","dynamic_options","visual_freshness"],"id":"org.rad.fixture","version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[rad_plugin_host::TARGET],"actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[{"id":"mode","label":"Mode","required":true,"kind":{"type":"choice","options":["echo"]}}]},"credential_slots":[]}],"visuals":[]})).unwrap();
+        let manifest:Manifest=serde_json::from_value(serde_json::json!({"contract":1,"capabilities":["credentials","dynamic_options","visual_freshness"],"id":"org.rad.fixture","version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[rad_plugin_host::TARGET],"actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[{"id":"mode","label":"Mode","required":true,"kind":{"type":"choice","options":["echo","slow"]}}]},"credential_slots":[]}],"visuals":[]})).unwrap();
         let mut plugins = Plugins::default();
         actor
             .check_plugin_candidate(&manifest, rad_plugin_host::TARGET)
@@ -430,6 +446,11 @@ mod tests {
         actor
             .install_plugin(manifest.clone(), generation, rad_plugin_host::TARGET)
             .unwrap();
+        (actor, plugins, button, generation, limit)
+    }
+    #[test]
+    fn external_dispatch_binds_real_process_after_wait_and_keeps_its_execution() {
+        let (mut actor, mut plugins, button, generation, limit) = world("echo");
         let ticket = actor.reserve(1, Origin::Editor).unwrap();
         let events = actor.submit(
             ticket,
@@ -474,6 +495,95 @@ mod tests {
         while plugins.host.resources().0 > 0 {
             assert!(Instant::now() < limit);
             plugins.pump(&mut actor, 10).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    #[test]
+    fn host_timeout_reaches_engine_as_timed_out_before_its_own_deadline_and_keeps_the_residual_in_host()
+     {
+        let (mut actor, mut plugins, button, _, limit) = world("slow");
+        let ticket = actor.reserve(1, Origin::Editor).unwrap();
+        let events = actor.submit(
+            ticket,
+            Command::Run {
+                target: Target::Button(button),
+            },
+        );
+        let execution = events
+            .iter()
+            .find_map(|e| match e {
+                Effect::Accepted { execution, .. } => Some(*execution),
+                _ => None,
+            })
+            .unwrap();
+        let intent = actor
+            .before_event(10)
+            .unwrap()
+            .into_iter()
+            .find_map(|e| match e {
+                Effect::Dispatch(d) => Some(d),
+                _ => None,
+            })
+            .unwrap();
+        plugins.submit(&actor, &intent).unwrap();
+        // Let the invocation reach the plugin, then expire it by the Host's clock only:
+        // Engine's own deadline is never processed (no `before_event(deadline)`).
+        assert!(plugins.pump(&mut actor, 10).unwrap().is_empty());
+        let done = plugins.pump(&mut actor, intent.deadline_ms).unwrap();
+        assert_eq!(done, vec![(intent.id, Completion::TimedOut)]);
+        actor.job_complete(intent.id, done[0].1).unwrap();
+        let steps = |actor: &Authority| {
+            actor
+                .result(Origin::Editor, execution)
+                .unwrap()
+                .steps
+                .into_iter()
+                .map(|s| match s {
+                    rad_authority::Visible::Visible(s) => s.status,
+                    _ => panic!("restricted step"),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            actor.result(Origin::Editor, execution).unwrap().status,
+            rad_core::execution::ExecutionStatus::TimedOut
+        );
+        assert_eq!(
+            steps(&actor),
+            [
+                rad_core::execution::StepStatus::Succeeded,
+                rad_core::execution::StepStatus::TimedOut
+            ]
+        );
+        // The root revision and the plugin binding are free; the Host keeps the residual.
+        assert_eq!(actor.plugin_change_allowed("org.rad.fixture"), Ok(()));
+        assert!(!plugins.host.idle("org.rad.fixture"));
+        assert_eq!(plugins.host.resources().1, 1);
+        // Engine's later deadline neither repeats the action nor changes the result.
+        assert!(
+            actor
+                .before_event(intent.deadline_ms)
+                .unwrap()
+                .iter()
+                .all(|e| !matches!(e, Effect::Dispatch(_)))
+        );
+        assert_eq!(steps(&actor)[1], rad_core::execution::StepStatus::TimedOut);
+        // The late reply is drained: no second completion, nothing re-dispatched.
+        while !plugins.host.idle("org.rad.fixture") {
+            assert!(Instant::now() < limit);
+            assert!(
+                plugins
+                    .pump(&mut actor, intent.deadline_ms)
+                    .unwrap()
+                    .is_empty()
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(plugins.host.resources().1, 0);
+        plugins.host.shutdown();
+        while plugins.host.resources().0 > 0 {
+            assert!(Instant::now() < limit);
+            plugins.pump(&mut actor, intent.deadline_ms).unwrap();
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -762,7 +872,7 @@ mod hold_tests {
             )
             .unwrap();
         let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(942).unwrap());
-        let manifest:rad_plugin_contract::Manifest=serde_json::from_value(serde_json::json!({"contract":1,"capabilities":["controls"],"id":plugin,"version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[rad_plugin_host::TARGET],"actions":[{"id":"run","label":"Run","gestures":["hold"],"schema":{"version":1,"fields":[{"id":"mode","label":"Mode","required":true,"kind":{"type":"choice","options":["echo","end_fail"]}}]},"credential_slots":[]}],"visuals":[]})).unwrap();
+        let manifest:rad_plugin_contract::Manifest=serde_json::from_value(serde_json::json!({"contract":1,"capabilities":["controls"],"id":plugin,"version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[rad_plugin_host::TARGET],"actions":[{"id":"run","label":"Run","gestures":["hold"],"schema":{"version":1,"fields":[{"id":"mode","label":"Mode","required":true,"kind":{"type":"choice","options":["echo","end_fail","crash"]}}]},"credential_slots":[]}],"visuals":[]})).unwrap();
         actor
             .register_plugin(manifest, rad_plugin_host::TARGET)
             .unwrap();
@@ -814,6 +924,54 @@ mod hold_tests {
     #[test]
     fn ready_plugin_end_failure_updates_original_execution() {
         real_release("end_fail");
+    }
+    #[cfg(feature = "fixture-tests")]
+    #[test]
+    fn a_plugin_that_dies_on_its_own_is_an_event_with_its_id() {
+        use crate::events::Occurrence;
+        use std::time::{Duration, Instant};
+        let plugin = "org.rad.fixture";
+        let mut actor = fixture_mode(plugin, "echo");
+        let manifest = actor.plugin_manifests().next().unwrap().0.clone();
+        let mut plugins = Plugins::default();
+        let launch = plugins.host.reserve_launch(manifest.clone(), 0).unwrap();
+        let bin = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("rad-plugin-fixture-v1");
+        let mut prepared = Some(launch.spawn(std::process::Command::new(bin)));
+        let generation = plugins.host.attach(&mut prepared, 0).unwrap();
+        let end = Instant::now() + Duration::from_secs(3);
+        while plugins.host.state(plugin) != Some(State::Ready) {
+            assert!(Instant::now() < end);
+            plugins.pump(&mut actor, 0).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(plugins.events.is_empty());
+        let crash = serde_json::from_value(
+            serde_json::json!({"schema_version":1,"values":{"mode":"crash"}}),
+        )
+        .unwrap();
+        plugins
+            .host
+            .invoke(plugin, generation, "run", crash, 5000)
+            .unwrap();
+        while plugins.host.state(plugin) != Some(State::Reaped) {
+            assert!(Instant::now() < end, "the plugin must die");
+            plugins.pump(&mut actor, 1).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        plugins.pump(&mut actor, 2).unwrap();
+        assert_eq!(
+            plugins.events,
+            [Occurrence::new(
+                rad_api::EventCode::PluginFailed,
+                Some(plugin)
+            )]
+        );
     }
     #[cfg(feature = "fixture-tests")]
     fn real_release(mode: &str) {

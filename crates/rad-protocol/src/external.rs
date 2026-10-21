@@ -69,29 +69,13 @@ pub enum External {
         cursor: Option<String>,
     },
 }
-pub(super) fn parse(
-    a: &Authority,
-    c: IncomingContext,
-    request: &rad_api::Request,
-    caps: Capabilities,
-) -> Checked<External> {
+/// The transfer and restore operations, which need no Authority: the Editor's alone, and
+/// the same wherever they are served (normal mode, or restoring in recovery mode).
+pub fn parse_transfer(origin: Origin, request: &rad_api::Request) -> Checked<External> {
     use rad_api::Request as R;
-    if matches!(
-        request,
-        R::TransferBegin { .. }
-            | R::TransferWrite { .. }
-            | R::TransferRead { .. }
-            | R::TransferFinish { .. }
-            | R::TransferDrop { .. }
-            | R::RestoreCommit { .. }
-    ) {
-        if c.origin != Origin::Editor {
-            return Err("permission_denied");
-        };
-        if !caps.transfers {
-            return Err("executor_unavailable");
-        }
-    }
+    if origin != Origin::Editor {
+        return Err("permission_denied");
+    };
     match request {
         R::TransferBegin { kind, size } => {
             let kind = match kind {
@@ -146,6 +130,38 @@ pub(super) fn parse(
                 confirmed: true,
             })
         }
+        _ => Err("invalid_request"),
+    }
+}
+fn is_transfer(request: &rad_api::Request) -> bool {
+    use rad_api::Request as R;
+    matches!(
+        request,
+        R::TransferBegin { .. }
+            | R::TransferWrite { .. }
+            | R::TransferRead { .. }
+            | R::TransferFinish { .. }
+            | R::TransferDrop { .. }
+            | R::RestoreCommit { .. }
+    )
+}
+pub(super) fn parse(
+    a: &Authority,
+    c: IncomingContext,
+    request: &rad_api::Request,
+    caps: Capabilities,
+) -> Checked<External> {
+    use rad_api::Request as R;
+    if is_transfer(request) {
+        if c.origin != Origin::Editor {
+            return Err("permission_denied");
+        };
+        if !caps.transfers {
+            return Err("executor_unavailable");
+        }
+        return parse_transfer(c.origin, request);
+    }
+    match request {
         R::LauncherCatalog { query, cursor } => {
             if c.origin != Origin::Editor {
                 return Err("permission_denied");

@@ -1,4 +1,5 @@
 use super::*;
+use crate::worker::Pulse;
 struct Frame {
     texts: Vec<(String, egui::Rect)>,
     intent: Option<Intent>,
@@ -172,6 +173,7 @@ fn panel_confirms_only_ack_and_discards_unsubmitted_drafts_on_context_change() {
         .send(Err(crate::session::Error {
             code: "storage_uncertain".into(),
             cause: None,
+            source_change: None,
             unknown: true,
         }))
         .unwrap();
@@ -284,10 +286,12 @@ fn worker_uses_editor_socket_and_waits_for_durable_ack_without_replay() {
     asked
         .recv_timeout(Duration::from_secs(2))
         .expect("worker must send replace on editor endpoint");
-    assert!(worker.poll().is_none());
+    assert!(matches!(worker.poll(), crate::worker::Polled::Pending));
     assert!(worker.busy());
     release.send(()).unwrap();
-    let event = worker.receive().unwrap();
+    let crate::worker::Polled::Ready(event) = worker.receive() else {
+        panic!("no event")
+    };
     assert_eq!(event.result.unwrap(), State::Present);
     assert_eq!(event.generation, 1);
     assert_eq!(event.slot, "password");
@@ -460,6 +464,7 @@ fn saved_hint_pending_and_error_never_expose_or_claim_saved_bytes() {
     field.error = Some(crate::session::Error {
         code: "storage_uncertain".into(),
         cause: None,
+        source_change: None,
         unknown: true,
     });
     let failed = frame(&ctx, &mut field, vec![]);
@@ -589,7 +594,60 @@ fn decode_state(
         .map_err(|_| crate::session::Error {
             code: "invalid_request".into(),
             cause: None,
+            source_change: None,
             unknown: mutating,
         })?;
     super::decode_state(data, mutating, status)
+}
+
+#[test]
+fn credential_write_lost_with_its_worker_is_unknown_and_read_again_never_repeated() {
+    use std::{sync::mpsc, time::Duration};
+    let mut dead =
+        CredentialWorker::spawn(|_job: Job| -> Event { panic!("synthetic worker death") });
+    let mut panel = Panel::default();
+    panel.bind("ctx", "p:action", &["password".into()]);
+    let field = panel.fields.get_mut("password").unwrap();
+    field.requested = true;
+    field.pending = true;
+    field.state = Some(State::Present);
+    dead.submit(Job {
+        generation: panel.generation,
+        plugin: "p".into(),
+        slot: "password".into(),
+        operation: Operation::Replace(SecretDraft(Zeroizing::new("synthetic-lost".into()))),
+    })
+    .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while panel.pump(&mut dead) != Pulse::Lost {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the loss went unnoticed"
+        );
+        std::thread::yield_now();
+    }
+    let field = &panel.fields["password"];
+    assert!(
+        !field.pending && !dead.busy(),
+        "nothing waits for the lost answer"
+    );
+    assert!(field.state.is_none() && !field.requested);
+    assert!(field.error.as_ref().is_some_and(|error| error.unknown));
+
+    // The replacement is only asked to read; the write is not repeated.
+    let (asked, jobs) = mpsc::channel();
+    let mut fresh = CredentialWorker::spawn(move |job: Job| {
+        asked
+            .send(matches!(job.operation, Operation::Status))
+            .unwrap();
+        Event {
+            generation: job.generation,
+            slot: job.slot,
+            result: Ok(State::Present),
+        }
+    });
+    let ctx = egui::Context::default();
+    panel_frame(&ctx, &mut panel, &mut fresh, vec![]);
+    assert_eq!(jobs.recv_timeout(Duration::from_secs(5)), Ok(true));
+    assert!(jobs.recv_timeout(Duration::from_millis(50)).is_err());
 }

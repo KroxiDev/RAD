@@ -30,6 +30,7 @@ fn unknown_errors_have_plain_copy_while_technical_code_is_retained() {
     let error = rad_editor::session::Error {
         code: "future_code".into(),
         cause: None,
+        source_change: None,
         unknown: false,
     };
     assert_eq!(

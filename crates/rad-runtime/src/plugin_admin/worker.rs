@@ -9,8 +9,6 @@ pub(super) fn run(
     jobs: mpsc::Receiver<Job>,
     results: mpsc::SyncSender<Reply>,
     wake: Arc<dyn Fn() + Send + Sync>,
-    download: Download,
-    cancel: rad_plugin_manager::Cancellation,
 ) {
     let opened = open_store(&root);
     let boot = opened.as_ref().map_err(|e| *e).and_then(|m| m.installed());
@@ -28,8 +26,8 @@ pub(super) fn run(
             continue;
         };
         let reply = match job {
-            Job::Prepare(request) => {
-                let result = prepare(m, request, &download, &cancel);
+            Job::Prepare { request, package } => {
+                let result = prepare(m, request, package);
                 Reply::Prepared(result.map(Box::new), m.state() == ManagerState::Ready)
             }
             Job::Commit(prepared) => {
@@ -74,25 +72,18 @@ pub(super) fn run(
 fn prepare(
     manager: &mut Manager,
     request: PluginAdmin,
-    download: &Download,
-    cancel: &rad_plugin_manager::Cancellation,
+    package: Option<Vec<u8>>,
 ) -> Result<PreparedChange, Error> {
     let source = request
         .source
         .as_deref()
         .map(rad_plugin_manager::GithubSource::parse)
         .transpose()?;
-    if cancel.is_cancelled() {
-        return Err(Error::Cancelled);
-    }
-    let package = request
-        .source
-        .as_ref()
-        .map(|s| download(s, cancel))
-        .transpose()?;
-    if cancel.is_cancelled() {
-        return Err(Error::Cancelled);
-    }
+    // Only the identity of the confirmed origin matters; the Admin already vetted the request.
+    let replaces = request
+        .replaces_source
+        .as_deref()
+        .and_then(|url| rad_plugin_manager::GithubSource::parse(url).ok());
     let id = request.plugin_id.unwrap_or_default();
     let operation = match request.operation {
         rad_protocol::PluginOperation::Install => Operation::Install,
@@ -101,7 +92,12 @@ fn prepare(
         rad_protocol::PluginOperation::Rollback => Operation::Rollback(id),
         rad_protocol::PluginOperation::Uninstall => Operation::Uninstall(id),
     };
-    manager.prepare_from_source(operation, package.as_deref(), source.as_ref())
+    manager.prepare_from_source(
+        operation,
+        package.as_deref(),
+        source.as_ref(),
+        replaces.as_ref(),
+    )
 }
 
 fn open_store(root: &std::path::Path) -> Result<Manager, Error> {
@@ -203,14 +199,7 @@ mod durability_tests {
         let worker_root = root.clone();
         let worker = std::thread::spawn(move || {
             SYNC.with(|s| *s.borrow_mut() = (true, 0));
-            run(
-                worker_root,
-                jobs,
-                results,
-                Arc::new(|| {}),
-                Box::new(|_, _| panic!("no download on failed boot")),
-                rad_plugin_manager::Cancellation::default(),
-            );
+            run(worker_root, jobs, results, Arc::new(|| {}));
         });
         assert!(matches!(
             replies
@@ -261,14 +250,7 @@ mod prepare_recovery_tests {
         let worker_root = root.clone();
         let worker = std::thread::spawn(move || {
             rad_plugin_manager::fail_next_prepare_after_manifest();
-            run(
-                worker_root,
-                jobs,
-                results,
-                Arc::new(|| {}),
-                Box::new(move |_, _| Ok(package.clone())),
-                rad_plugin_manager::Cancellation::default(),
-            );
+            run(worker_root, jobs, results, Arc::new(|| {}));
         });
         let receive = || {
             replies
@@ -280,13 +262,18 @@ mod prepare_recovery_tests {
             operation: rad_protocol::PluginOperation::Install,
             plugin_id: None,
             source: Some("https://github.com/owner/repo".into()),
+            replaces_source: None,
         };
-        commands.send(Job::Prepare(request.clone())).unwrap();
+        let prepare = || Job::Prepare {
+            request: request.clone(),
+            package: Some(package.clone()),
+        };
+        commands.send(prepare()).unwrap();
         assert!(
             matches!(receive(), Reply::Prepared(Err(Error::Io), true)),
             "failed staging must reconcile on same worker and retain original error"
         );
-        commands.send(Job::Prepare(request)).unwrap();
+        commands.send(prepare()).unwrap();
         let Reply::Prepared(Ok(prepared), _) = receive() else {
             panic!("retry without restart");
         };

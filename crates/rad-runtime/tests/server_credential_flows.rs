@@ -322,6 +322,80 @@ fn await_visual(editor: &mut Client, predicate: impl Fn(&Value) -> bool) -> Valu
     }
 }
 
+// Requests keep arriving while the plugin becomes Ready and completes: none is lost and
+// nothing waits for traffic that never comes.
+#[test]
+fn requests_interleaved_with_ready_and_completion_are_answered_without_further_traffic() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    world("interleaved", |runtime| {
+        let mut editor = connect(&runtime, Endpoint::Editor);
+        ready(&mut editor);
+        call(
+            &mut editor,
+            "credential_replace",
+            json!({"plugin_id":PLUGIN,"slot":"password","secret":"correct"}),
+        );
+        call(
+            &mut editor,
+            "create_button",
+            json!({"folder_id":"f1","position":0,"name":"Auth"}),
+        );
+        call(
+            &mut editor,
+            "add_action",
+            json!({"button_id":"b1","type":format!("{PLUGIN}:authenticate"),"parameters":{"schema_version":1,"values":{}}}),
+        );
+        let stop = Arc::new(AtomicBool::new(false));
+        let noisy: Vec<_> = (0..2)
+            .map(|_| {
+                let (runtime, stop) = (runtime.clone(), stop.clone());
+                std::thread::spawn(move || {
+                    let mut client = connect(&runtime, Endpoint::Editor);
+                    let mut answered = 0;
+                    while !stop.load(Ordering::Acquire) {
+                        call(&mut client, "plugin_status", json!({}));
+                        call(&mut client, "status", json!({}));
+                        answered += 2;
+                    }
+                    answered
+                })
+            })
+            .collect();
+        let options = {
+            let runtime = runtime.clone();
+            std::thread::spawn(move || {
+                let mut client = connect(&runtime, Endpoint::Editor);
+                call(
+                    &mut client,
+                    "options",
+                    json!({"type":format!("{PLUGIN}:authenticate"),"field":"revision","cursor":null,"context":{}}),
+                )
+            })
+        };
+        let run = call(&mut editor, "run", json!({"id":"a1"}));
+        std::thread::sleep(Duration::from_millis(300));
+        stop.store(true, Ordering::Release);
+        for client in noisy {
+            assert!(
+                client.join().unwrap() > 0,
+                "a noisy client was never answered"
+            );
+        }
+        assert_eq!(options.join().unwrap()["availability"], "available");
+        // No client traffic from here on: only the runtime's own wakes can finish the run.
+        std::thread::sleep(Duration::from_secs(1));
+        let result = call(
+            &mut editor,
+            "result",
+            json!({"execution_id":run["execution_id"]}),
+        );
+        assert_eq!(result["state"], "succeeded", "{result}");
+    });
+}
+
 #[test]
 fn leaving_while_waiting_for_credentials_ack_releases_the_transport_credit() {
     world("leaving", |runtime| {

@@ -11,6 +11,11 @@ macro_rules! dto {
     }
 }
 dto!(Empty {});
+// What this machine is set to do (ADR 0005, 0006); never part of a copy of the configuration.
+dto!(MachineSettingsView {
+    use_stream_deck: bool,
+    start_with_session: bool
+});
 dto!(Applied {
     changed: bool,
     revision: String
@@ -53,7 +58,8 @@ dto!(StatusView {
     #[serde(default,skip_serializing_if="Option::is_none")] global_permissions: Option<Permissions>,
     #[serde(default,skip_serializing_if="Option::is_none")] history_operations: Option<usize>,
     #[serde(default,skip_serializing_if="Option::is_none")] deck_state: Option<DeckState>,
-    #[serde(default,skip_serializing_if="Option::is_none")] recovered_previous: Option<bool>
+    #[serde(default,skip_serializing_if="Option::is_none")] recovered_previous: Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] previous_exit: Option<PreviousExit>
 });
 dto!(EntityPage { items: Vec<EntityView>, next_cursor: Option<String>, view_revision: String });
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -257,6 +263,9 @@ pub enum ResponseData {
     PluginManifest(PluginManifestView),
     PluginSettings(PluginSettingsView),
     PluginLog(PluginLogView),
+    RuntimeLog(RuntimeLogView),
+    Recovery(RecoveryView),
+    MachineSettings(MachineSettingsView),
     Catalog(CatalogPage),
     Configuration(ConfigurationPage),
     Dependencies(DependenciesPage),
@@ -321,6 +330,11 @@ impl ResponseData {
             Operation::PluginManifest => decode!(PluginManifest),
             Operation::PluginSettings => decode!(PluginSettings),
             Operation::PluginLog => decode!(PluginLog),
+            Operation::RuntimeLog => decode!(RuntimeLog),
+            Operation::Recovery => decode!(Recovery),
+            Operation::MachineSettings | Operation::SetMachineSettings => {
+                decode!(MachineSettings)
+            }
             Operation::PluginConfiguration => decode!(Configuration),
             Operation::PluginDependencies => decode!(Dependencies),
             Operation::Options => {

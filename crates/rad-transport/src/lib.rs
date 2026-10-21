@@ -83,6 +83,33 @@ struct Connection {
     close_after_flush: bool,
     frame_started: Option<u64>,
 }
+/// How long a listener rests after running out of descriptors or memory before `accept`
+/// is tried again: the queued peers wait instead of the loop spinning on the error.
+const ACCEPT_RETRY_MS: u64 = 100;
+/// What a failed `accept` says about who is at fault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcceptFault {
+    /// The one connection went away or was never complete: skip it and keep accepting.
+    Peer,
+    /// The process is out of descriptors or memory: stop, and try again after
+    /// `ACCEPT_RETRY_MS`.
+    Exhausted,
+    /// The listener itself is unusable, which nothing but a restart repairs.
+    Listener,
+}
+fn accept_fault(error: &io::Error) -> AcceptFault {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset
+    ) {
+        return AcceptFault::Peer;
+    }
+    match error.raw_os_error() {
+        Some(libc::EPROTO) => AcceptFault::Peer,
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM) => AcceptFault::Exhausted,
+        _ => AcceptFault::Listener,
+    }
+}
 pub struct Transport {
     editor: UnixListener,
     automation: UnixListener,
@@ -96,8 +123,11 @@ pub struct Transport {
     now: u64,
     session: u128,
     listeners_ready: [bool; 2],
+    /// When a listener that ran out of descriptors or memory is tried again.
+    accept_retry: [Option<u64>; 2],
     /// A worker-owned source (token `usize::MAX`) fired during the poll inside `drive`.
     worker_edge: bool,
+    connection_failures: u64,
 }
 impl Transport {
     /// Creates private endpoints; no environment lookup, fallback or session generation.
@@ -128,7 +158,9 @@ impl Transport {
             now: 0,
             session,
             listeners_ready: [false; 2],
+            accept_retry: [None; 2],
             worker_edge: false,
+            connection_failures: 0,
         })
     }
     /// Deadline-first, bounded I/O turn. Invalid time leaves state and I/O untouched.
@@ -159,6 +191,10 @@ impl Transport {
         self.expire_queued();
         self.poll_edges(Duration::ZERO)?;
         for index in 0..2 {
+            if self.accept_retry[index].is_some_and(|retry| retry <= now) {
+                self.accept_retry[index] = None;
+                self.listeners_ready[index] = true;
+            }
             if self.listeners_ready[index] {
                 self.accept_connections(if index == 0 {
                     Origin::Editor
@@ -179,12 +215,23 @@ impl Transport {
         Ok(())
     }
     fn accept_connections(&mut self, origin: Origin) -> Result<(), TransportError> {
-        let listener = if origin == Origin::Editor {
-            &mut self.editor
-        } else {
-            &mut self.automation
-        };
+        self.accept_with(origin, &mut |registry, stream, token| {
+            registry.register(stream, token, Interest::READABLE | Interest::WRITABLE)
+        })
+    }
+    /// `register` is the seam for a connection that cannot be watched: production always
+    /// registers the stream with the poller.
+    fn accept_with(
+        &mut self,
+        origin: Origin,
+        register: &mut dyn FnMut(&mio::Registry, &mut UnixStream, Token) -> io::Result<()>,
+    ) -> Result<(), TransportError> {
         for _ in 0..16 {
+            let listener = if origin == Origin::Editor {
+                &mut self.editor
+            } else {
+                &mut self.automation
+            };
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     if self.connections.len() >= 8
@@ -208,14 +255,14 @@ impl Transport {
                         .next
                         .checked_add(1)
                         .ok_or(TransportError::TimeOverflow)?;
-                    self.poll
-                        .registry()
-                        .register(
-                            &mut stream,
-                            Token(usize::try_from(id).map_err(|_| TransportError::TimeOverflow)?),
-                            Interest::READABLE | Interest::WRITABLE,
-                        )
-                        .map_err(|_| TransportError::Io)?;
+                    let token =
+                        Token(usize::try_from(id).map_err(|_| TransportError::TimeOverflow)?);
+                    if register(self.poll.registry(), &mut stream, token).is_err() {
+                        // This one connection cannot be watched: closing it (the stream is
+                        // dropped) costs that peer a retry and nobody else anything.
+                        self.connection_failures += 1;
+                        continue;
+                    }
                     self.connections.insert(
                         id,
                         Connection {
@@ -241,10 +288,36 @@ impl Transport {
                     break;
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(_) => return Err(TransportError::Io),
+                Err(e) => {
+                    let index = if origin == Origin::Editor { 0 } else { 1 };
+                    if self.accept_fault(index, accept_fault(&e))? {
+                        break;
+                    }
+                }
             }
         }
         Ok(())
+    }
+    /// Counts a failed `accept` on listener `index`; `true` when accepting must stop now.
+    fn accept_fault(&mut self, index: usize, fault: AcceptFault) -> Result<bool, TransportError> {
+        self.connection_failures += 1;
+        match fault {
+            AcceptFault::Peer => Ok(false),
+            AcceptFault::Exhausted => {
+                // The queued peers stay queued. No new edge comes for them, so a deadline
+                // brings the listener back instead of a readiness that would spin.
+                self.listeners_ready[index] = false;
+                self.accept_retry[index] = Some(self.now.saturating_add(ACCEPT_RETRY_MS));
+                Ok(true)
+            }
+            AcceptFault::Listener => Err(TransportError::Io),
+        }
+    }
+    /// Connections that could not be taken in since the last call, and so were closed (or
+    /// left waiting in the listener's queue). One of them is never a reason to stop serving
+    /// the others; the owner counts them.
+    pub fn take_connection_failures(&mut self) -> u64 {
+        std::mem::take(&mut self.connection_failures)
     }
     fn read(&mut self, id: u64, c: &mut Connection) -> bool {
         for _ in 0..16 {
@@ -515,6 +588,9 @@ impl Transport {
         };
         if self.listeners_ready.iter().any(|r| *r) {
             include(self.now);
+        }
+        for retry in self.accept_retry.iter().flatten() {
+            include(*retry);
         }
         for c in self.connections.values() {
             if (c.readable && !c.close_after_flush)

@@ -10,6 +10,7 @@ rad-core = { path = "../rad-core" }
 rad-codec = { path = "../rad-codec" }
 rad-media = { path = "../rad-media" }
 sha2 = "=0.10.9"
+libc = "=0.2.190"
 
 [dev-dependencies]
 image = { version = "=0.25.10", default-features = false, features = ["png"] }

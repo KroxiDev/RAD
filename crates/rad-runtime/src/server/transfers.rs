@@ -4,7 +4,10 @@ use crate::{
     transfers::{Context, Kind, Operation, Output},
 };
 use rad_authority::{Command, ExportLease};
-use rad_core::identity::ShortId;
+use rad_core::{
+    configuration::{Candidate, ConfigurationError},
+    identity::ShortId,
+};
 
 pub(super) struct Flight {
     job: JobId,
@@ -75,6 +78,30 @@ impl Server {
             }
         }
     }
+    /// Starts an export from its pinned lease and the snapshot made from it. A snapshot that
+    /// cannot be made fails this export only: the lease goes back and the client is told.
+    pub(super) fn export_begin(
+        &mut self,
+        c: IncomingContext,
+        size: Option<u64>,
+        lease: ExportLease,
+        snapshot: Result<Candidate, ConfigurationError>,
+    ) -> Result<(Operation, FlightKind), Box<Response>> {
+        let Ok(snapshot) = snapshot else {
+            self.actor.release_export(lease);
+            self.events.record(EventCode::ExportFailed, None);
+            return Err(Box::new(self.error(c, "resource_exhausted", true)));
+        };
+        Ok((
+            Operation::Begin {
+                kind: Kind::Export,
+                size,
+                export_revision: Some(lease.revision()),
+                export_snapshot: Some(snapshot),
+            },
+            FlightKind::Export(lease),
+        ))
+    }
     pub(super) fn transfer_external(
         &mut self,
         key: RequestKey,
@@ -99,24 +126,17 @@ impl Server {
                             return self.respond(key, self.error(c, "resource_exhausted", true));
                         }
                     };
-                    (
-                        Operation::Begin {
-                            kind,
-                            size,
-                            export_revision: Some(lease.revision()),
-                            export_snapshot: Some(
-                                crate::transfers::export_snapshot(
-                                    lease.snapshot(),
-                                    self.plugin_admin
-                                        .as_ref()
-                                        .map(|admin| admin.export_dependencies())
-                                        .unwrap_or_default(),
-                                )
-                                .map_err(|_| RuntimeError::Protocol)?,
-                            ),
-                        },
-                        FlightKind::Export(lease),
-                    )
+                    let snapshot = crate::transfers::export_snapshot(
+                        lease.snapshot(),
+                        self.plugin_admin
+                            .as_ref()
+                            .map(|admin| admin.export_dependencies())
+                            .unwrap_or_default(),
+                    );
+                    match self.export_begin(c, size, lease, snapshot) {
+                        Ok(begun) => begun,
+                        Err(response) => return self.respond(key, *response),
+                    }
                 } else {
                     (
                         Operation::Begin {
@@ -313,12 +333,8 @@ impl Server {
                     self.actor.release_export(lease);
                 }
                 if let Some((key, c)) = flight.target {
-                    let mut response = self.error(c, code(error), mutation);
-                    if error == crate::transfers::Error::DocumentLimit
-                        && let Some(error) = response.error.as_mut()
-                    {
-                        error.details = json!({"cause":"document_limit"});
-                    }
+                    let response =
+                        self.error_with_details(c, error.wire_code(), error.details(), mutation);
                     return self.respond(key, response);
                 }
                 return Ok(());
@@ -335,62 +351,22 @@ impl Server {
         let Some((key, c)) = flight.target else {
             return Ok(());
         };
-        use rad_api::{
-            Empty, ExportReady, ImagePrepared, PluginVersion, ResponseData as D, RestorePlugin,
-            RestorePrepared, RestoreSummary, Transfer, TransferChunk,
-        };
+        use rad_api::{ResponseData as D, TransferChunk};
         let data = match output {
             Output::Begun { transfer_id } => {
                 if let FlightKind::Export(lease) = kind {
                     self.exports
                         .insert(transfer_id.clone(), (c.connection, lease));
                 }
-                D::Transfer(Transfer { transfer_id })
+                D::Transfer(rad_api::Transfer { transfer_id })
             }
-            Output::Written | Output::Dropped => D::Empty(Empty {}),
             Output::ImagePrepared { media_ref } => {
                 if let FlightKind::Finish(token) = kind {
                     self.prepared
                         .insert((c.connection, media_ref.clone()), token);
                 }
-                D::ImagePrepared(ImagePrepared { media_ref })
+                D::ImagePrepared(rad_api::ImagePrepared { media_ref })
             }
-            Output::RestorePrepared {
-                transfer_id,
-                summary,
-            } => {
-                let plugins: Vec<_> = summary
-                    .plugins
-                    .iter()
-                    .map(|p| RestorePlugin {
-                        id: p.id.clone(),
-                        version: p.version.map(|v| PluginVersion {
-                            major: v.major,
-                            minor: v.minor,
-                            patch: v.patch,
-                        }),
-                        origin: p.origin.clone(),
-                    })
-                    .collect();
-                let complete = plugins.len() <= 32
-                    && serde_json::to_vec(&plugins).is_ok_and(|bytes| bytes.len() <= 32 * 1024);
-                D::RestorePrepared(RestorePrepared {
-                    transfer_id,
-                    summary: RestoreSummary {
-                        entities: summary.entities,
-                        media_count: summary.media_count,
-                        media_bytes: summary.media_bytes,
-                        document_bytes: summary.document_bytes as u64,
-                        plugins_count: plugins.len(),
-                        plugins_complete: complete,
-                        plugins: if complete { plugins } else { vec![] },
-                    },
-                })
-            }
-            Output::ExportReady { transfer_id, size } => D::ExportReady(ExportReady {
-                transfer_id,
-                size: size.to_string(),
-            }),
             Output::Chunk { bytes, eof } => {
                 if let FlightKind::Reply {
                     media: Some((id, ref media_ref)),
@@ -430,7 +406,7 @@ impl Server {
                 };
                 return self.submit_command(key, c, command, Some(transfer_id));
             }
-            _ => return Err(RuntimeError::Storage),
+            other => other.into_data().ok_or(RuntimeError::Storage)?,
         };
         self.respond(
             key,
@@ -513,18 +489,6 @@ impl Server {
                 _ => None,
             })
             .collect()
-    }
-}
-fn code(e: crate::transfers::Error) -> &'static str {
-    use crate::transfers::Error::*;
-    match e {
-        NotAllowed => "permission_denied",
-        NotFound => "not_found",
-        Capacity | Busy | DocumentLimit => "resource_exhausted",
-        Expired => "deadline_exceeded",
-        Io => "storage_error",
-        UnsupportedVersion => "unsupported_version",
-        Invalid | ConfirmationRequired => "invalid_request",
     }
 }
 fn encode(bytes: &[u8]) -> String {

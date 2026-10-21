@@ -9,6 +9,8 @@ pub struct PluginAdmin {
     pub operation: PluginOperation,
     pub plugin_id: Option<String>,
     pub source: Option<String>,
+    /// The registered origin the user saw and agreed to replace with `source`.
+    pub replaces_source: Option<String>,
 }
 impl std::fmt::Debug for PluginAdmin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -107,6 +109,7 @@ pub(super) fn admin(c: IncomingContext, request: &rad_api::Request) -> Checked<P
         plugin_id,
         source,
         trusted,
+        replaces_source,
     } = request
     else {
         return Err("invalid_request");
@@ -127,6 +130,15 @@ pub(super) fn admin(c: IncomingContext, request: &rad_api::Request) -> Checked<P
         }
         None
     };
+    // Only a change of an installed plugin has a registered origin to replace.
+    if replaces_source.is_some()
+        && !matches!(
+            operation,
+            PluginOperation::Update | PluginOperation::Reinstall
+        )
+    {
+        return Err("invalid_request");
+    }
     let plugin_id = if operation != PluginOperation::Install {
         Some(plugin_id.clone().ok_or("invalid_request")?)
     } else {
@@ -136,6 +148,7 @@ pub(super) fn admin(c: IncomingContext, request: &rad_api::Request) -> Checked<P
         operation,
         plugin_id,
         source,
+        replaces_source: replaces_source.clone(),
     })
 }
 pub(super) fn catalog(a: &Authority, c: IncomingContext, cursor: Option<&str>) -> Checked<Value> {

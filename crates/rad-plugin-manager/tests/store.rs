@@ -469,6 +469,7 @@ fn confirmed_source_is_normalized_and_survives_reopen_and_rollback() {
                 Operation::Install,
                 Some(&support::package(1)),
                 Some(&source),
+                None,
             )
             .unwrap(),
     );
@@ -502,4 +503,146 @@ fn confirmed_source_is_normalized_and_survives_reopen_and_rollback() {
         manager.installed().unwrap()[0].source.as_deref(),
         Some("https://github.com/owner/repo")
     );
+}
+
+fn source(url: &str) -> rad_plugin_manager::GithubSource {
+    rad_plugin_manager::GithubSource::parse(url).unwrap()
+}
+
+#[test]
+fn source_identity_is_owner_and_repository_without_case_tag_or_git_suffix() {
+    let registered = source("https://github.com/Owner/Repo");
+    for same in [
+        "https://github.com/owner/repo",
+        "https://github.com/OWNER/REPO.git",
+        "https://github.com/owner/repo/releases/latest",
+        "https://github.com/owner/repo/releases/tag/v9",
+    ] {
+        assert!(registered.same_origin(&source(same)), "{same}");
+        assert!(source(same).same_origin(&registered), "{same}");
+    }
+    for other in [
+        "https://github.com/owner/other",
+        "https://github.com/other/repo",
+        "https://github.com/owner/repo-extra",
+        "https://github.com/owner-x/repo",
+    ] {
+        assert!(!registered.same_origin(&source(other)), "{other}");
+    }
+}
+
+fn installed_from(dir: &Directory, origin: Option<&str>) -> Manager {
+    use rad_plugin_manager::Operation;
+    let mut manager = Manager::create(&dir.0, 1, TARGET).unwrap();
+    let origin = origin.map(source);
+    let mut p = Some(
+        manager
+            .prepare_from_source(
+                Operation::Install,
+                Some(&support::package(1)),
+                origin.as_ref(),
+                None,
+            )
+            .unwrap(),
+    );
+    manager.commit(&mut p).unwrap();
+    manager
+}
+
+fn files(dir: &Directory) -> Vec<String> {
+    let mut names: Vec<_> = std::fs::read_dir(&dir.0)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn another_repository_needs_confirmation_of_the_registered_origin_and_writes_nothing_without_it() {
+    use rad_plugin_manager::{Error, Operation};
+    let id = "org.rad.fixture".to_string();
+    for operation in [
+        Operation::Update(id.clone()),
+        Operation::Reinstall(id.clone()),
+    ] {
+        let dir = Directory::new();
+        let mut manager = installed_from(&dir, Some("https://github.com/owner/repo"));
+        let before = files(&dir);
+        let other = source("https://github.com/other/repo/releases/tag/v2");
+        let package = support::package(2);
+        for replaces in [None, Some(source("https://github.com/third/repo"))] {
+            let result = manager.prepare_from_source(
+                operation.clone(),
+                Some(&package),
+                Some(&other),
+                replaces.as_ref(),
+            );
+            assert_eq!(result.err(), Some(Error::SourceChanged));
+            assert_eq!(manager.state(), ManagerState::Ready);
+            assert_eq!(files(&dir), before, "a refused change writes nothing");
+            assert_eq!(
+                manager.installed().unwrap()[0].source.as_deref(),
+                Some("https://github.com/owner/repo")
+            );
+        }
+        let confirmed = source("https://github.com/OWNER/Repo.git");
+        let mut p = Some(
+            manager
+                .prepare_from_source(operation, Some(&package), Some(&other), Some(&confirmed))
+                .unwrap(),
+        );
+        manager.commit(&mut p).unwrap();
+        assert_eq!(
+            manager.installed().unwrap()[0].source.as_deref(),
+            Some("https://github.com/other/repo/releases/tag/v2")
+        );
+    }
+}
+
+#[test]
+fn same_repository_or_no_registered_origin_needs_no_confirmation() {
+    use rad_plugin_manager::Operation;
+    let id = "org.rad.fixture".to_string();
+    for (registered, requested, expected) in [
+        (
+            Some("https://github.com/owner/repo"),
+            "https://github.com/owner/repo/releases/tag/v2",
+            "https://github.com/owner/repo/releases/tag/v2",
+        ),
+        (
+            Some("https://github.com/owner/repo"),
+            "https://github.com/OWNER/REPO.git",
+            "https://github.com/OWNER/REPO",
+        ),
+        (
+            None,
+            "https://github.com/other/repo",
+            "https://github.com/other/repo",
+        ),
+    ] {
+        for operation in [
+            Operation::Update(id.clone()),
+            Operation::Reinstall(id.clone()),
+        ] {
+            let dir = Directory::new();
+            let mut manager = installed_from(&dir, registered);
+            let requested = source(requested);
+            let mut p = Some(
+                manager
+                    .prepare_from_source(
+                        operation,
+                        Some(&support::package(2)),
+                        Some(&requested),
+                        None,
+                    )
+                    .unwrap(),
+            );
+            manager.commit(&mut p).unwrap();
+            assert_eq!(
+                manager.installed().unwrap()[0].source.as_deref(),
+                Some(expected)
+            );
+        }
+    }
 }

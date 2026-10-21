@@ -48,6 +48,8 @@ fn definition(id: &str) -> Definition {
                         "late",
                         "flood",
                         "environment",
+                        "child",
+                        "child_exit",
                     ]
                     .map(String::from)
                     .to_vec(),
@@ -402,11 +404,25 @@ fn timeout_retains_residual_until_late_reply_without_killing_healthy_plugin() {
         host.last_diagnostic("org.rad.fixture"),
         Some(rad_plugin_host::Diagnostic::Deadline)
     );
-    assert_eq!(host.take_completion().unwrap().0, old);
+    // The deadline is reported once, as a timeout and not as a failure.
+    assert_eq!(
+        host.take_completion(),
+        Some((
+            old,
+            Outcome::Failure {
+                code: FailureCode::TimedOut
+            }
+        ))
+    );
+    assert!(host.take_completion().is_none());
     assert_eq!(host.resources(), (1, 1));
     assert!(
         !host.idle("org.rad.fixture"),
         "timed-out action retains demand until late reply"
+    );
+    assert_eq!(
+        host.remove("org.rad.fixture"),
+        Err(rad_plugin_host::Error::Residual)
     );
     let new = host
         .invoke("org.rad.fixture", g, "run", parameters("echo"), 1000)
@@ -422,7 +438,53 @@ fn timeout_retains_residual_until_late_reply_without_killing_healthy_plugin() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(host.resources(), (1, 0));
+    // The late reply was drained: no second report and nothing left to wait for.
+    assert!(host.take_completion().is_none());
+    assert!(host.idle("org.rad.fixture"));
     stop(&mut host, 10);
+}
+
+#[test]
+fn reap_of_a_reported_timeout_releases_the_residual_without_a_second_completion() {
+    let mut host = Host::default();
+    let g = host
+        .activate(
+            Command::new(env!("CARGO_BIN_EXE_rad-plugin-fixture-v1")),
+            manifest(1),
+            0,
+        )
+        .unwrap();
+    until(&mut host, |h| {
+        h.state("org.rad.fixture") == Some(State::Ready)
+    });
+    let key = host
+        .invoke("org.rad.fixture", g, "run", parameters("slow"), 10)
+        .unwrap();
+    host.pump(0).unwrap();
+    host.pump(10).unwrap();
+    assert_eq!(
+        host.take_completion(),
+        Some((
+            key,
+            Outcome::Failure {
+                code: FailureCode::TimedOut
+            }
+        ))
+    );
+    assert_eq!(host.resources(), (1, 1));
+    let pid = host.process_id("org.rad.fixture").unwrap();
+    // SAFETY: plain signal to the fixture child this test just spawned.
+    assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGKILL) }, 0);
+    let end = Instant::now() + Duration::from_secs(3);
+    while host.resources().0 != 0 {
+        assert!(Instant::now() < end, "fixture watchdog");
+        host.pump(10).unwrap();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(host.take_completion().is_none());
+    assert_eq!(host.resources(), (0, 0));
+    assert!(host.idle("org.rad.fixture"));
+    host.remove("org.rad.fixture").unwrap();
 }
 
 #[test]
@@ -592,4 +654,103 @@ fn ordinary_retirement_reaps_before_releasing_without_crash_diagnostic() {
         "ordinary demand removal is not a crash"
     );
     host.remove("org.rad.fixture").unwrap();
+}
+
+/// Pid written by the fixture's descendant modes, killed on drop so a failing test leaks nothing.
+struct Descendant {
+    dir: std::path::PathBuf,
+    pid: Option<i32>,
+}
+impl Descendant {
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("rad-host-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self { dir, pid: None }
+    }
+    fn command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rad-plugin-fixture-v1"));
+        command.env("XDG_RUNTIME_DIR", &self.dir);
+        command
+    }
+    fn wait_for_pid(&mut self, host: &mut Host) -> i32 {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            // The fixture may still be writing the file: an unparsable read is retried.
+            if let Some(pid) = std::fs::read_to_string(self.dir.join("descendant.pid"))
+                .ok()
+                .and_then(|text| text.parse().ok())
+            {
+                self.pid = Some(pid);
+                return pid;
+            }
+            assert!(Instant::now() < deadline, "descendant never started");
+            host.pump(0).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+impl Drop for Descendant {
+    fn drop(&mut self) {
+        if let Some(pid) = self.pid {
+            // SAFETY: plain signal to a pid this test started; failure only means it is gone.
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+/// Dead means gone or an unreaped zombie (the test, not the Host, may be its parent's heir).
+fn is_dead(pid: i32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Err(_) => true,
+        Ok(stat) => stat
+            .rsplit_once(')')
+            .is_some_and(|(_, rest)| rest.trim_start().starts_with('Z')),
+    }
+}
+fn assert_dies(pid: i32, why: &str) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !is_dead(pid) {
+        assert!(
+            Instant::now() < deadline,
+            "{why}: descendant {pid} survived"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+fn start_with_descendant(name: &str, mode: &str) -> (Host, Descendant, i32) {
+    let mut descendant = Descendant::new(name);
+    let mut host = Host::default();
+    let g = host.activate(descendant.command(), manifest(1), 0).unwrap();
+    until(&mut host, |h| {
+        h.state("org.rad.fixture") == Some(State::Ready)
+    });
+    host.invoke("org.rad.fixture", g, "run", parameters(mode), 5000)
+        .unwrap();
+    let pid = descendant.wait_for_pid(&mut host);
+    (host, descendant, pid)
+}
+#[test]
+fn retiring_a_plugin_kills_the_processes_it_started() {
+    let (mut host, _descendant, pid) = start_with_descendant("retire", "child");
+    assert!(!is_dead(pid));
+    host.retire("org.rad.fixture");
+    until(&mut host, |h| {
+        h.state("org.rad.fixture") == Some(State::Reaped)
+    });
+    assert_dies(pid, "retire");
+}
+#[test]
+fn a_plugin_exiting_by_itself_does_not_leave_its_descendants() {
+    let (mut host, _descendant, pid) = start_with_descendant("exit", "child_exit");
+    until(&mut host, |h| {
+        h.state("org.rad.fixture") == Some(State::Reaped)
+    });
+    assert_dies(pid, "plugin exit");
+}
+#[test]
+fn dropping_the_host_kills_the_processes_its_plugins_started() {
+    let (host, _descendant, pid) = start_with_descendant("drop", "child");
+    assert!(!is_dead(pid));
+    drop(host);
+    assert_dies(pid, "host drop");
 }

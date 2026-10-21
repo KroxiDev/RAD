@@ -36,3 +36,6 @@ required-features = ["fixture-tests"]
 [[test]]
 name = "credentials"
 required-features = ["fixture-tests"]
+[[test]]
+name = "parent_death"
+required-features = ["fixture-tests"]

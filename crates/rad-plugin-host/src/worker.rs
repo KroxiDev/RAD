@@ -61,7 +61,9 @@ fn answer<T>(table: &mut Table<T>, request: u64, now: u64, value: T) -> bool {
         false
     }
 }
-/// Report every request past its deadline as `value`; its reply may still arrive later.
+/// Report every request past its deadline as `value`, once. The request stays as a
+/// residual (counted, holding its credential revision) until its late reply is drained
+/// or `settle` runs; neither reports it again.
 fn expire<T: Clone>(table: &mut Table<T>, now: u64, value: T) -> bool {
     let mut expired = false;
     for p in table.values_mut() {
@@ -162,13 +164,27 @@ fn configure_command(command: &mut Command, id: &str) {
             value.map(|value| (key, value))
         })
         .collect();
-    command.env_clear().envs(allowed).arg0(id);
+    // The plugin leads its own process group (pgid == pid), so the Host can kill
+    // everything the plugin started with one `kill(-pid)`.
+    command.env_clear().envs(allowed).arg0(id).process_group(0);
+    let parent = std::process::id();
     // The runtime blocks its shutdown signals before spawning threads; a plugin
     // inheriting that mask could only be stopped with SIGKILL.
-    // SAFETY: the post-fork closure uses only async-signal-safe libc signal
-    // operations and constructs an OS error without allocation on failure.
+    // SAFETY: the post-fork closure uses only async-signal-safe libc operations
+    // (sigprocmask, prctl, getppid) and constructs an OS error without allocation
+    // on failure.
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
+            // Linux death signal, a backstop for a runtime that dies without cleanup.
+            // It fires when the *thread* that spawned the plugin exits, and it is not
+            // inherited by forks, so group kill remains the primary mechanism. The
+            // parent check closes the race where the runtime died before the prctl.
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() as u32 != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
             let mut signals = std::mem::zeroed::<libc::sigset_t>();
             libc::sigemptyset(&mut signals);
             libc::sigaddset(&mut signals, libc::SIGINT);
@@ -179,6 +195,44 @@ fn configure_command(command: &mut Command, id: &str) {
             Ok(())
         });
     }
+}
+/// Whether the plugin process (the group leader) has terminated, reaped or not.
+/// An unexpected `waitid` error counts as exited so the caller falls back to `try_wait`.
+fn leader_exited(child: &Child) -> bool {
+    // SAFETY: zeroed siginfo_t is a valid out-parameter; WNOWAIT leaves the child unreaped.
+    unsafe {
+        let mut info = std::mem::zeroed::<libc::siginfo_t>();
+        let r = libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        );
+        r != 0 || info.si_pid() != 0
+    }
+}
+/// SIGKILL the plugin's whole process group, then the leader itself (which covers a
+/// leader that moved to another group). The group is only signalled while the leader
+/// is unreaped: a zombie leader's pid cannot be reused, so `-pid` cannot hit a stranger.
+/// A descendant that left the group (setsid/setpgid) is out of reach until the service
+/// stops and systemd empties the cgroup (ADR 0013); the Host neither adopts nor reaps
+/// grandchildren, whoever inherits them does.
+fn kill_group(child: &mut Child) {
+    // SAFETY: zeroed siginfo_t is a valid out-parameter; WNOWAIT leaves the child unreaped.
+    let unreaped = unsafe {
+        let mut info = std::mem::zeroed::<libc::siginfo_t>();
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        ) == 0
+    };
+    if unreaped {
+        // SAFETY: plain signal to the group this Host created for the child.
+        unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+    }
+    let _ = child.kill();
 }
 fn process_exit(pid: u32) -> Option<OwnedFd> {
     // SAFETY: caller retains this unreaped child; syscall returns a new owned fd.
@@ -231,6 +285,9 @@ impl Worker {
             diagnostics: VecDeque::new(),
         }
     }
+    /// Spawns the plugin as leader of its own process group, with `PR_SET_PDEATHSIG`
+    /// SIGKILL. The death signal fires when the *calling thread* exits, so call this
+    /// from a thread that lives as long as the plugins it launches.
     pub fn spawn(
         command: Command,
         manifest: Manifest,
@@ -456,7 +513,7 @@ impl Worker {
             p.residual = true;
         }
         if let Some(child) = &mut self.child {
-            let _ = child.kill();
+            kill_group(child);
         }
     }
     fn receive(&mut self, envelope: Envelope, now: u64) {
@@ -614,10 +671,10 @@ impl Worker {
         if self.state == State::Ready && self.credential_deadline().is_some_and(|d| now >= d) {
             self.fail(Diagnostic::Deadline);
         }
-        let failed = Outcome::Failure {
-            code: FailureCode::Failed,
+        let timed_out = Outcome::Failure {
+            code: FailureCode::TimedOut,
         };
-        if expire(&mut self.pending, now, failed) {
+        if expire(&mut self.pending, now, timed_out) {
             self.record(Diagnostic::Deadline);
         }
         // A late list is harmless: unlike a late action it records nothing and never kills.
@@ -729,8 +786,14 @@ impl Worker {
         // Only unavailable pidfd monitoring uses a bounded exceptional reap retry.
         self.reap_retry =
             (self.child.is_some() && self.exit.is_none()).then_some(now.saturating_add(100));
+        // Kill the group before reaping the leader: while it is a zombie its pid is not
+        // reusable, so what the plugin left behind dies even if it exited by itself.
         if let Some(child) = &mut self.child
-            && matches!(child.try_wait(), Ok(Some(_)))
+            && leader_exited(child)
+            && {
+                kill_group(child);
+                matches!(child.try_wait(), Ok(Some(_)))
+            }
         {
             self.fail(Diagnostic::Exited);
             self.child.take();
@@ -793,7 +856,7 @@ impl Drop for Worker {
             bytes.zeroize();
         }
         if let Some(child) = &mut self.child {
-            let _ = child.kill();
+            kill_group(child);
             let _ = child.try_wait();
         }
     }
@@ -1146,7 +1209,19 @@ mod credential_tests {
         w.queries
             .insert(101, Pending::with_credentials(10, Some(1)));
         host.pump(10).unwrap();
-        host.take_completion();
+        assert_eq!(
+            host.take_completion(),
+            Some((
+                Correlation {
+                    generation: 1,
+                    request: 100
+                },
+                Outcome::Failure {
+                    code: FailureCode::TimedOut
+                }
+            ))
+        );
+        assert!(host.take_completion().is_none());
         host.take_options();
         assert_eq!(host.release_credentials(&id, 1, 1), Err(Error::Residual));
         reply(
@@ -1161,6 +1236,7 @@ mod credential_tests {
             11,
         );
         assert_eq!(host.release_credentials(&id, 1, 1), Err(Error::Residual));
+        assert!(host.take_completion().is_none(), "drained, not reported");
         reply(
             &mut host,
             Correlation {
@@ -1173,6 +1249,21 @@ mod credential_tests {
             11,
         );
         assert!(host.release_credentials(&id, 1, 1).is_ok());
+    }
+    #[test]
+    fn reaping_forgets_a_reported_timeout_and_frees_its_credential_revision() {
+        let mut table: Table = Table::new();
+        table.insert(1, Pending::with_credentials(10, Some(1)));
+        assert!(expire(&mut table, 10, Outcome::Success));
+        assert_eq!(take(&mut table), Some((1, Outcome::Success)));
+        assert!(table[&1].residual && table[&1].credential_revision == Some(1));
+        settle(
+            &mut table,
+            Outcome::Failure {
+                code: FailureCode::Failed,
+            },
+        );
+        assert!(table.is_empty(), "no second report, nothing retained");
     }
     #[test]
     fn install_and_release_deadlines_are_scheduled_and_revision_storage_is_bounded() {

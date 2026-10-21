@@ -1,19 +1,36 @@
-# Example USER unit; not installed/enabled by this repository.
-# Install the runtime and rad-launcher-helper beside one another at this path.
-# Default: NO physical device. For explicit human opt-in ONLY, after closing
-# StreamController and disabling its auto-restart, override ExecStart to append
-# --xl-exclusive. Do not enable both controllers or infer exclusive handoff.
+# USER unit that the RAD editor installs and starts (ADR 0012). The editor writes it to
+# $XDG_CONFIG_HOME/systemd/user/ and sets ExecStart= to the rad-runtime beside the editor;
+# it rewrites the file when a new version of RAD changes this template, so edit nothing here.
+# Using the physical device is a setting of the machine, changed from the editor
+# ("Use the Stream Deck with RAD"); nothing about it belongs in this unit.
 [Unit]
 Description=RAD local action deck authority
+# Restart without loops (ADR 0011): at most 5 starts in 5 minutes, then the unit stays
+# failed and the Editor says so. These two belong to [Unit], not [Service].
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/rad-runtime
-# Signal only the authority: it drains accepted work and reaps its helper.
-# Applications launched by GIO are not shutdown targets.
-KillMode=process
+# SIGTERM goes only to the authority, which drains accepted work and shuts down
+# in order. Afterwards systemd kills whatever remains in the service cgroup:
+# plugins and their daemonized descendants, also after a crash. Applications
+# launched from the deck are not in that cgroup: the launcher helper moves each
+# one to its own transient scope (app-rad-*.scope), as GNOME and KDE do.
+# Without systemd's user manager the applications stay in this cgroup.
+KillMode=mixed
 KillSignal=SIGTERM
-Restart=no
+# Restart after unexpected exits (code 1, a panic, a signal), never after a clean stop
+# (0) or a blocking condition (75: another instance, an unusable socket or runtime
+# directory, an invalid environment), which a restart cannot fix. Classes: exit.rs.
+Restart=on-failure
+RestartPreventExitStatus=75
+# The wait grows from RestartSec to RestartMaxDelaySec in RestartSteps steps. Versions
+# of systemd before 254 ignore the last two and wait RestartSec every time.
+RestartSec=1
+RestartSteps=4
+RestartMaxDelaySec=30
 TimeoutStopSec=30
 
 [Install]

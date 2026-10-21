@@ -1,7 +1,7 @@
 //! Client projections and coalesced invalidations; no state authority lives here.
 use super::*;
 use rad_api::{
-    DeckState, Notice, NoticeKind, OverviewView, PluginAttention, PluginAttentionCode, RestartState,
+    Notice, NoticeKind, OverviewView, PluginAttention, PluginAttentionCode, RestartState,
 };
 
 #[derive(Default)]
@@ -14,7 +14,7 @@ pub(super) struct Notices {
     execution: u64,
 }
 impl Server {
-    fn overview(&self) -> OverviewView {
+    pub(super) fn overview(&self) -> OverviewView {
         let status = self.actor.status(Origin::Editor);
         let settings = self
             .actor
@@ -60,15 +60,7 @@ impl Server {
                     rad_api::StorageState::RecoveryRequired
                 }
             },
-            deck: if self.deck.is_none() {
-                DeckState::Disabled
-            } else if self.deck_connected {
-                DeckState::Connected
-            } else if self.deck_inaccessible {
-                DeckState::Inaccessible
-            } else {
-                DeckState::Disconnected
-            },
+            deck: self.deck_state(),
             plugins: plugins
                 .into_iter()
                 .map(|(id, code)| PluginAttention { id, code })
@@ -94,6 +86,7 @@ impl Server {
                 .editor_view(Origin::Editor)
                 .expect("editor view")
                 .history_operations,
+            previous_exit: self.previous_exit.clone(),
         }
     }
     pub(super) fn client_api(
@@ -102,19 +95,33 @@ impl Server {
         c: IncomingContext,
         r: &rad_wire::Request,
     ) -> Result<bool, RuntimeError> {
-        if !matches!(r.operation(), "overview" | "subscribe" | "board") {
+        if !matches!(
+            r.operation(),
+            "overview"
+                | "subscribe"
+                | "board"
+                | "runtime_log"
+                | "machine_settings"
+                | "set_machine_settings"
+        ) {
             return Ok(false);
         }
+        // A refused change says so: a mutation's error always carries its outcome.
+        let mutation = rad_api::Operation::parse(r.operation()).is_some_and(|o| o.is_mutation());
         if c.origin != Origin::Editor {
-            self.respond(key, self.error(c, "permission_denied", false))?;
+            self.respond(key, self.error(c, "permission_denied", mutation))?;
             return Ok(true);
         }
         let request = rad_api::Request::parse(r.operation(), Value::Object(r.args().clone()));
         let data:Result<rad_api::ResponseData,&'static str>=match request {
             Ok(rad_api::Request::Overview{})=>Ok(rad_api::ResponseData::Overview(self.overview())),
+            Ok(rad_api::Request::RuntimeLog{})=>Ok(rad_api::ResponseData::RuntimeLog(self.events.view())),
+            Ok(rad_api::Request::MachineSettings{})=>Ok(self.machine_settings_data()),
+            Ok(rad_api::Request::SetMachineSettings{use_stream_deck,start_with_session})=>
+                self.set_machine_settings(use_stream_deck,start_with_session)?,
             Ok(rad_api::Request::Subscribe{})=>{
-                if !self.transport.subscribe(c.connection){return Err(RuntimeError::Transport);}
-                self.notices.subscribers.insert(c.connection);
+                // A peer that left meanwhile has nothing to subscribe: its answer finds no request.
+                if self.transport.subscribe(c.connection){self.notices.subscribers.insert(c.connection);}
                 Ok(rad_api::ResponseData::Empty(rad_api::Empty {}))
             },
             Ok(rad_api::Request::Board{folder_id})=>self.protocol.board_view(&self.actor,c,folder_id.as_deref()).and_then(|mut board|{
@@ -145,7 +152,7 @@ impl Server {
                     response
                 }
             }
-            Err(code) => self.error(c, code, false),
+            Err(code) => self.error(c, code, mutation),
         };
         self.respond(key, response)?;
         if r.operation() == "subscribe" && self.notices.subscribers.contains(&c.connection) {
@@ -155,7 +162,44 @@ impl Server {
         }
         Ok(true)
     }
-    fn send_notice(&mut self, connection: u64, kind: NoticeKind) -> Result<(), RuntimeError> {
+    fn machine_settings_data(&self) -> rad_api::ResponseData {
+        rad_api::ResponseData::MachineSettings(rad_api::MachineSettingsView {
+            use_stream_deck: self.machine.use_stream_deck,
+            start_with_session: self.machine.start_with_session,
+        })
+    }
+    /// Stores first and applies after: a change that could not be stored changes nothing.
+    /// Only `use_stream_deck` acts on the runtime; `start_with_session` is applied by the
+    /// editor, which owns the service unit.
+    fn set_machine_settings(
+        &mut self,
+        use_stream_deck: Option<bool>,
+        start_with_session: Option<bool>,
+    ) -> Result<Result<rad_api::ResponseData, &'static str>, RuntimeError> {
+        if use_stream_deck.is_none() && start_with_session.is_none() {
+            return Ok(Err("invalid_request"));
+        }
+        let current = self.machine;
+        let next = crate::machine_settings::MachineSettings {
+            use_stream_deck: use_stream_deck.unwrap_or(current.use_stream_deck),
+            start_with_session: start_with_session.unwrap_or(current.start_with_session),
+        };
+        if next != current {
+            if next.save(&self.data_dir).is_err() {
+                return Ok(Err("storage_error"));
+            }
+            self.machine = next;
+            if next.use_stream_deck != current.use_stream_deck {
+                self.apply_deck_setting(next.use_stream_deck)?;
+            }
+        }
+        Ok(Ok(self.machine_settings_data()))
+    }
+    pub(super) fn send_notice(
+        &mut self,
+        connection: u64,
+        kind: NoticeKind,
+    ) -> Result<(), RuntimeError> {
         let notice = Notice {
             v: rad_api::VERSION,
             session_id: format!("{:032x}", self.session),
@@ -163,9 +207,15 @@ impl Server {
             revision: self.notices.epoch.to_string(),
         };
         let payload = serde_json::to_vec(&notice).map_err(|_| RuntimeError::Protocol)?;
-        self.transport
+        // Notices coalesce and a missed one is recovered by the next: a refusal is not fatal.
+        if self
+            .transport
             .notify(connection, kind.key(), &payload)
-            .map_err(|_| RuntimeError::Transport)
+            .is_err()
+        {
+            self.events.record(rad_api::EventCode::NoticeDropped, None);
+        }
+        Ok(())
     }
     pub(super) fn publish_notices(&mut self) -> Result<(), RuntimeError> {
         self.notices
@@ -364,5 +414,66 @@ mod tests {
         }
         drop(server);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn subscribing_from_a_connection_that_already_left_is_ignored() {
+        let root = std::env::temp_dir().join(format!("rad-subscribe-gone-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut server =
+            Server::new(&root, &root.join("data"), NonZeroU128::new(812).unwrap()).unwrap();
+        let mut socket = UnixStream::connect(root.join("rad/editor.sock")).unwrap();
+        let frame = |value: Value| {
+            let bytes = serde_json::to_vec(&value).unwrap();
+            let mut framed = (bytes.len() as u32).to_be_bytes().to_vec();
+            framed.extend(bytes);
+            framed
+        };
+        let hello = frame(json!({"v":1,"id":"1","op":"hello","args":{}}));
+        socket.write_all(&hello).unwrap();
+        // The accept and the read may each take a readiness round of their own: drive until
+        // the hello is taken, on a clock that only moves forward.
+        let mut now = 0;
+        let key = loop {
+            now += 1;
+            server.transport.drive(now).unwrap();
+            if let Some(incoming) = server.transport.take_next() {
+                break incoming.key;
+            }
+            assert!(now < 1000, "the hello never arrived");
+            server
+                .transport
+                .wait_readiness(Duration::from_millis(1))
+                .unwrap();
+        };
+        // The peer leaves before its request is looked at.
+        drop(socket);
+        while server.transport.connection_ids().next().is_some() {
+            now += 1;
+            assert!(now < 2000, "the closed connection was never noticed");
+            server
+                .transport
+                .wait_readiness(Duration::from_millis(1))
+                .unwrap();
+            server.transport.drive(now).unwrap();
+        }
+        let mut wire = rad_wire::Session::default();
+        wire.accept(rad_wire::read_frame(&hello).unwrap().unwrap())
+            .unwrap();
+        let subscribe = frame(json!({"v":1,"id":"2","op":"subscribe","args":{}}));
+        let request = wire
+            .accept(rad_wire::read_frame(&subscribe).unwrap().unwrap())
+            .unwrap();
+        let context = IncomingContext {
+            request_id: key.id(),
+            connection: key.connection(),
+            origin: Origin::Editor,
+        };
+        assert_eq!(server.client_api(key, context, &request), Ok(true));
+        assert!(server.notices.subscribers.is_empty());
+        drop(server);
+        // Workers may still be ending: a leftover file must not fail the test.
+        let _ = std::fs::remove_dir_all(root);
     }
 }

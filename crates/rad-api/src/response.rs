@@ -145,9 +145,8 @@ impl crate::Operation {
         match self {
             Run => crate::response::Status::Admitted,
             Edit | CreateFolder | CreateButton | AddAction | Duplicate | Delete | MoveFolder
-            | SetPermissions | Undo | Redo | SetSettings | SetPluginSettings | RestoreCommit => {
-                crate::response::Status::Applied
-            }
+            | SetPermissions | Undo | Redo | SetSettings | SetPluginSettings | RestoreCommit
+            | RecoveryReset => crate::response::Status::Applied,
             _ => crate::response::Status::Ok,
         }
     }

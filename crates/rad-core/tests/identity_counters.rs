@@ -70,3 +70,46 @@ fn pruned_ledger_with_durable_reservations_is_not_a_new_installation() {
     .unwrap();
     assert!(Configuration::prepare_new(&r).is_err());
 }
+#[test]
+fn new_configuration_reserves_the_counters_of_an_unreadable_one() {
+    use rad_core::configuration::Configuration;
+    let reserved = IdentityCounters {
+        folders: 7,
+        buttons: 12,
+        actions: 30,
+        serial: 50,
+    };
+    let mut registry = IdentityRegistry::new(77).unwrap();
+    registry.reserve_counters(reserved);
+    let candidate = Configuration::prepare_new_reserving(&registry).unwrap();
+    let principal = candidate.configuration().data().folders[0].binding;
+    assert_eq!(principal.short().to_string(), "f8");
+    assert_eq!(principal.identity().serial(), 51);
+    assert_eq!(
+        candidate.registry().counters(),
+        IdentityCounters {
+            folders: 8,
+            buttons: 12,
+            actions: 30,
+            serial: 51
+        }
+    );
+    let mut next = candidate.registry().clone();
+    assert_eq!(
+        next.allocate(EntityKind::Button)
+            .unwrap()
+            .short()
+            .to_string(),
+        "b13"
+    );
+}
+#[test]
+fn reserving_preparation_rejects_a_registry_with_records() {
+    use rad_core::configuration::{Configuration, ConfigurationError};
+    let mut registry = IdentityRegistry::new(77).unwrap();
+    registry.allocate(EntityKind::Folder).unwrap();
+    assert_eq!(
+        Configuration::prepare_new_reserving(&registry).unwrap_err(),
+        ConfigurationError::RegistryMismatch
+    );
+}

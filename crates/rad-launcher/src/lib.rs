@@ -71,6 +71,7 @@ pub struct CatalogEntry {
     pub name: String,
 }
 mod adapter;
+mod scope;
 pub use adapter::Launcher;
 #[doc(hidden)]
 pub mod helper;

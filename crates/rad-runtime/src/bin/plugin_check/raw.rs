@@ -156,6 +156,10 @@ impl Peer {
     }
     fn send(&mut self, message: Message, timeout: u64) -> Result<Correlation> {
         let (c, bytes) = self.frame(message)?;
+        self.write_all(&bytes, timeout)?;
+        Ok(c)
+    }
+    fn write_all(&mut self, bytes: &[u8], timeout: u64) -> Result {
         let end = Instant::now() + Duration::from_millis(timeout);
         let mut pos = 0;
         while pos < bytes.len() {
@@ -176,9 +180,13 @@ impl Peer {
             };
             std::thread::sleep(Duration::from_millis(1));
         }
-        Ok(c)
+        Ok(())
     }
     fn receive(&mut self, timeout: u64) -> Result<Envelope> {
+        self.receive_sized(timeout).map(|(e, _)| e)
+    }
+    /// The next envelope and the size of its frame.
+    fn receive_sized(&mut self, timeout: u64) -> Result<(Envelope, usize)> {
         let end = Instant::now() + Duration::from_millis(timeout);
         loop {
             self.stderr()?;
@@ -193,7 +201,7 @@ impl Peer {
                 {
                     return Err("credential_leak");
                 }
-                return Ok(e);
+                return Ok((e, n));
             }
             let mut b = [0u8; 4096];
             match self.output.read(&mut b) {
@@ -258,22 +266,7 @@ impl Drop for Peer {
             libc::kill(-(self.child.id() as i32), libc::SIGKILL);
         };
         let _ = self.child.wait();
-        let end = Instant::now() + Duration::from_secs(1);
-        loop {
-            let result = unsafe {
-                libc::waitpid(
-                    -(self.child.id() as i32),
-                    std::ptr::null_mut(),
-                    libc::WNOHANG,
-                )
-            };
-            if result < 0 || Instant::now() >= end {
-                break;
-            };
-            if result == 0 {
-                std::thread::sleep(Duration::from_millis(1));
-            }
-        }
+        super::reap_group(self.child.id() as i32);
     }
 }
 fn vector(m: &Manifest, s: &Scenario) -> Message {
@@ -359,14 +352,68 @@ pub(super) fn eof(path: &Path, m: &Manifest, s: &Scenario) -> Result {
         std::thread::sleep(Duration::from_millis(1));
     }
 }
+/// What the pressure check sends next. A visual source never accumulates subscriptions and a
+/// held control is always released: subscribe and hold alternate with their ends.
+#[derive(Default)]
+struct Alternation {
+    subscription: Option<Correlation>,
+    end_hold: bool,
+}
+impl Alternation {
+    fn frame(
+        &mut self,
+        p: &mut Peer,
+        m: &Manifest,
+        s: &Scenario,
+    ) -> Result<(Correlation, Vec<u8>)> {
+        let mut message = if let Some(c) = self.subscription.take() {
+            Message::Unsubscribe { subscription: c }
+        } else {
+            vector(m, s)
+        };
+        if let Message::Invoke {
+            control: Some(control),
+            ..
+        } = &mut message
+            && control.gesture == ControlGesture::HoldStart
+        {
+            if self.end_hold {
+                control.gesture = ControlGesture::HoldEnd;
+            }
+            self.end_hold = !self.end_hold;
+        }
+        let is_sub = matches!(message, Message::Subscribe { .. });
+        let (c, bytes) = p.frame(message)?;
+        if is_sub {
+            self.subscription = Some(c);
+        }
+        Ok((c, bytes))
+    }
+}
 pub(super) fn pressure(path: &Path, m: &Manifest, s: &Scenario) -> Result {
     let mut p = Peer::new(path, m, s)?;
+    let mut vectors = Alternation::default();
+    // The frame a blocked plugin could not write may be the vector's own reply, larger than any
+    // frame already queued (for example `busy` refusals sent while it was being prepared).
+    // Observe that reply once, while still reading.
+    let (first, bytes) = vectors.frame(&mut p, m, s)?;
+    p.write_all(&bytes, s.timeout_ms)?;
+    let end = Instant::now() + Duration::from_millis(s.timeout_ms);
+    let reply = loop {
+        let (e, size) = p.receive_sized(s.timeout_ms)?;
+        if e.correlation == first {
+            break size;
+        }
+        if Instant::now() >= end {
+            return Err("pressure_vector_unobservable");
+        }
+    };
+    // Bytes read past the reply are no longer in the pipe, though they are still validated.
+    let carried = p.rx.len();
     let end = Instant::now() + Duration::from_millis(s.timeout_ms);
     let mut pending = Vec::new();
     let mut offset = 0;
     let mut count = 0;
-    let mut sub = None;
-    let mut end_hold = false;
     let status = loop {
         if let Some(status) = p.status()? {
             break status;
@@ -375,29 +422,7 @@ pub(super) fn pressure(path: &Path, m: &Manifest, s: &Scenario) -> Result {
             return Err("blocked_stdout_not_terminal");
         }
         if offset == pending.len() {
-            // A visual source never accumulates subscriptions: alternate high/low.
-            let mut message = if let Some(c) = sub.take() {
-                Message::Unsubscribe { subscription: c }
-            } else {
-                vector(m, s)
-            };
-            if let Message::Invoke {
-                control: Some(control),
-                ..
-            } = &mut message
-                && control.gesture == ControlGesture::HoldStart
-            {
-                if end_hold {
-                    control.gesture = ControlGesture::HoldEnd;
-                }
-                end_hold = !end_hold;
-            }
-            let is_sub = matches!(message, Message::Subscribe { .. });
-            let (c, bytes) = p.frame(message)?;
-            if is_sub {
-                sub = Some(c)
-            };
-            pending = bytes;
+            pending = vectors.frame(&mut p, m, s)?.1;
             offset = 0;
             count += 1;
             if count > 100_000 {
@@ -420,7 +445,7 @@ pub(super) fn pressure(path: &Path, m: &Manifest, s: &Scenario) -> Result {
     if status.success() {
         return Err("pressure_not_output_failure");
     }
-    let mut bytes = Vec::new();
+    let mut bytes = std::mem::take(&mut p.rx);
     let mut b = [0u8; 4096];
     loop {
         match p.output.read(&mut b) {
@@ -453,7 +478,8 @@ pub(super) fn pressure(path: &Path, m: &Manifest, s: &Scenario) -> Result {
             return Err("output_after_truncated_frame");
         }
     }
-    if bytes.is_empty() || bytes.len() + largest < 4096 {
+    let queued = bytes.len() - carried;
+    if queued == 0 || queued + largest.max(reply) < 4096 {
         return Err("stdout_pressure_not_observed");
     }
     Ok(())

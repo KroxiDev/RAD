@@ -188,7 +188,7 @@ distinguen esos fixtures del ejecutable de producto y no certifican hardware rea
 
 B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
 
-### B1 · El deck está fijado al puerto USB 1-5
+### B1 · El deck está fijado al puerto USB 1-5 — hecho (cff2593)
 
 - **Evidencia:** `crates/rad-deck/src/hidraw.rs:19`; `DeviceConfig` vacío
   (`crates/rad-deck/src/lib.rs:90–97`).
@@ -197,8 +197,10 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   actuales.
 - **Pruebas:** sysfs sintético con el dispositivo en otro puerto, dos nodos, ausencia
   y driver ajeno.
+- **Resultado:** con varios XL conectados se usa el de menor número de serie (decisión
+  del usuario); un XL sin serial válido no es elegible. Sin verificar con el XL real.
 
-### B2 · Salidas, modo recuperación, servicio y dispositivo como ajuste
+### B2 · Salidas, modo recuperación, servicio y dispositivo como ajuste — hecho (55f67a2, a51c8b7, 6fbc403, 910335c, ce4e274, ad92e89, bb1f667)
 
 - **Evidencia:** cualquier error de `server.turn()` termina el runtime
   (`crates/rad-runtime/src/bin/rad-runtime.rs:71`); la unidad usa `Restart=no`
@@ -214,7 +216,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   instala la unidad y la arranca con el autoinicio desactivado; el autoinicio solo la
   habilita.
 
-### B3 · Los plugins y sus descendientes no mueren con el runtime
+### B3 · Los plugins y sus descendientes no mueren con el runtime — hecho (eeb1c4b, 8c93228)
 
 - **Evidencia:** `configure_command` no usa `PR_SET_PDEATHSIG` ni grupo de procesos
   (`crates/rad-plugin-host/src/worker.rs:143`); la unidad usa `KillMode=process`
@@ -224,14 +226,14 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   con un fixture que ignora el EOF, al matar el runtime no queda el plugin; la
   creación del scope de una aplicación, contra un systemd falso.
 
-### B4 · Una actualización puede llegar de otro origen sin aviso
+### B4 · Una actualización puede llegar de otro origen sin aviso — hecho (18a36f3)
 
 - **Evidencia:** `crates/rad-plugin-manager/src/store.rs:253–255`.
 - **Decisión:** [ADR 0009](adr/0009-confianza-en-plugins.md).
 - **Pruebas:** actualizar desde otro origen exige confirmación y registra el nuevo
   origen.
 
-### B5 · Un worker de UI muerto queda ocupado
+### B5 · Un worker de UI muerto queda ocupado — hecho (b51b9ce)
 
 - **Evidencia:** si `run(job)` hace panic, `poll` convierte Disconnected en None y
   `busy` no se limpia nunca, así que el editor espera para siempre
@@ -241,7 +243,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   forma acotada, sin bucles.
 - **Pruebas:** un worker sintético que hace panic tras aceptar un trabajo.
 
-### B6 · Preparar un plugin retrasa el arranque en frío de otro
+### B6 · Preparar un plugin retrasa el arranque en frío de otro — hecho (ccba93a)
 
 - **Evidencia:** el worker administrativo queda `busy` durante la preparación, que
   incluye una descarga de hasta 600 s, y el mismo worker hace los Spawn
@@ -253,7 +255,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   manteniendo serializados el selector, los permits y la publicación.
 - **Pruebas:** un downloader falso retenido y la demanda de otro plugin, sin red.
 
-### B7 · El deadline del Host se trata como terminación
+### B7 · El deadline del Host se trata como terminación — hecho (9a1bc7f)
 
 - **Evidencia:** `crates/rad-plugin-host/src/worker.rs:63–99,465–476`;
   `crates/rad-runtime/src/plugin_dispatch.rs:191–202`;
@@ -264,7 +266,7 @@ B1 y B2 son independientes y pueden adelantarse; B1 es pequeño.
   respuesta o el reap, sin liberar credenciales ni repetir la acción; incluye la rama
   de caída del proceso.
 
-### D1 · El bucle principal depende del orden de llamada
+### D1 · El bucle principal depende del orden de llamada — hecho (cb68a21)
 
 - **Evidencia:** `admin.poll` se llama dos veces seguidas, con comentarios que
   explican el orden (`crates/rad-runtime/src/server.rs:610,621`).

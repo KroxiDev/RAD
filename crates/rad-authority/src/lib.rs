@@ -385,6 +385,13 @@ impl Authority {
         self.drain()
     }
     /// Transport consumes a terminal response. Disconnect cannot release a started commit.
+    ///
+    /// The runtime calls it once the terminal effect of a request (reply, rejection,
+    /// acceptance) has been answered to the client; that frees the request's admission
+    /// ticket. Returns `false` while the request is not in its response phase, in
+    /// particular a commit whose outcome is unknown, which keeps its ticket until
+    /// `reconcile` settles it: the caller keeps the response target and tries again.
+    /// A ticket that is never finished keeps occupying admission capacity.
     pub fn finish(&mut self, request: RequestId) -> bool {
         if self
             .tickets
@@ -594,6 +601,12 @@ impl Authority {
         }
         effects
     }
+    /// Starts the single reaffirmation of a commit whose durable outcome is unknown
+    /// (`StorageState::Uncertain`). Returns the `Effect::Reconcile` to execute, or nothing
+    /// when storage is not uncertain or a commit is already in flight (and moves to
+    /// `RecoveryRequired` if no commit id is left). The runtime calls it once per
+    /// incident; without it the state stays `Uncertain` and every new request is
+    /// rejected as `StorageUncertain`. Its result arrives through `complete`.
     pub fn reconcile(&mut self) -> Vec<Effect> {
         if self.state == StorageState::Uncertain && !self.awaiting {
             let Some(id) = self.command_id() else {
@@ -700,6 +713,12 @@ impl Authority {
     }
 }
 impl Authority {
+    /// Moves Authority's clock to `now` and runs everything that is due at that time:
+    /// Engine jobs and waits, expired tickets and export leases, the input tick and the
+    /// sleep timer. `now` is monotonic and must not decrease across `advance` and
+    /// `before_event` calls; an earlier value is refused with
+    /// `AdmissionError::InvalidTime` and changes nothing. The runtime calls it once per
+    /// turn, after serving requests. Skipping it leaves deadlines and ticks unserved.
     pub fn advance(&mut self, now: u64) -> Result<Vec<Effect>, AdmissionError> {
         let mut e = self.advance_clock(now)?;
         let output = self
@@ -754,6 +773,9 @@ impl Authority {
         }
         Ok(effects)
     }
+    /// Earliest time at which `advance` has something to do (ticket, sleep, Engine, input
+    /// or export deadline), in the same monotonic milliseconds as `advance`. `None` means
+    /// nothing is scheduled. The runtime sleeps until this time; it only reads state.
     pub fn next_deadline(&self) -> Option<u64> {
         self.tickets
             .values()
@@ -925,6 +947,11 @@ impl Authority {
             Err(reason) => vec![self.reject(request, Rejection::Execution(reason))],
         }
     }
+    /// Report how a dispatched job ended. `Succeeded` and `Failed` are its real
+    /// termination; `TimedOut` is the hand-over of its residual to the adapter, which
+    /// keeps it under its own limits (see `Engine::complete`). Either way the job's
+    /// retained configuration revision and plugin binding are released here, as
+    /// nothing after dispatch reads them.
     pub fn job_complete(
         &mut self,
         id: DispatchId,
@@ -1261,6 +1288,10 @@ impl Authority {
         e
     }
 }
+/// Proof that a configuration snapshot is pinned for an export in progress. Authority
+/// retains the snapshot's revision until the lease is released, expires (30 s idle, 120 s
+/// in total, measured on `advance` time; reported as `Effect::ExportExpired`) or the
+/// connection that took it disconnects. At most two leases exist, one per connection.
 #[derive(Debug)]
 pub struct ExportLease {
     snapshot: Candidate,
@@ -1276,6 +1307,12 @@ impl ExportLease {
     }
 }
 impl Authority {
+    /// Pins the published configuration for `connection`'s export and returns its lease.
+    /// Editor only (`Rejection::Invalid` otherwise), refused unless storage is ready
+    /// and when the connection already holds a lease or two leases exist
+    /// (`Rejection::Capacity`). The caller must end the lease with `release_export` or
+    /// keep it alive with `touch_export`; one it forgets is reclaimed only when it
+    /// expires, holding its revision and a capacity slot until then.
     pub fn pin_export(
         &mut self,
         connection: u64,
@@ -1308,9 +1345,15 @@ impl Authority {
             revision: self.revision,
         })
     }
+    /// Ends an export and frees its slot and revision. Returns `false` when the lease had
+    /// already expired or its connection disconnected, which is not an error: the export
+    /// data it covered is simply no longer guaranteed.
     pub fn release_export(&mut self, lease: ExportLease) -> bool {
         self.exports.remove(&lease.id).is_some()
     }
+    /// Renews the idle window of a live lease (30 s from the last `advance` time, never
+    /// past its 120 s total). Called while the export is being read, so a slow client
+    /// does not lose it. `Rejection::Invalid` means the lease is gone.
     pub fn touch_export(&mut self, lease: &ExportLease) -> Result<(), Rejection> {
         let p = self.exports.get_mut(&lease.id).ok_or(Rejection::Invalid)?;
         p.idle = self
@@ -1324,6 +1367,11 @@ impl Authority {
 
 impl Authority {
     /// Advance Engine and request/resource deadlines before a non-tick event. Input ordering is preserved.
+    ///
+    /// Unlike `advance` it does not tick input or the sleep timer, so an event that must
+    /// be ordered after earlier input (a job completion, a plugin pump) is processed at a
+    /// current clock without reordering it. Same monotonic time as `advance`:
+    /// `AdmissionError::InvalidTime` if `now` goes back, with no state change.
     pub fn before_event(&mut self, now: u64) -> Result<Vec<Effect>, AdmissionError> {
         self.advance_clock(now)
     }

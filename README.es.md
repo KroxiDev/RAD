@@ -56,15 +56,12 @@ target/release/rad-runtime  # terminal 1: sin hardware por defecto
 target/release/rad-editor   # terminal 2
 ```
 
-Mantén `rad-launcher-helper` junto a `rad-runtime`. Para tomar el control del XL,
-primero cierra StreamController y evita que se reinicie automáticamente; luego:
+Mantén `rad-launcher-helper` junto a `rad-runtime`. El runtime arranca sin el deck
+y lo toma cuando se activa «Usar el Stream Deck con RAD» en los ajustes del editor
+(llega en este mismo PR).
 
-```bash
-target/release/rad-runtime --xl-exclusive
-```
-
-Nunca uses dos controladores del deck a la vez. RAD no importa ni modifica datos
-de StreamController. Cerrar el editor deja el runtime activo; Ctrl+C en la
+Nunca uses dos controladores del deck a la vez. RAD no lee ni modifica datos de
+otras aplicaciones. Cerrar el editor deja el runtime activo; Ctrl+C en la
 terminal del runtime solicita su cierre.
 
 Los datos viven en `$XDG_DATA_HOME/rad` o `~/.local/share/rad`; los sockets locales,
@@ -97,11 +94,22 @@ La [guía para autores](plugins/README.md) explica el SDK y el protocolo.
 
 ## Arranque automático
 
-[packaging/rad-runtime.service](packaging/rad-runtime.service) es una unidad
-systemd **de usuario** de ejemplo. Adapta la ruta del ejecutable e instala juntos
-runtime/helper antes de habilitarla con tu gestor de servicios de usuario. El
-ejemplo arranca sin hardware; añade `--xl-exclusive` solo después de asegurar
-el control exclusivo. Nada se instala ni habilita automáticamente.
+El editor instala y arranca el runtime como servicio systemd **de usuario**: si el
+runtime no responde, escribe la unidad
+([packaging/rad-runtime.service](packaging/rad-runtime.service)) en
+`$XDG_CONFIG_HOME/systemd/user/` (o `~/.config/systemd/user/`) apuntando al
+`rad-runtime` que está junto al editor, la reescribe si una versión nueva la cambia
+y la arranca, con o sin inicio automático. Mantén `rad-runtime` y
+`rad-launcher-helper` juntos en esa carpeta. El servicio arranca sin el deck;
+usarlo es un ajuste de la máquina que se cambia desde el editor. Habilitar el inicio con
+el equipo vendrá como un ajuste del editor.
+
+La unidad reinicia el runtime tras un fallo inesperado (código de salida 1 o una
+caída) con una espera creciente, y se detiene tras 5 arranques en 5 minutos. No lo
+reinicia tras una parada limpia (0) ni cuando reiniciar no sirve (75: hay otra
+instancia en marcha, o el directorio de runtime o el entorno no se pueden usar). Las
+clases de salida están en
+[`crates/rad-runtime/src/exit.rs`](crates/rad-runtime/src/exit.rs).
 
 ## Cómo funciona
 

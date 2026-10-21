@@ -47,13 +47,13 @@ fn editor_worker_uses_editor_socket_and_real_client_handshake_before_run() {
     let mut worker = native::start(root.clone(), root.join("missing-theme"));
     worker.submit(Job::Connect).unwrap();
     assert!(matches!(
-        worker.receive().unwrap().result,
+        worker.receive().ready().unwrap().result,
         Ok(Reply::Connected)
     ));
     worker
         .submit(Job::Request(request("run", json!({"id":"b1"}))))
         .unwrap();
-    let event = worker.receive().unwrap();
+    let event = worker.receive().ready().unwrap();
     let Ok(Reply::Response {
         operation,
         response,
@@ -136,7 +136,7 @@ fn reconnect_same_runtime_revision_recovers_pixels_and_new_config_refetches() {
     let connect = |worker: &mut rad_editor::worker::Worker<Job, rad_editor::native::Event>| {
         worker.submit(Job::Connect).unwrap();
         assert!(matches!(
-            worker.receive().unwrap().result,
+            worker.receive().ready().unwrap().result,
             Ok(Reply::Connected)
         ));
     };
@@ -151,7 +151,7 @@ fn reconnect_same_runtime_revision_recovers_pixels_and_new_config_refetches() {
         let Ok(Reply::PluginVisuals {
             revision,
             mut visuals,
-        }) = worker.receive().unwrap().result
+        }) = worker.receive().ready().unwrap().result
         else {
             panic!("visual reply");
         };
@@ -168,7 +168,7 @@ fn reconnect_same_runtime_revision_recovers_pixels_and_new_config_refetches() {
     worker
         .submit(Job::Request(request("status", json!({}))))
         .unwrap();
-    let disconnected = worker.receive().unwrap();
+    let disconnected = worker.receive().ready().unwrap();
     assert!(!disconnected.connected && disconnected.result.is_err());
     connect(&mut worker);
     let recovered = visual(&mut worker, "7");
@@ -185,7 +185,7 @@ fn reconnect_same_runtime_revision_recovers_pixels_and_new_config_refetches() {
     worker
         .submit(Job::Request(request("status", json!({}))))
         .unwrap();
-    assert!(worker.receive().unwrap().result.is_err());
+    assert!(worker.receive().ready().unwrap().result.is_err());
     server.join().unwrap();
     drop(worker);
     std::fs::remove_dir_all(root).unwrap();

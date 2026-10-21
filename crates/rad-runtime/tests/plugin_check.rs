@@ -117,6 +117,18 @@ fn eof_surviving_child_never_certifies() {
 }
 
 #[test]
+fn a_helper_child_ended_on_eof_certifies() {
+    let r = certify("child-until-eof");
+    assert_eq!(r["status"], "PASS", "{r}");
+}
+
+#[test]
+fn output_blocked_on_a_reply_larger_than_the_queued_ones_certifies() {
+    let r = certify("late-large-reply");
+    assert_eq!(r["status"], "PASS", "{r}");
+}
+
+#[test]
 fn blocked_stdout_never_certifies() {
     let r = certify("blocked");
     assert_eq!(r["failure"], "blocked_stdout_not_terminal", "{r}");

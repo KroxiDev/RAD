@@ -84,6 +84,20 @@ impl Configuration {
         {
             return Err(ConfigurationError::RegistryMismatch);
         }
+        Self::with_principal(registry)
+    }
+    /// The Principal folder of a new configuration that must not reuse the IDs an
+    /// unreadable one may have handed out (ADR 0011): `registry` has no records and
+    /// carries the reserved counters (`IdentityRegistry::new` + `reserve_counters`).
+    pub fn prepare_new_reserving(
+        registry: &IdentityRegistry,
+    ) -> Result<Candidate, ConfigurationError> {
+        if registry.records().next().is_some() {
+            return Err(ConfigurationError::RegistryMismatch);
+        }
+        Self::with_principal(registry)
+    }
+    fn with_principal(registry: &IdentityRegistry) -> Result<Candidate, ConfigurationError> {
         let mut registry = registry.clone();
         let binding = registry.allocate(EntityKind::Folder)?;
         Ok(Candidate {

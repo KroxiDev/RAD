@@ -1,15 +1,24 @@
 //! The sole runtime owner. Clients never own publication, history or execution.
 mod client_api;
+#[cfg(test)]
+mod contained_tests;
 mod credentials;
+#[cfg(test)]
+mod events_tests;
+#[cfg(test)]
+mod machine_tests;
 mod options;
 mod transfers;
 use crate::{bootstrap, persistence::Persistence};
-use rad_api::response::{Error, Outcome, Response, Status};
+use rad_api::{
+    EventCode,
+    response::{Error, Outcome, Response, Status},
+};
 use rad_authority::{Authority, Effect, RequestId};
 use rad_core::configuration::Origin;
 use rad_launcher::monotonic_ms;
 use rad_protocol::{Capabilities, External, IncomingContext, Protocol, Resolution};
-use rad_transport::{RequestKey, Transport};
+use rad_transport::{RequestKey, Transport, TransportError};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -20,6 +29,8 @@ use std::{
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeError {
+    /// The instance lock or the sockets cannot be had: nothing can be served.
+    Blocked,
     Startup,
     Transport,
     Clock,
@@ -31,6 +42,15 @@ struct ReplyTarget {
     context: IncomingContext,
     sent: bool,
 }
+
+/// How to open the deck, registered by whoever owns the hardware; the server decides when
+/// (ADR 0006: only while the machine setting is on).
+type DeckFactory = Box<
+    dyn FnMut(
+        rad_deck::Desired,
+        Arc<mio::Waker>,
+    ) -> Result<Box<dyn crate::display::DeckPort>, rad_deck::DeckError>,
+>;
 
 pub struct Server {
     transport: Transport,
@@ -59,38 +79,50 @@ pub struct Server {
     deck: Option<Box<dyn crate::display::DeckPort>>,
     deck_connected: bool,
     deck_inaccessible: bool,
+    deck_factory: Option<DeckFactory>,
+    /// The setting turned the deck off and it is being stopped; it is let go once it ends.
+    deck_stopping: bool,
+    /// The setting is on and no attempt has been made since it was turned on.
+    deck_open_pending: bool,
+    machine: crate::machine_settings::MachineSettings,
+    data_dir: std::path::PathBuf,
     notices: client_api::Notices,
     images: BTreeMap<String, Arc<rad_media::NormalizedImage>>,
     asleep: bool,
     brightness: u8,
     _wake: Arc<mio::Waker>,
     pub recovered_previous: bool,
+    previous_exit: Option<rad_api::PreviousExit>,
+    events: crate::events::Events,
+    connection_failures: crate::events::ConnectionFailures,
+    /// Last storage state recorded, so only a change leaves an event.
+    storage_seen: rad_authority::StorageState,
 }
 impl Server {
+    /// Binds and opens in one step; recovery mode is an error here (see [`crate::startup`]).
     pub fn new(runtime: &Path, data: &Path, session: NonZeroU128) -> Result<Self, RuntimeError> {
-        // Instance lock precedes opening Store, so a second process cannot reaffirm it.
-        let transport =
-            Transport::bind(runtime, session.get()).map_err(|_| RuntimeError::Transport)?;
-        let boot = bootstrap::open(
-            data,
-            session,
-            monotonic_ms().map_err(|_| RuntimeError::Clock)?,
-        )
-        .map_err(|_| RuntimeError::Startup)?;
+        match crate::startup::Bound::bind(runtime, session)?.open(data)? {
+            crate::startup::Opened::Serving(server) => Ok(*server),
+            crate::startup::Opened::Recovery(_) => Err(RuntimeError::Startup),
+        }
+    }
+    /// The server over an open Store. `events` already holds what happened before.
+    pub(crate) fn from_parts(
+        transport: Transport,
+        boot: bootstrap::Bootstrap,
+        data: &Path,
+        session: NonZeroU128,
+        previous_exit: Option<rad_api::PreviousExit>,
+        mut events: crate::events::Events,
+    ) -> Result<Self, RuntimeError> {
         let wake = Arc::new(
             transport
                 .worker_waker()
                 .map_err(|_| RuntimeError::Transport)?,
         );
         let transfer_root = data.join("transfers");
-        let transfers = match std::fs::symlink_metadata(&transfer_root) {
-            Ok(_) => crate::transfers::Transfers::recover(&transfer_root, session.get()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                crate::transfers::Transfers::create(&transfer_root, session.get())
-            }
-            Err(_) => return Err(RuntimeError::Storage),
-        }
-        .map_err(|_| RuntimeError::Storage)?;
+        let transfers = crate::transfers::Transfers::open(&transfer_root, session.get())
+            .map_err(|_| RuntimeError::Storage)?;
         let persistence = Persistence::with_transfers(boot.store, transfers, wake.clone())
             .map_err(|_| RuntimeError::Storage)?;
         let brightness = boot
@@ -98,11 +130,20 @@ impl Server {
             .editor_view(Origin::Editor)
             .expect("Editor view")
             .brightness;
+        let credentials = credentials::Credentials::new(data.to_path_buf(), wake.clone())?;
+        if let Some(previous) = &previous_exit {
+            events.record(EventCode::PreviousExit, Some(&previous.code));
+        }
+        // An unreadable file means defaults, and is left as it is for the user to see.
+        let machine = crate::machine_settings::MachineSettings::load(data).unwrap_or_else(|_| {
+            events.record(EventCode::MachineSettingsUnreadable, None);
+            Default::default()
+        });
         Ok(Self {
             transport,
             actor: boot.authority,
             persistence,
-            credentials: credentials::Credentials::new(data.to_path_buf(), wake.clone())?,
+            credentials,
             native: None,
             plugin_admin: None,
             plugin_root: data.join("plugins"),
@@ -129,12 +170,21 @@ impl Server {
             deck: None,
             deck_connected: false,
             deck_inaccessible: false,
+            deck_factory: None,
+            deck_stopping: false,
+            deck_open_pending: false,
+            machine,
+            data_dir: data.to_path_buf(),
             notices: client_api::Notices::default(),
             images: BTreeMap::new(),
             asleep: false,
             brightness,
             _wake: wake,
             recovered_previous: boot.recovered_previous,
+            previous_exit,
+            events,
+            connection_failures: Default::default(),
+            storage_seen: rad_authority::StorageState::Ready,
             reconciliation_attempted: false,
         })
     }
@@ -145,13 +195,142 @@ impl Server {
             .map_err(|_| RuntimeError::Clock)?;
         self.effects(effects)
     }
+    /// Answers a started request. A response the transport refuses (empty or too large)
+    /// becomes a generic error for that client; it never ends the runtime.
     fn respond(&mut self, key: RequestKey, response: Response) -> Result<(), RuntimeError> {
-        let bytes = serde_json::to_vec(&response).map_err(|_| RuntimeError::Protocol)?;
-        self.transport
-            .finish(key, &bytes)
-            .map_err(|_| RuntimeError::Transport)
+        if let Ok(bytes) = serde_json::to_vec(&response) {
+            match self.transport.finish(key, &bytes) {
+                Ok(()) => return Ok(()),
+                Err(TransportError::InvalidResponse) => {}
+                // Already answered or gone: nothing is left to answer.
+                Err(TransportError::UnknownRequest) => {
+                    self.events.record(EventCode::ResponseUnknownRequest, None);
+                    return Ok(());
+                }
+                Err(_) => return Err(RuntimeError::Transport),
+            }
+        }
+        self.events.record(EventCode::ResponseRefused, None);
+        let generic = self.generic_error(&response);
+        let bytes = serde_json::to_vec(&generic).map_err(|_| RuntimeError::Protocol)?;
+        if self.transport.finish(key, &bytes).is_err() {
+            self.events.record(EventCode::ResponseDropped, None);
+        }
+        Ok(())
+    }
+    /// A change that was answered is not "not applied", whatever its answer looked like.
+    fn generic_error(&self, refused: &Response) -> Response {
+        let outcome = match refused.status {
+            Status::Applied | Status::Admitted => Some(Outcome::Unknown),
+            Status::Error => refused.error.as_ref().and_then(|error| error.outcome),
+            Status::Ok => None,
+        };
+        self.failure(
+            refused.id.clone(),
+            rad_api::ErrorCode::ResourceExhausted,
+            outcome,
+        )
+    }
+    /// The answer to a request that Authority resolved. When none can be built (the view
+    /// it would carry is gone), the client still gets a generic error, and what the effect
+    /// says happened is not denied: only a rejection is "not applied".
+    fn response_or_generic(
+        &mut self,
+        found: Option<Response>,
+        context: IncomingContext,
+        effect: &Effect,
+    ) -> Response {
+        if let Some(response) = found {
+            return response;
+        }
+        self.events.record(EventCode::ResponseUnbuildable, None);
+        let outcome = match effect {
+            Effect::Rejected { .. } => Outcome::NotApplied,
+            _ => Outcome::Unknown,
+        };
+        self.failure(
+            Some(context.request_id.to_string()),
+            rad_api::ErrorCode::ResourceExhausted,
+            Some(outcome),
+        )
+    }
+    /// What a plugin answered, as the client's response. Data that does not decode is that
+    /// plugin's failure and that request's error, never the runtime's: a change that was
+    /// already submitted stays "unknown".
+    fn plugin_response(
+        &mut self,
+        context: IncomingContext,
+        operation: rad_api::Operation,
+        mutation: bool,
+        data: Value,
+    ) -> Response {
+        match rad_api::ResponseData::decode(operation, Status::Ok, data) {
+            Ok(data) => self.ok_response(context, data),
+            Err(_) => {
+                self.events.record(EventCode::PluginResponseInvalid, None);
+                self.failure(
+                    Some(context.request_id.to_string()),
+                    rad_api::ErrorCode::ExecutorUnavailable,
+                    mutation.then_some(Outcome::Unknown),
+                )
+            }
+        }
+    }
+    /// The launcher's catalog page as the client's response; a page that does not decode
+    /// is an error for this request only.
+    fn launcher_response(&mut self, context: IncomingContext, data: Value) -> Response {
+        match serde_json::from_value(data) {
+            Ok(page) => self.ok_response(context, rad_api::ResponseData::Launcher(page)),
+            Err(_) => {
+                self.events.record(EventCode::CatalogResponseInvalid, None);
+                self.failure(
+                    Some(context.request_id.to_string()),
+                    rad_api::ErrorCode::ServiceUnavailable,
+                    None,
+                )
+            }
+        }
+    }
+    fn ok_response(&self, context: IncomingContext, data: rad_api::ResponseData) -> Response {
+        Response {
+            v: 1,
+            id: Some(context.request_id.to_string()),
+            session_id: Some(format!("{:032x}", self.session)),
+            status: Status::Ok,
+            data,
+            error: None,
+        }
+    }
+    fn failure(
+        &self,
+        id: Option<String>,
+        code: rad_api::ErrorCode,
+        outcome: Option<Outcome>,
+    ) -> Response {
+        Response {
+            v: 1,
+            id,
+            session_id: Some(format!("{:032x}", self.session)),
+            status: Status::Error,
+            data: rad_api::ResponseData::None,
+            error: Some(Error {
+                code,
+                message: "Request rejected".into(),
+                details: json!({}),
+                outcome,
+            }),
+        }
     }
     fn error(&self, context: IncomingContext, code: &str, mutation: bool) -> Response {
+        self.error_with_details(context, code, json!({}), mutation)
+    }
+    fn error_with_details(
+        &self,
+        context: IncomingContext,
+        code: &str,
+        details: Value,
+        mutation: bool,
+    ) -> Response {
         Response {
             v: 1,
             id: Some(context.request_id.to_string()),
@@ -161,7 +340,7 @@ impl Server {
             error: Some(Error {
                 code: rad_api::ErrorCode::parse(code).expect("defined response code"),
                 message: "Request rejected".into(),
-                details: json!({}),
+                details,
                 outcome: mutation.then_some(Outcome::NotApplied),
             }),
         }
@@ -191,10 +370,13 @@ impl Server {
                     }
                     if let Some(mut target) = self.requests.remove(request) {
                         if !target.sent {
-                            let response = self
-                                .protocol
-                                .response_for(&self.actor, target.context, *request, &effect)
-                                .ok_or(RuntimeError::Protocol)?;
+                            let found = self.protocol.response_for(
+                                &self.actor,
+                                target.context,
+                                *request,
+                                &effect,
+                            );
+                            let response = self.response_or_generic(found, target.context, &effect);
                             self.respond(target.key, response)?;
                             target.sent = true;
                         }
@@ -229,7 +411,10 @@ impl Server {
                         .map_err(|_| RuntimeError::Protocol)?;
                     queue.extend(self.persistence.route(&mut self.actor, effects));
                 }
-                Effect::DisplayClockOverflow => return Err(RuntimeError::Clock),
+                Effect::DisplayClockOverflow => {
+                    // The deck just does not go to sleep by itself; input still wakes it.
+                    self.events.record(EventCode::DisplayClockOverflow, None);
+                }
                 Effect::InputRejected { .. }
                 | Effect::CollectionFinished { .. }
                 | Effect::ExportExpired { .. } => {}
@@ -239,8 +424,28 @@ impl Server {
                 | Effect::Collect { .. } => return Err(RuntimeError::Storage),
             }
         }
+        self.note_storage();
         Ok(())
     }
+    /// Records a change of the storage state, whatever produced it.
+    fn note_storage(&mut self) {
+        use rad_authority::StorageState;
+        let now = self.actor.storage_state();
+        if now == self.storage_seen {
+            return;
+        }
+        self.storage_seen = now;
+        self.events.record(
+            match now {
+                StorageState::Ready => EventCode::StorageReady,
+                StorageState::Uncertain => EventCode::StorageUncertain,
+                StorageState::RecoveryRequired => EventCode::StorageRecoveryRequired,
+            },
+            None,
+        );
+    }
+    /// Adopts a deck that is already open, whatever the setting says; for tests and
+    /// fixtures. The binary registers how to open one with [`Self::attach_hardware`].
     pub fn attach_deck_port(
         &mut self,
         deck: Box<dyn crate::display::DeckPort>,
@@ -252,11 +457,34 @@ impl Server {
         self.display_dirty = true;
         Ok(())
     }
-    /// Trusted bootstrap only, after the user's exclusive StreamController handoff.
+    /// Production bootstrap: registers how to open the Stream Deck and opens it now if the
+    /// machine setting «Usar el Stream Deck con RAD» is on. The setting decides, not the caller.
     pub fn attach_hardware(&mut self, config: rad_deck::DeviceConfig) -> Result<(), RuntimeError> {
-        if self.deck.is_some() {
+        self.attach_deck_with(move |desired, wake| {
+            let deck = rad_deck::Deck::spawn(config, desired, wake)?;
+            Ok(Box::new(deck))
+        })
+    }
+    /// `open` is the seam for the failure path; production always passes the real deck.
+    fn attach_deck_with(
+        &mut self,
+        open: impl FnMut(
+            rad_deck::Desired,
+            Arc<mio::Waker>,
+        ) -> Result<Box<dyn crate::display::DeckPort>, rad_deck::DeckError>
+        + 'static,
+    ) -> Result<(), RuntimeError> {
+        if self.deck.is_some() || self.deck_factory.is_some() {
             return Err(RuntimeError::Protocol);
         }
+        self.deck_factory = Some(Box::new(open));
+        self.deck_open_pending = self.machine.use_stream_deck;
+        self.settle_deck()
+    }
+    /// One attempt to open the deck. A failure is contained: the runtime serves without a
+    /// deck, says so, and does not try again until the setting is turned off and on.
+    fn open_deck(&mut self) {
+        self.deck_open_pending = false;
         let desired = crate::display::project_with_plugins(
             &self.actor,
             &self.images,
@@ -264,9 +492,77 @@ impl Server {
             self.asleep,
             self.plugin_visuals.as_ref(),
         );
-        let deck = rad_deck::Deck::spawn(config, desired, self._wake.clone())
-            .map_err(|_| RuntimeError::Protocol)?;
-        self.attach_deck_port(Box::new(deck))
+        let Some(open) = &mut self.deck_factory else {
+            return;
+        };
+        match open(desired, self._wake.clone()) {
+            Ok(deck) => {
+                self.deck = Some(deck);
+                self.deck_inaccessible = false;
+                self.display_dirty = true;
+            }
+            Err(_) => {
+                self.deck_inaccessible = true;
+                self.events.record(EventCode::DeckSpawnFailed, None);
+            }
+        }
+    }
+    /// Brings the deck to what the setting asks, one step at a time: lets go of a deck that
+    /// finished stopping (Authority hears the input is gone even if the deck never said so),
+    /// then opens the one that is waiting. Never while the runtime is ending.
+    fn settle_deck(&mut self) -> Result<(), RuntimeError> {
+        if self.shutting_down {
+            return Ok(());
+        }
+        if self.deck_stopping && self.deck.as_ref().is_some_and(|deck| deck.is_stopped()) {
+            self.deck = None;
+            self.deck_stopping = false;
+            let before = (self.deck_connected, self.deck_inaccessible);
+            self.deck_connected = false;
+            self.deck_inaccessible = false;
+            let now = monotonic_ms().map_err(|_| RuntimeError::Clock)?;
+            let effects = self
+                .actor
+                .input_disconnect(now)
+                .map_err(|_| RuntimeError::Clock)?;
+            self.note_deck(before);
+            self.effects(effects)?;
+        }
+        if self.deck.is_none() && self.deck_open_pending {
+            self.open_deck();
+        }
+        Ok(())
+    }
+    /// The setting for the deck changed (already stored): turn it on at the next chance, or
+    /// stop the deck in order. The real deck allows one alive at a time, so a new one waits.
+    fn apply_deck_setting(&mut self, on: bool) -> Result<(), RuntimeError> {
+        self.deck_open_pending = on;
+        if !on {
+            match &mut self.deck {
+                Some(deck) if !self.deck_stopping => {
+                    deck.shutdown();
+                    self.deck_stopping = true;
+                }
+                Some(_) => {}
+                None => self.deck_inaccessible = false,
+            }
+        }
+        self.pump_deck()?;
+        self.settle_deck()
+    }
+    /// What clients see of the deck. A deck that could not be had is `Inaccessible`, not
+    /// `Disabled`: the user asked for it.
+    fn deck_state(&self) -> rad_api::DeckState {
+        use rad_api::DeckState;
+        if self.deck.is_none() && !self.deck_inaccessible {
+            DeckState::Disabled
+        } else if self.deck_connected {
+            DeckState::Connected
+        } else if self.deck_inaccessible {
+            DeckState::Inaccessible
+        } else {
+            DeckState::Disconnected
+        }
     }
     fn pump_deck(&mut self) -> Result<(), RuntimeError> {
         // Bound matches the adapter event budget; reports are never coalesced.
@@ -275,6 +571,7 @@ impl Server {
                 break;
             };
             let now = monotonic_ms().map_err(|_| RuntimeError::Clock)?;
+            let before = (self.deck_connected, self.deck_inaccessible);
             let effects = match event {
                 rad_deck::Event::Connected => {
                     self.deck_connected = true;
@@ -294,9 +591,28 @@ impl Server {
                 }
             }
             .map_err(|_| RuntimeError::Clock)?;
+            self.note_deck(before);
             self.effects(effects)?;
         }
         Ok(())
+    }
+    /// Records a change of what the deck is, not each report: a flapping cable costs one
+    /// event per change, and a repeated state none.
+    fn note_deck(&mut self, before: (bool, bool)) {
+        let after = (self.deck_connected, self.deck_inaccessible);
+        if after == before {
+            return;
+        }
+        self.events.record(
+            if self.deck_connected {
+                EventCode::DeckConnected
+            } else if self.deck_inaccessible {
+                EventCode::DeckInaccessible
+            } else {
+                EventCode::DeckDisconnected
+            },
+            None,
+        );
     }
     fn paint(&mut self) {
         if !self.display_dirty {
@@ -312,7 +628,9 @@ impl Server {
                 self.plugin_visuals.as_ref(),
             );
             if deck.set_desired(desired).is_err() {
+                let before = (self.deck_connected, self.deck_inaccessible);
                 self.deck_connected = false;
+                self.note_deck(before);
             }
         }
     }
@@ -354,35 +672,66 @@ impl Server {
         );
         Ok(())
     }
-    fn sync_credentials(&mut self) -> Result<(), RuntimeError> {
+    fn sync_credentials(&mut self) {
         if let Some(native) = &mut self.native {
-            native
-                .sync_credentials(
-                    &self.actor,
-                    &self
-                        .waiting_options
-                        .iter()
-                        .filter_map(options::WaitingOptions::binding)
-                        .collect::<Vec<_>>(),
-                    &self.transport,
-                )
-                .map_err(|_| RuntimeError::Protocol)?;
-            if !self.shutting_down
-                && let Some(visuals) = &mut self.plugin_visuals
-            {
-                self.display_dirty |= visuals.poll(&self.actor, native.plugin_host_mut());
-            }
+            native.sync_credentials(
+                &self.actor,
+                &self
+                    .waiting_options
+                    .iter()
+                    .filter_map(options::WaitingOptions::binding)
+                    .collect::<Vec<_>>(),
+                &self.transport,
+            );
         }
-        Ok(())
+        self.record_native_events();
     }
-    fn pump_native(&mut self) -> Result<(), RuntimeError> {
+    /// Records what the launcher and the plugin host reported since the last call.
+    fn record_native_events(&mut self) {
         if let Some(native) = &mut self.native {
-            let effects = native
-                .pump(&mut self.actor, &self.transport)
-                .map_err(|_| RuntimeError::Protocol)?;
-            self.effects(effects)?;
+            self.events.record_all(native.take_events());
         }
-        Ok(())
+    }
+    /// Pumps plugins and the launcher; `true` when that changed something (see `Native::pump`).
+    fn pump_native(&mut self) -> Result<bool, RuntimeError> {
+        let Some(native) = &mut self.native else {
+            return Ok(false);
+        };
+        let pumped = native.pump(&mut self.actor, &self.transport);
+        self.record_native_events();
+        let (effects, advanced) = pumped.map_err(|_| RuntimeError::Protocol)?;
+        let produced = !effects.is_empty();
+        self.effects(effects)?;
+        Ok(advanced || produced)
+    }
+    /// Lets the plugin administrator advance; `true` when it changed anything.
+    fn poll_admin(&mut self) -> Result<bool, RuntimeError> {
+        let (Some(native), Some(admin)) = (&mut self.native, &mut self.plugin_admin) else {
+            return Ok(false);
+        };
+        admin.set_extra_demand(
+            self.waiting_options
+                .iter()
+                .map(options::WaitingOptions::plugin)
+                .collect(),
+        );
+        Ok(admin.poll(
+            &mut self.actor,
+            native.plugin_host_mut(),
+            monotonic_ms().map_err(|_| RuntimeError::Clock)?,
+        ))
+    }
+    /// Refreshes plugin visuals; `true` when one changed, which also dirties the display.
+    fn poll_visuals(&mut self) -> bool {
+        if self.shutting_down {
+            return false;
+        }
+        let (Some(native), Some(visuals)) = (&mut self.native, &mut self.plugin_visuals) else {
+            return false;
+        };
+        let changed = visuals.poll(&self.actor, native.plugin_host_mut());
+        self.display_dirty |= changed;
+        changed
     }
     fn external(
         &mut self,
@@ -419,18 +768,17 @@ impl Server {
                 operation,
                 External::PluginAdmin(_) | External::PluginRetry { .. }
             );
-            let result = self.plugin_external(context, operation);
+            let result = match operation {
+                External::PluginAdmin(request) => self.plugin_admin(context, request),
+                operation => self
+                    .plugin_external(context, operation)
+                    .map_err(crate::plugin_admin::Rejection::from),
+            };
             let response = match result {
-                Ok(data) => Response {
-                    v: 1,
-                    id: Some(context.request_id.to_string()),
-                    session_id: Some(format!("{:032x}", self.session)),
-                    status: Status::Ok,
-                    data: rad_api::ResponseData::decode(response_operation, Status::Ok, data)
-                        .map_err(|_| RuntimeError::Protocol)?,
-                    error: None,
-                },
-                Err(code) => self.error(context, code, mutation),
+                Ok(data) => self.plugin_response(context, response_operation, mutation, data),
+                Err(rejection) => {
+                    self.error_with_details(context, rejection.code, rejection.details, mutation)
+                }
             };
             return self.respond(key, response);
         }
@@ -450,19 +798,31 @@ impl Server {
             _ => Err("executor_unavailable"),
         };
         let response = match result {
-            Ok(data) => Response {
-                v: 1,
-                id: Some(context.request_id.to_string()),
-                session_id: Some(format!("{:032x}", self.session)),
-                status: Status::Ok,
-                data: rad_api::ResponseData::Launcher(
-                    serde_json::from_value(data).map_err(|_| RuntimeError::Protocol)?,
-                ),
-                error: None,
-            },
+            Ok(data) => self.launcher_response(context, data),
             Err(code) => self.error(context, code, false),
         };
         self.respond(key, response)
+    }
+    fn plugin_admin(
+        &mut self,
+        context: IncomingContext,
+        request: rad_protocol::PluginAdmin,
+    ) -> Result<Value, crate::plugin_admin::Rejection> {
+        if context.origin != Origin::Editor {
+            return Err("permission_denied".into());
+        }
+        let residual = request.plugin_id.as_ref().is_some_and(|id| {
+            self.native.as_ref().is_some_and(|native| {
+                native.plugin_host().state(id) == Some(rad_plugin_host::State::Failed)
+            })
+        });
+        if residual {
+            return Err("plugin_residual".into());
+        }
+        self.plugin_admin
+            .as_mut()
+            .ok_or("executor_unavailable")?
+            .submit(context.origin, request, &self.actor)
     }
     fn plugin_external(
         &mut self,
@@ -470,17 +830,6 @@ impl Server {
         operation: External,
     ) -> Result<Value, &'static str> {
         match operation {
-            External::PluginAdmin(request) => {
-                if context.origin != Origin::Editor { return Err("permission_denied"); }
-                let residual = request.plugin_id.as_ref().is_some_and(|id| {
-                    self.native.as_ref().is_some_and(|native| {
-                        native.plugin_host().state(id) == Some(rad_plugin_host::State::Failed)
-                    })
-                });
-                if residual { return Err("plugin_residual"); }
-                self.plugin_admin.as_mut().ok_or("executor_unavailable")?
-                    .submit(context.origin, request, &self.actor)
-            }
             External::PluginLog { plugin_id } => {
                 if context.origin != Origin::Editor { return Err("permission_denied"); }
                 let host = self.native.as_ref().ok_or("executor_unavailable")?.plugin_host();
@@ -532,39 +881,60 @@ impl Server {
             .ok_or("service_unavailable")?;
         crate::catalog::page(entries, context.connection, query, scope, cursor)
     }
-    pub fn turn(&mut self) -> Result<(), RuntimeError> {
-        self.clock()?;
-        self.poll_credentials()?;
-        self.sync_credentials()?;
-        self.pump_native()?;
-        if let Some(native) = &mut self.native {
-            if let Some(admin) = &mut self.plugin_admin {
-                admin.set_extra_demand(
-                    self.waiting_options
-                        .iter()
-                        .map(options::WaitingOptions::plugin)
-                        .collect(),
-                );
-                admin.poll(
-                    &mut self.actor,
-                    native.plugin_host_mut(),
-                    monotonic_ms().map_err(|_| RuntimeError::Clock)?,
-                );
-            }
-            if !self.shutting_down
-                && let Some(visuals) = &mut self.plugin_visuals
-            {
-                self.display_dirty |= visuals.poll(&self.actor, native.plugin_host_mut());
+    /// Most rounds `settle` runs before yielding to the rest of the turn.
+    const SETTLE_ROUNDS: usize = 8;
+    /// Runs the steps that feed each other (credential results, plugin pump, plugin
+    /// administrator, visuals) until none of them advances, so the turn does not depend on
+    /// the order in which they were written. The cap bounds the time spent here; reaching it
+    /// with work still advancing wakes the loop, so the next `wait` returns at once instead
+    /// of sleeping on pending work.
+    fn settle(&mut self) -> Result<(), RuntimeError> {
+        self.settle_with(Self::settle_round).map(|_| ())
+    }
+    /// `settle` over an arbitrary round, returning how many rounds ran.
+    fn settle_with(
+        &mut self,
+        mut round: impl FnMut(&mut Self) -> Result<bool, RuntimeError>,
+    ) -> Result<usize, RuntimeError> {
+        for ran in 1..=Self::SETTLE_ROUNDS {
+            if !round(self)? {
+                return Ok(ran);
             }
         }
-        self.poll_credentials()?;
-        self.sync_credentials()?;
+        // A failed wake only costs latency: the next readiness or deadline runs the turn.
+        let _ = self._wake.wake();
+        Ok(Self::SETTLE_ROUNDS)
+    }
+    /// One pass over the settled steps; `true` when any of them advanced. Credentials are
+    /// synchronized in every pass but never counted: they only react to what the other
+    /// steps produce (a result, a published binding, a Ready host) and nothing in the turn
+    /// waits on them, since the plugin acknowledges installs through its own readiness.
+    fn settle_round(&mut self) -> Result<bool, RuntimeError> {
+        let mut advanced = self.poll_credentials()?;
+        self.sync_credentials();
+        advanced |= self.pump_native()?;
+        advanced |= self.poll_admin()?;
+        advanced |= self.poll_visuals();
+        Ok(advanced)
+    }
+    pub fn turn(&mut self) -> Result<(), RuntimeError> {
+        self.clock()?;
+        self.settle()?;
         if !self.shutting_down {
             self.pump_deck()?;
+            self.settle_deck()?;
         }
         self.transport
             .drive(monotonic_ms().map_err(|_| RuntimeError::Clock)?)
             .map_err(|_| RuntimeError::Transport)?;
+        let failures = self.transport.take_connection_failures();
+        if let Some(count) = self
+            .connection_failures
+            .note(failures, monotonic_ms().map_err(|_| RuntimeError::Clock)?)
+        {
+            self.events
+                .record(EventCode::ConnectionFailed, Some(&count.to_string()));
+        }
         let live: BTreeSet<_> = self.transport.connection_ids().collect();
         let lost: Vec<_> = self.connections.difference(&live).copied().collect();
         for connection in lost {
@@ -628,14 +998,9 @@ impl Server {
                         && response.error.is_none()
                         && let rad_api::ResponseData::Status(status) = &mut response.data
                     {
-                        status.deck_state = Some(if self.deck.is_none() {
-                            rad_api::DeckState::Disabled
-                        } else if self.deck_connected {
-                            rad_api::DeckState::Connected
-                        } else {
-                            rad_api::DeckState::Disconnected
-                        });
+                        status.deck_state = Some(self.deck_state());
                         status.recovered_previous = Some(self.recovered_previous);
+                        status.previous_exit = self.previous_exit.clone();
                     }
                     self.effects(effects)?;
                     self.respond(incoming.key, *response)?;
@@ -656,35 +1021,13 @@ impl Server {
                 .map_err(|_| RuntimeError::Clock)?;
             self.effects(effects)?;
         }
-        if let (Some(native), Some(admin)) = (&mut self.native, &mut self.plugin_admin) {
-            admin.set_extra_demand(
-                self.waiting_options
-                    .iter()
-                    .map(options::WaitingOptions::plugin)
-                    .collect(),
-            );
-            admin.poll(
-                &mut self.actor,
-                native.plugin_host_mut(),
-                monotonic_ms().map_err(|_| RuntimeError::Clock)?,
-            );
-        }
-        self.pump_native()?;
-        // This pump can consume Ready after the earlier admin poll. Publish its
-        // binding before credentials/options settle, rather than sleeping with
-        // an unbound Ready host and no remaining handshake readiness/deadline.
-        if let (Some(native), Some(admin)) = (&mut self.native, &mut self.plugin_admin) {
-            admin.poll(
-                &mut self.actor,
-                native.plugin_host_mut(),
-                monotonic_ms().map_err(|_| RuntimeError::Clock)?,
-            );
-        }
+        self.settle()?;
         // Last on purpose: the transport stamps a response with the time of its latest
         // `drive`, so answering before it after a long sleep would look expired and be dropped.
         self.pump_options()?;
-        self.poll_credentials()?;
-        self.sync_credentials()?;
+        // Answered questions leave `waiting_options`, so the credentials installed only for
+        // them are released here rather than on a later wake.
+        self.sync_credentials();
         self.respond_credentials()?;
         let effects = self.reconcile_once();
         self.effects(effects)?;
@@ -718,6 +1061,7 @@ impl Server {
             return;
         }
         self.shutting_down = true;
+        self.events.record(EventCode::ShutdownRequested, None);
         self.credentials.shutdown();
         if let Some(admin) = &mut self.plugin_admin {
             admin.shutdown();
@@ -726,8 +1070,9 @@ impl Server {
             deck.shutdown();
         }
         if let Some(native) = &mut self.native {
-            let _ = native.launcher.shutdown();
+            native.stop_launcher();
             native.shutdown_plugins();
+            self.record_native_events();
         }
     }
     pub fn shutdown_complete(&self) -> bool {
@@ -822,5 +1167,358 @@ mod recent_log_tests {
             rad_api::Operation::PluginLog,
         )
         .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod settle_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    fn private_dir(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    fn server(name: &str) -> (Directory, Server) {
+        let root = Directory(
+            std::env::temp_dir().join(format!("rad-settle-{name}-{}", std::process::id())),
+        );
+        private_dir(&root.0);
+        let server = Server::new(
+            &root.0,
+            &root.0.join("data"),
+            NonZeroU128::new(0x5e7).unwrap(),
+        )
+        .unwrap();
+        (root, server)
+    }
+
+    /// Consumes the wake-ups a fresh server already has, so a later `wait` shows only ours.
+    fn drain(server: &mut Server) {
+        server.turn().unwrap();
+        server.wait(Duration::from_millis(50)).unwrap();
+        server.turn().unwrap();
+    }
+
+    #[test]
+    fn settle_gives_up_after_the_round_cap_and_leaves_the_loop_awake() {
+        let (_root, mut server) = server("cap");
+        drain(&mut server);
+        let mut rounds = 0;
+        let ran = server
+            .settle_with(|_| {
+                rounds += 1;
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(
+            (ran, rounds),
+            (Server::SETTLE_ROUNDS, Server::SETTLE_ROUNDS)
+        );
+        let start = std::time::Instant::now();
+        server.wait(Duration::from_secs(5)).unwrap();
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "work was left pending: the next wait must not sleep"
+        );
+    }
+
+    #[test]
+    fn settle_stops_when_no_step_advances_and_lets_the_loop_sleep() {
+        let (_root, mut server) = server("quiet");
+        drain(&mut server);
+        let mut rounds = 0;
+        let ran = server
+            .settle_with(|_| {
+                rounds += 1;
+                Ok(rounds < 3)
+            })
+            .unwrap();
+        assert_eq!((ran, rounds), (3, 3));
+        let start = std::time::Instant::now();
+        server.wait(Duration::from_millis(300)).unwrap();
+        assert!(start.elapsed() >= Duration::from_millis(250));
+    }
+}
+
+#[cfg(all(test, feature = "fixture-tests"))]
+mod turn_invariant_tests {
+    use super::*;
+    use rad_client::connection::{Client, Endpoint};
+    use std::os::unix::fs::DirBuilderExt;
+
+    const PLUGIN: &str = "org.rad.test.credentials.deferred";
+
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    fn private_dir(path: &Path) {
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .recursive(true)
+            .create(path)
+            .unwrap();
+    }
+    /// A plugin store with the credentials fixture already selected.
+    fn seed(store: &Path) {
+        let plugins = store.join("plugins");
+        private_dir(&plugins);
+        let mut manager = rad_plugin_manager::Manager::create(
+            &plugins,
+            rad_plugin_contract::HOST_API,
+            rad_plugin_host::TARGET,
+        )
+        .unwrap();
+        let manifest = serde_json::to_vec(&json!({"contract":1,"capabilities":["credentials","dynamic_options","visual_freshness"],"id":PLUGIN,"version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[rad_plugin_host::TARGET],"actions":[],"visuals":[{"id":"probe","label":"Probe","schema":{"version":1,"fields":[]},"credential_slots":["password"]}]})).unwrap();
+        let binaries = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let executable = std::fs::read(binaries.join("rad-plugin-credentials-fixture")).unwrap();
+        let candidate = rad_plugin_package::Candidate::from_parts(
+            &manifest,
+            &executable,
+            rad_plugin_contract::HOST_API,
+            rad_plugin_host::TARGET,
+        )
+        .unwrap();
+        let mut prepared = Some(
+            manager
+                .prepare(
+                    rad_plugin_manager::Operation::Install,
+                    Some(&rad_plugin_package::encode(&candidate)),
+                )
+                .unwrap(),
+        );
+        manager.commit(&mut prepared).unwrap();
+    }
+    impl Server {
+        /// What a finished turn must never leave behind for a loaded plugin.
+        fn unsettled_plugin(&self) -> Option<String> {
+            let host = self.native.as_ref()?.plugin_host();
+            for (manifest, generation, state) in host.bindings() {
+                if state != rad_plugin_host::State::Ready {
+                    continue;
+                }
+                let id = &manifest.id;
+                if self.actor.plugin_generation(id) != Some(generation) {
+                    return Some(format!("{id} is Ready but its binding is not published"));
+                }
+                let selection = self
+                    .actor
+                    .plugin_manifests()
+                    .find(|(m, _, _)| &m.id == id)
+                    .map(|(_, s, _)| s)?;
+                for snapshot in self.actor.retained_plugin_credentials(id, selection) {
+                    if host
+                        .credentials_state(id, generation, snapshot.revision())
+                        .is_none()
+                    {
+                        return Some(format!(
+                            "{id} is published but its credentials were not installed"
+                        ));
+                    }
+                }
+            }
+            None
+        }
+    }
+
+    /// A runtime owning the credentials fixture plugin, plus a thread that configures a
+    /// visual on it (which demands the plugin) and then ends.
+    fn world(
+        name: &str,
+    ) -> (
+        std::sync::MutexGuard<'static, ()>,
+        Directory,
+        Server,
+        std::thread::JoinHandle<()>,
+    ) {
+        // One launcher helper may live per process: worlds take turns.
+        static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let turn = TURN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root =
+            Directory(std::env::temp_dir().join(format!("rad-turn-{name}-{}", std::process::id())));
+        for sub in ["runtime", "home", "data", "system", "config", "cache"] {
+            private_dir(&root.0.join(sub));
+        }
+        let mut server = Server::new(
+            &root.0.join("runtime"),
+            &root.0.join("store"),
+            NonZeroU128::new(0x7a1).unwrap(),
+        )
+        .unwrap();
+        seed(&root.0.join("store"));
+        let helper = || {
+            let mut helper = std::process::Command::new(
+                std::env::var("RAD_TEST_LAUNCHER_HELPER")
+                    .expect("runner builds the private helper"),
+            );
+            helper
+                .env_clear()
+                .env("HOME", root.0.join("home"))
+                .env("XDG_DATA_HOME", root.0.join("data"))
+                .env("XDG_DATA_DIRS", root.0.join("system"))
+                .env("XDG_CONFIG_HOME", root.0.join("config"))
+                .env("XDG_CACHE_HOME", root.0.join("cache"))
+                .env("XDG_RUNTIME_DIR", root.0.join("runtime"))
+                .env("PATH", "/nonexistent-rad-private-bin")
+                .env(
+                    "DBUS_SESSION_BUS_ADDRESS",
+                    "unix:path=/nonexistent-rad-private-bus",
+                );
+            helper
+        };
+        // The previous world's helper is reaped once its server stopped; allow a beat.
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        let launcher = loop {
+            match rad_launcher::Launcher::spawn(helper()) {
+                Ok(launcher) => break launcher,
+                Err(error) => {
+                    assert!(
+                        std::time::Instant::now() < end,
+                        "launcher helper unavailable: {error:?}"
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        };
+        server.attach_launcher(launcher).unwrap();
+        let runtime = root.0.join("runtime");
+        let client = std::thread::spawn(move || {
+            let mut editor = Client::connect(&runtime, Endpoint::Editor).unwrap();
+            let mut call = |op: &str, args: Value| {
+                let response = editor.request(op, args).unwrap();
+                assert!(response.error.is_none(), "{op}: {:?}", response.error);
+                serde_json::to_value(response.data).unwrap()
+            };
+            let end = std::time::Instant::now() + Duration::from_secs(20);
+            while call("plugin_status", json!({}))["items"][0]["id"] != PLUGIN {
+                assert!(std::time::Instant::now() < end, "plugin never listed");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            call(
+                "credential_replace",
+                json!({"plugin_id":PLUGIN,"slot":"password","secret":"correct"}),
+            );
+            let folder = call("status", json!({}))["active_folder_id"].clone();
+            call(
+                "create_button",
+                json!({"folder_id":folder,"position":0,"name":"Visual"}),
+            );
+            call(
+                "edit",
+                json!({"changes":[{"kind":"set","id":"b1","field":"visual","value":{"type":format!("{PLUGIN}#probe"),"parameters":{"schema_version":1,"values":{}}}}]}),
+            );
+        });
+        (turn, root, server, client)
+    }
+    fn first_state(server: &Server) -> Option<rad_plugin_host::State> {
+        server
+            .native
+            .as_ref()?
+            .plugin_host()
+            .bindings()
+            .next()
+            .map(|(_, _, s)| s)
+    }
+    fn stop(server: &mut Server) {
+        server.request_shutdown();
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        while !server.shutdown_complete() {
+            server.turn().unwrap();
+            assert!(std::time::Instant::now() < end, "runtime did not stop");
+            server.wait(Duration::from_millis(10)).unwrap();
+        }
+    }
+
+    #[test]
+    fn no_turn_ends_with_a_ready_plugin_unpublished_or_its_credentials_uninstalled() {
+        let (_turn, _root, mut server, client) = world("sequence");
+        let end = std::time::Instant::now() + Duration::from_secs(30);
+        let mut installed = false;
+        while !installed {
+            server.turn().unwrap();
+            if let Some(violation) = server.unsettled_plugin() {
+                panic!("a turn ended unsettled: {violation}");
+            }
+            installed = client.is_finished()
+                && server.native.as_ref().is_some_and(|n| {
+                    n.plugin_host().bindings().any(|(m, g, s)| {
+                        s == rad_plugin_host::State::Ready
+                            && server
+                                .actor
+                                .plugin_manifests()
+                                .find(|(x, _, _)| x.id == m.id)
+                                .is_some_and(|(_, sel, _)| {
+                                    server
+                                        .actor
+                                        .retained_plugin_credentials(&m.id, sel)
+                                        .iter()
+                                        .any(|snap| {
+                                            n.plugin_host()
+                                                .credentials_state(&m.id, g, snap.revision())
+                                                .is_some()
+                                        })
+                                })
+                    })
+                });
+            assert!(
+                std::time::Instant::now() < end,
+                "the plugin never got its credentials"
+            );
+            server.wait(Duration::from_millis(50)).unwrap();
+        }
+        client.join().unwrap();
+        // Quiescent again: with a live plugin, no step may keep claiming progress.
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        while server.settle_round().unwrap() {
+            assert!(
+                std::time::Instant::now() < end,
+                "a step never stops claiming progress"
+            );
+            server.turn().unwrap();
+            server.wait(Duration::from_millis(5)).unwrap();
+        }
+        stop(&mut server);
+    }
+
+    #[test]
+    fn a_settle_that_consumes_ready_also_publishes_it_before_returning() {
+        let (_turn, _root, mut server, client) = world("inside");
+        let end = std::time::Instant::now() + Duration::from_secs(30);
+        // Only `settle` runs after the request that demands the plugin: whichever of its
+        // calls consumes Ready, that same call must also publish the binding.
+        while !client.is_finished() || first_state(&server).is_none() {
+            server.turn().unwrap();
+            assert!(std::time::Instant::now() < end, "plugin was never demanded");
+            server.wait(Duration::from_millis(1)).unwrap();
+        }
+        let mut was_ready = false;
+        while !was_ready || server.unsettled_plugin().is_some() {
+            server.settle().unwrap();
+            if let Some(violation) = server.unsettled_plugin() {
+                panic!("settle returned unsettled: {violation}");
+            }
+            was_ready |= first_state(&server) == Some(rad_plugin_host::State::Ready);
+            assert!(std::time::Instant::now() < end, "plugin never became Ready");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        client.join().unwrap();
+        stop(&mut server);
     }
 }

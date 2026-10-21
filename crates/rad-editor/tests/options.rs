@@ -261,6 +261,7 @@ fn refusal(code: &str) -> Error {
     Error {
         code: code.into(),
         cause: None,
+        source_change: None,
         unknown: false,
     }
 }

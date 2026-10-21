@@ -125,6 +125,8 @@ pub fn run() -> Result<(), LauncherError> {
     if std::env::args().nth(1).as_deref() != Some("--channel-fd=3") {
         return Err(LauncherError::Protocol);
     }
+    // Before anything is launched: applications must inherit /dev/null as stderr.
+    crate::scope::isolate_stderr().map_err(|_| LauncherError::Io)?;
     // SAFETY: validate fd and prevent inheritance by launched applications.
     if unsafe { libc::fcntl(3, libc::F_GETFD) } < 0
         || unsafe { libc::fcntl(3, libc::F_SETFD, libc::FD_CLOEXEC) } < 0
@@ -154,6 +156,7 @@ pub fn run() -> Result<(), LauncherError> {
             writer(&socket, &context, &state);
             let read_context = context.clone();
             let launch_context = gio::AppLaunchContext::new();
+            crate::scope::watch(&launch_context, &context);
             let read_loop = mainloop.clone();
             let reader = SocketExtManual::create_source(
                 &socket,

@@ -44,6 +44,11 @@ codes! {
     Deadline => "deadline",
     Io => "io",
     ConfirmationRequired => "confirmation_required",
+    PluginAlreadyInstalled => "plugin_already_installed",
+    PluginMismatch => "plugin_mismatch",
+    PluginSameVersion => "plugin_same_version",
+    PluginFailed => "plugin_failed",
+    SourceChanged => "source_changed",
 }
 /// Stable CLI process status, versioned together with CLI_VERSION.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

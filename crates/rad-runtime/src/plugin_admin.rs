@@ -1,4 +1,6 @@
 //! Single worker and single operation credit, retained through commit, spawn and reap.
+//! The download runs on its own thread; the worker never waits for the network.
+mod fetch;
 mod messages;
 mod worker;
 use rad_authority::{
@@ -22,7 +24,11 @@ type Download = Box<
         + Send,
 >;
 enum Job {
-    Prepare(PluginAdmin),
+    /// `package` is the downloaded archive; the worker validates and stages it.
+    Prepare {
+        request: PluginAdmin,
+        package: Option<Vec<u8>>,
+    },
     Commit(PreparedChange),
     Abort(PreparedChange),
     Spawn {
@@ -76,10 +82,42 @@ impl AdminState {
         }
     }
 }
+/// Why `submit` refused a request: the wire code and, for the few codes that carry one,
+/// the structured details the client needs to explain it.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Rejection {
+    pub code: &'static str,
+    pub details: Value,
+}
+impl From<&'static str> for Rejection {
+    fn from(code: &'static str) -> Self {
+        Self {
+            code,
+            details: json!({}),
+        }
+    }
+}
+/// Observable state of the administrator and the host bindings, compared around `poll`.
+#[derive(PartialEq)]
+struct ProgressMark {
+    state: AdminState,
+    error: Option<&'static str>,
+    busy: bool,
+    locked: bool,
+    stop_sent: bool,
+    unsent: bool,
+    downloading: bool,
+    startup: usize,
+    installed: usize,
+    attempted: usize,
+    active: Option<String>,
+    bindings: Vec<(String, u64, State)>,
+}
 pub(crate) struct Admin {
     tx: mpsc::SyncSender<Job>,
     rx: mpsc::Receiver<Reply>,
-    worker: Option<thread::JoinHandle<()>>,
+    worker_ended: crate::thread_end::Ended,
+    fetcher: fetch::Fetcher,
     unsent: Option<Job>,
     state: AdminState,
     error: Option<&'static str>,
@@ -103,16 +141,24 @@ impl Admin {
         let (tx, jobs) = mpsc::sync_channel(1);
         let (results, rx) = mpsc::sync_channel(1);
         let cancel = rad_plugin_manager::Cancellation::default();
-        let worker_cancel = cancel.clone();
-        let worker = thread::Builder::new()
+        let worker_wake = wake.clone();
+        let exit_wake = wake.clone();
+        // A failed spawn drops the guard with the closure: the worker reads as ended.
+        let (end, worker_ended) = crate::thread_end::end_signal(move || exit_wake());
+        let spawned = thread::Builder::new()
             .name("rad-plugin-admin".into())
-            .spawn(move || worker::run(root, jobs, results, wake, download, worker_cancel))
-            .ok();
-        let failed = worker.is_none();
+            .spawn(move || {
+                let _end = end;
+                worker::run(root, jobs, results, worker_wake)
+            })
+            .is_ok();
+        // The thread is detached: `worker_ended`, not a join, tells when it is gone.
+        let failed = !spawned;
         Self {
             tx,
             rx,
-            worker,
+            worker_ended,
+            fetcher: fetch::Fetcher::new(wake, download),
             unsent: None,
             state: if failed {
                 AdminState::Failed
@@ -141,24 +187,64 @@ impl Admin {
         origin: Origin,
         request: PluginAdmin,
         actor: &Authority,
-    ) -> Result<Value, &'static str> {
+    ) -> Result<Value, Rejection> {
         if origin != Origin::Editor {
-            return Err("permission_denied");
+            return Err("permission_denied".into());
         }
-        if self.busy || self.locked || self.stopping {
-            return Err("resource_exhausted");
+        if self.busy || self.fetcher.active() || self.locked || self.stopping {
+            return Err("resource_exhausted".into());
         }
         if let Some(id) = &request.plugin_id {
             actor.plugin_change_allowed(id).map_err(plugin_error)?;
         }
+        self.confirm_source(&request)?;
         let next = self.next.checked_add(1).ok_or("resource_exhausted")?;
+        self.fetcher
+            .start(request, &self.cancel)
+            .map_err(|_| "resource_exhausted")?;
         self.next = next;
         self.operation = Some(next);
         self.error = None;
-        self.busy = true;
         self.state = AdminState::Preparing;
-        self.send(Job::Prepare(request));
         Ok(json!({"operation_id":next.to_string(),"state":"preparing"}))
+    }
+    /// An update from another repository than the registered one must carry the user's
+    /// confirmation of exactly that registered origin. Refusing here, before any download,
+    /// also covers a registered origin that changed since the user looked at it.
+    fn confirm_source(&self, request: &PluginAdmin) -> Result<(), Rejection> {
+        use rad_plugin_manager::GithubSource;
+        use rad_protocol::PluginOperation::{Reinstall, Update};
+        if !matches!(request.operation, Update | Reinstall) {
+            return Ok(());
+        }
+        let registered = self
+            .installed
+            .iter()
+            .find(|item| Some(&item.manifest.id) == request.plugin_id.as_ref())
+            .and_then(|item| item.source.as_deref());
+        let (Some(registered), Some(requested)) = (registered, request.source.as_deref()) else {
+            return Ok(());
+        };
+        // An unreadable request is the downloader's `invalid_source`; an unreadable
+        // registered origin cannot happen (the ledger only keeps canonical ones).
+        let (Ok(known), Ok(wanted)) = (
+            GithubSource::parse(registered),
+            GithubSource::parse(requested),
+        ) else {
+            return Ok(());
+        };
+        let confirmed = request
+            .replaces_source
+            .as_deref()
+            .and_then(|url| GithubSource::parse(url).ok())
+            .is_some_and(|replaces| replaces.same_origin(&known));
+        if known.same_origin(&wanted) || confirmed {
+            return Ok(());
+        }
+        Err(Rejection {
+            code: "source_changed",
+            details: json!({"registered": known.canonical_url(), "requested": wanted.canonical_url()}),
+        })
     }
     fn send(&mut self, job: Job) {
         // Only continuation of the current operation: never a second admin request.
@@ -195,7 +281,36 @@ impl Admin {
             AdminState::Idle
         };
     }
-    pub fn poll(&mut self, actor: &mut Authority, host: &mut Host, now: u64) {
+    /// Advances the administrator by whatever is ready (worker reply, finished download,
+    /// startup registration, activation, demand) and reports whether it changed anything
+    /// observable: its own state, or the host's bindings. `false` means a repeated call
+    /// would do nothing until something outside changes, so the turn may stop settling.
+    pub fn poll(&mut self, actor: &mut Authority, host: &mut Host, now: u64) -> bool {
+        let before = self.progress_mark(host);
+        self.advance(actor, host, now);
+        before != self.progress_mark(host)
+    }
+    /// Everything `advance` can change that another step of the turn may be waiting on.
+    fn progress_mark(&self, host: &Host) -> ProgressMark {
+        ProgressMark {
+            state: self.state,
+            error: self.error,
+            busy: self.busy,
+            locked: self.locked,
+            stop_sent: self.stop_sent,
+            unsent: self.unsent.is_some(),
+            downloading: self.fetcher.active(),
+            startup: self.startup.len(),
+            installed: self.installed.len(),
+            attempted: self.attempted.len(),
+            active: self.active.as_ref().map(|a| a.id.clone()),
+            bindings: host
+                .bindings()
+                .map(|(m, g, s)| (m.id.clone(), g, s))
+                .collect(),
+        }
+    }
+    fn advance(&mut self, actor: &mut Authority, host: &mut Host, now: u64) {
         if let Some(job) = self.unsent.take() {
             self.send(job);
         }
@@ -271,6 +386,8 @@ impl Admin {
                 _ => {}
             }
         }
+        self.fetcher.collect();
+        self.dispatch_fetched();
         self.reconcile_demand(actor, host, now);
         if self.stopping && (!self.busy || self.locked) && !self.stop_sent && self.unsent.is_none()
         {
@@ -278,10 +395,40 @@ impl Admin {
             self.send(Job::Stop);
         }
     }
+    /// Hands a returned download to the worker once it is idle. Selector, permits and
+    /// publication stay here: the permit is born only in `Reply::Prepared`.
+    fn dispatch_fetched(&mut self) {
+        if self.stopping || self.locked {
+            // A download that returns after shutdown (or a lock) is dropped unused.
+            if self.fetcher.take_done().is_some() && !self.locked {
+                self.error = Some("cancelled");
+                if !self.busy {
+                    self.state = AdminState::Failed;
+                }
+            }
+            return;
+        }
+        if self.busy || self.unsent.is_some() {
+            return;
+        }
+        match self.fetcher.take_done() {
+            None => {}
+            Some((_, Err(e))) => {
+                self.error = Some(manager_error(e));
+                self.state = AdminState::Failed;
+            }
+            Some((request, Ok(package))) => {
+                self.busy = true;
+                self.state = AdminState::Preparing;
+                self.send(Job::Prepare { request, package });
+            }
+        }
+    }
     /// Explicit repair of the same failed selection, only after its process was reaped.
     /// No package operation, configuration edit, credential replacement or action replay.
     pub fn can_retry(&self, id: &str, actor: &Authority, host: &Host) -> bool {
         !self.busy
+            && !self.fetcher.active()
             && !self.locked
             && !self.stopping
             && self.startup.is_empty()
@@ -450,7 +597,8 @@ impl Admin {
             })
             .collect();
         json!({
-            "state": self.state.wire(),
+            // The download is part of the visible operation although the worker is free.
+            "state": if self.fetcher.active() { AdminState::Preparing.wire() } else { self.state.wire() },
             "operation_id": self.operation.map(|n| n.to_string()),
             "error": self.error,
             "locked": self.locked,
@@ -463,7 +611,7 @@ impl Admin {
         self.cancel.cancel();
     }
     pub fn stopped(&self) -> bool {
-        self.worker.as_ref().is_none_or(|w| w.is_finished())
+        self.worker_ended.get() && self.fetcher.stopped()
     }
 }
 fn diagnostic_code(d: rad_plugin_host::Diagnostic) -> &'static str {
@@ -508,6 +656,7 @@ fn manager_error(e: rad_plugin_manager::Error) -> &'static str {
         E::AlreadyInstalled => "plugin_already_installed",
         E::PluginMismatch => "plugin_mismatch",
         E::SameVersion => "plugin_same_version",
+        E::SourceChanged => "source_changed",
         // No wildcard: a new manager error must choose its code, not inherit this one.
         E::CorruptState | E::WrongOwner | E::InvalidOperation | E::RecoveryRequired => {
             "recovery_required"
@@ -519,9 +668,131 @@ mod tests {
     use super::*;
     use rad_core::{configuration::Configuration, identity::IdentityRegistry};
     use std::{
-        sync::atomic::{AtomicBool, Ordering},
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
         time::{Duration, Instant},
     };
+    /// Counts loop wakes; the boot reply is the admin worker's first wake.
+    fn counting_admin(root: &std::path::Path, download: Download) -> (Admin, Arc<AtomicUsize>) {
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = wakes.clone();
+        let admin = Admin::new(
+            root.to_path_buf(),
+            Arc::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }),
+            download,
+        );
+        (admin, wakes)
+    }
+    fn booted(admin: &mut Admin, wakes: &AtomicUsize, actor: &mut Authority, host: &mut Host) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while admin.busy || wakes.load(Ordering::SeqCst) == 0 {
+            admin.poll(actor, host, 0);
+            assert!(Instant::now() < deadline, "admin worker did not boot");
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+    #[test]
+    fn the_admin_worker_wakes_the_loop_when_it_ends() {
+        let root = std::env::temp_dir().join(format!("rad-admin-exit-wake-{}", std::process::id()));
+        let (mut admin, wakes) = counting_admin(&root, Box::new(|_, _| Ok(vec![])));
+        let c = Configuration::prepare_new(&IdentityRegistry::new(505).unwrap()).unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(507).unwrap());
+        let mut host = Host::default();
+        booted(&mut admin, &wakes, &mut actor, &mut host);
+        let before = wakes.load(Ordering::SeqCst);
+        admin.shutdown();
+        while !admin.stop_sent {
+            admin.poll(&mut actor, &mut host, 0);
+        }
+        // No more polls: a loop asleep in `wait` only learns that the worker ended
+        // through a wake, or `shutdown_complete` would never be checked again.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !admin.stopped() {
+            assert!(Instant::now() < deadline, "admin worker did not stop");
+            thread::sleep(Duration::from_millis(1));
+        }
+        let after = wakes.load(Ordering::SeqCst);
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(after > before, "the ended worker never woke the loop");
+    }
+    /// A loop woken by the worker's end must already read the admin as stopped.
+    #[test]
+    fn a_loop_woken_by_the_admin_end_always_sees_it_stopped() {
+        let root = std::env::temp_dir().join(format!("rad-admin-end-{}", std::process::id()));
+        let c = Configuration::prepare_new(&IdentityRegistry::new(505).unwrap()).unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(507).unwrap());
+        let mut host = Host::default();
+        for round in 0..300 {
+            let (woken, wakes) = mpsc::channel();
+            let mut admin = Admin::new(
+                root.clone(),
+                Arc::new(move || {
+                    let _ = woken.send(());
+                }),
+                Box::new(|_, _| Ok(vec![])),
+            );
+            while admin.busy {
+                admin.poll(&mut actor, &mut host, 0);
+                thread::yield_now();
+            }
+            admin.shutdown();
+            while !admin.stop_sent {
+                admin.poll(&mut actor, &mut host, 0);
+            }
+            loop {
+                assert!(
+                    wakes.recv_timeout(Duration::from_secs(2)).is_ok(),
+                    "round {round}: woken for the end, read as running, never woken again"
+                );
+                if admin.stopped() {
+                    break;
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+    #[test]
+    fn a_panicking_download_still_wakes_the_loop() {
+        let root =
+            std::env::temp_dir().join(format!("rad-admin-fetch-wake-{}", std::process::id()));
+        let (mut admin, wakes) = counting_admin(
+            &root,
+            Box::new(|_, _| panic!("synthetic downloader failure")),
+        );
+        let c = Configuration::prepare_new(&IdentityRegistry::new(505).unwrap()).unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(507).unwrap());
+        let mut host = Host::default();
+        booted(&mut admin, &wakes, &mut actor, &mut host);
+        let before = wakes.load(Ordering::SeqCst);
+        admin
+            .submit(
+                Origin::Editor,
+                PluginAdmin {
+                    operation: rad_protocol::PluginOperation::Install,
+                    plugin_id: None,
+                    source: Some("https://github.com/owner/repo".into()),
+                    replaces_source: None,
+                },
+                &actor,
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !admin.fetcher.stopped() {
+            assert!(Instant::now() < deadline, "download thread did not end");
+            thread::sleep(Duration::from_millis(1));
+        }
+        let after = wakes.load(Ordering::SeqCst);
+        admin.shutdown();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !admin.stopped() {
+            admin.poll(&mut actor, &mut host, 0);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(1));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(after > before, "the failed download never woke the loop");
+    }
     #[test]
     fn shutdown_cancels_cooperative_download_and_joins_admin_worker() {
         let root =
@@ -555,6 +826,7 @@ mod tests {
                     operation: rad_protocol::PluginOperation::Install,
                     plugin_id: None,
                     source: Some("https://github.com/owner/repo".into()),
+                    replaces_source: None,
                 },
                 &actor,
             )
@@ -614,10 +886,11 @@ mod tests {
             operation: rad_protocol::PluginOperation::Install,
             plugin_id: None,
             source: Some("https://github.com/KroxiDev/rad-plugin-fixture".into()),
+            replaces_source: None,
         };
         assert_eq!(
             admin.submit(Origin::Automation, request.clone(), &actor),
-            Err("permission_denied")
+            Err("permission_denied".into())
         );
         assert!(
             admin
@@ -630,7 +903,7 @@ mod tests {
         }
         assert_eq!(
             admin.submit(Origin::Editor, request.clone(), &actor),
-            Err("resource_exhausted")
+            Err("resource_exhausted".into())
         );
         admin.shutdown(); // Closing/shutdown cannot make a blocked worker disappear.
         assert!(!admin.stopped());
@@ -717,7 +990,7 @@ mod lifecycle_tests {
         let end = Instant::now() + Duration::from_secs(5);
         loop {
             tick(admin, actor, ports, now);
-            if !admin.busy && admin.startup.is_empty() {
+            if !admin.busy && !admin.fetcher.active() && admin.startup.is_empty() {
                 break;
             }
             assert!(
@@ -733,6 +1006,7 @@ mod lifecycle_tests {
             operation: serde_json::from_value(serde_json::json!(op)).unwrap(),
             plugin_id: (op != "install").then(|| "org.rad.fixture".into()),
             source: version.map(|v| format!("https://github.com/owner/repo/releases/tag/v{v}")),
+            replaces_source: None,
         }
     }
     #[test]
@@ -815,7 +1089,7 @@ mod lifecycle_tests {
         assert!(effects.iter().any(|e| matches!(e, Effect::Accepted { .. })));
         assert_eq!(
             admin.submit(Origin::Editor, request("update", Some(2)), &actor),
-            Err("plugin_in_use")
+            Err("plugin_in_use".into())
         );
         let end = Instant::now() + Duration::from_secs(3);
         while actor.plugin_change_allowed("org.rad.fixture").is_err() {
@@ -914,6 +1188,84 @@ mod lifecycle_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn held_download_of_one_plugin_does_not_delay_cold_start_of_another() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let root = std::env::temp_dir().join(format!("rad-b6-fetch-{}", std::process::id()));
+        assert!(!root.exists());
+        let (b_package, a_package) = (package(1), package_for("org.rad.other", 1));
+        let release = Arc::new(AtomicBool::new(false));
+        let entered = Arc::new(AtomicBool::new(false));
+        let (r, e) = (release.clone(), entered.clone());
+        let mut admin = Admin::new(
+            root.clone(),
+            Arc::new(|| {}),
+            Box::new(move |source, _| {
+                if source.ends_with("/v1") {
+                    return Ok(b_package.clone());
+                }
+                e.store(true, Ordering::SeqCst);
+                while !r.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Ok(a_package.clone())
+            }),
+        );
+        let c = Configuration::prepare_new(&IdentityRegistry::new(95).unwrap()).unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(23).unwrap());
+        let mut ports = crate::plugin_dispatch::Plugins::default();
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        admin
+            .submit(Origin::Editor, request("install", Some(1)), &actor)
+            .unwrap();
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        assert_eq!(ports.host.state("org.rad.fixture"), None, "B starts cold");
+        // Install A: its download is held by the fake downloader.
+        admin
+            .submit(Origin::Editor, request("install", Some(2)), &actor)
+            .unwrap();
+        let end = Instant::now() + Duration::from_secs(5);
+        while !entered.load(Ordering::SeqCst) {
+            tick(&mut admin, &mut actor, &mut ports, 0);
+            assert!(Instant::now() < end, "download of A never started");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // First demand for B while A is still downloading.
+        admin.set_extra_demand(["org.rad.fixture".into()].into());
+        let cold_start = Instant::now() + Duration::from_secs(3);
+        while ports.host.state("org.rad.fixture") != Some(State::Ready) {
+            tick(&mut admin, &mut actor, &mut ports, 0);
+            assert!(
+                Instant::now() < cold_start,
+                "B must reach Ready while A's download is held: {}",
+                admin.status(&ports.host)
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let held = admin.status(&ports.host);
+        assert_eq!(held["state"], "preparing", "A's operation stays visible");
+        assert_eq!(
+            admin.submit(Origin::Editor, request("install", Some(2)), &actor),
+            Err("resource_exhausted".into()),
+            "one administrative operation at a time"
+        );
+        release.store(true, Ordering::SeqCst);
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        let done = admin.status(&ports.host);
+        assert_eq!(done["error"], serde_json::Value::Null);
+        assert_eq!(done["items"].as_array().unwrap().len(), 2, "A installed");
+        assert_eq!(ports.host.state("org.rad.fixture"), Some(State::Ready));
+        admin.set_extra_demand(Default::default());
+        admin.shutdown();
+        ports.host.shutdown();
+        let end = Instant::now() + Duration::from_secs(5);
+        while !admin.stopped() || ports.host.resources().0 > 0 {
+            tick(&mut admin, &mut actor, &mut ports, 0);
+            assert!(Instant::now() < end);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn ordinary_rejections_report_their_own_code_and_leave_admin_usable() {
         let root = std::env::temp_dir().join(format!("rad-d-rejections-{}", std::process::id()));
         assert!(!root.exists());
@@ -950,11 +1302,15 @@ mod lifecycle_tests {
             settle(&mut admin, &mut actor, &mut ports, 0);
             let status = admin.status(&ports.host);
             assert_eq!(status["error"], code, "{op}");
+            assert_status_decodes(status.clone(), code);
             assert_eq!(status["locked"], false, "{op}: nothing to recover");
             assert_eq!(status["items"][0]["selected"]["major"], 1);
             assert_eq!(ports.host.state("org.rad.fixture"), None);
             assert_eq!(actor.plugin_manifests().count(), 1);
         }
+        // A plugin that dies while activating reports `plugin_failed` the same way.
+        admin.error = Some("plugin_failed");
+        assert_status_decodes(admin.status(&ports.host), "plugin_failed");
         admin.shutdown();
         ports.host.shutdown();
         let end = Instant::now() + Duration::from_secs(3);
@@ -964,6 +1320,214 @@ mod lifecycle_tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+    const REGISTERED: &str = "https://github.com/owner/repo/releases/tag/v1";
+    const OTHER: &str = "https://github.com/other/repo/releases/tag/v2";
+    fn replacing(op: &str, source: &str, replaces: Option<&str>) -> PluginAdmin {
+        PluginAdmin {
+            source: Some(source.into()),
+            replaces_source: replaces.map(str::to_owned),
+            ..request(op, None)
+        }
+    }
+    /// An Admin whose downloader counts its calls and serves v2 for anything but `/v1`.
+    fn counting_admin(root: &std::path::Path) -> (Admin, Arc<std::sync::atomic::AtomicUsize>) {
+        let (v1, v2) = (package(1), package(2));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        let admin = Admin::new(
+            root.to_path_buf(),
+            Arc::new(|| {}),
+            Box::new(move |source, _| {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(if source.ends_with("/v1") {
+                    v1.clone()
+                } else {
+                    v2.clone()
+                })
+            }),
+        );
+        (admin, calls)
+    }
+    fn actor_for(seed: u128) -> Authority {
+        Authority::new(
+            Configuration::prepare_new(&IdentityRegistry::new(seed).unwrap()).unwrap(),
+            1,
+            std::num::NonZeroU128::new(seed + 100).unwrap(),
+        )
+    }
+    fn registered_source(admin: &Admin, ports: &crate::plugin_dispatch::Plugins) -> Value {
+        admin.status(&ports.host)["items"][0]["source"].clone()
+    }
+    fn shut(
+        mut admin: Admin,
+        actor: &mut Authority,
+        mut ports: crate::plugin_dispatch::Plugins,
+        root: PathBuf,
+    ) {
+        admin.shutdown();
+        ports.host.shutdown();
+        let end = Instant::now() + Duration::from_secs(3);
+        while !admin.stopped() || ports.host.resources().0 > 0 {
+            tick(&mut admin, actor, &mut ports, 0);
+            assert!(Instant::now() < end);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn another_repository_is_refused_without_downloading_until_the_registered_origin_is_confirmed()
+    {
+        for op in ["update", "reinstall"] {
+            let root =
+                std::env::temp_dir().join(format!("rad-b4-confirm-{op}-{}", std::process::id()));
+            assert!(!root.exists());
+            let (mut admin, calls) = counting_admin(&root);
+            let mut actor = actor_for(201);
+            let mut ports = crate::plugin_dispatch::Plugins::default();
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            admin
+                .submit(Origin::Editor, request("install", Some(1)), &actor)
+                .unwrap();
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            assert_eq!(registered_source(&admin, &ports), REGISTERED);
+            let downloads = calls.load(std::sync::atomic::Ordering::SeqCst);
+            // Missing and wrong confirmations are both refused, with both origins named.
+            for replaces in [None, Some("https://github.com/third/repo")] {
+                let refused = admin
+                    .submit(Origin::Editor, replacing(op, OTHER, replaces), &actor)
+                    .unwrap_err();
+                assert_eq!(refused.code, "source_changed", "{op} {replaces:?}");
+                assert_eq!(
+                    refused.details,
+                    json!({"registered": REGISTERED, "requested": OTHER})
+                );
+                assert_eq!(
+                    calls.load(std::sync::atomic::Ordering::SeqCst),
+                    downloads,
+                    "nothing downloaded"
+                );
+                assert!(!admin.busy && !admin.fetcher.active() && admin.error.is_none());
+                assert_eq!(registered_source(&admin, &ports), REGISTERED);
+            }
+            // The confirmed origin (any case, any tag) lets the change through.
+            admin
+                .submit(
+                    Origin::Editor,
+                    replacing(op, OTHER, Some("https://github.com/OWNER/Repo")),
+                    &actor,
+                )
+                .unwrap();
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            assert_eq!(admin.error, None, "{op}");
+            assert_eq!(
+                calls.load(std::sync::atomic::Ordering::SeqCst),
+                downloads + 1
+            );
+            assert_eq!(registered_source(&admin, &ports), OTHER, "{op}");
+            assert_eq!(
+                admin.status(&ports.host)["items"][0]["selected"]["major"],
+                2
+            );
+            shut(admin, &mut actor, ports, root);
+        }
+    }
+    #[test]
+    fn same_repository_needs_no_confirmation_whatever_the_tag_or_case() {
+        for (n, (op, next, registered)) in [
+            (
+                "update",
+                "https://github.com/owner/repo/releases/tag/v2",
+                "https://github.com/owner/repo/releases/tag/v2",
+            ),
+            (
+                "update",
+                "https://github.com/OWNER/REPO.git",
+                "https://github.com/OWNER/REPO",
+            ),
+            (
+                "reinstall",
+                "https://github.com/owner/repo/releases/tag/v2",
+                "https://github.com/owner/repo/releases/tag/v2",
+            ),
+            (
+                "reinstall",
+                "https://github.com/OWNER/REPO.git",
+                "https://github.com/OWNER/REPO",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let root = std::env::temp_dir().join(format!("rad-b4-same-{n}-{}", std::process::id()));
+            assert!(!root.exists());
+            let (mut admin, _) = counting_admin(&root);
+            let mut actor = actor_for(202);
+            let mut ports = crate::plugin_dispatch::Plugins::default();
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            admin
+                .submit(Origin::Editor, request("install", Some(1)), &actor)
+                .unwrap();
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            admin
+                .submit(Origin::Editor, replacing(op, next, None), &actor)
+                .unwrap_or_else(|r| panic!("{op} {next}: {r:?}"));
+            settle(&mut admin, &mut actor, &mut ports, 0);
+            assert_eq!(admin.error, None, "{op} {next}");
+            assert_eq!(registered_source(&admin, &ports), registered, "{op} {next}");
+            shut(admin, &mut actor, ports, root);
+        }
+    }
+    #[test]
+    fn a_plugin_without_registered_origin_takes_the_new_one_without_confirmation() {
+        use std::os::unix::fs::DirBuilderExt;
+        let root = std::env::temp_dir().join(format!("rad-b4-unregistered-{}", std::process::id()));
+        assert!(!root.exists());
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&root)
+            .unwrap();
+        {
+            // A plugin installed before origins were recorded.
+            let mut manager = rad_plugin_manager::Manager::create(
+                &root,
+                rad_plugin_contract::HOST_API,
+                rad_plugin_host::TARGET,
+            )
+            .unwrap();
+            let mut change = Some(
+                manager
+                    .prepare(rad_plugin_manager::Operation::Install, Some(&package(1)))
+                    .unwrap(),
+            );
+            manager.commit(&mut change).unwrap();
+        }
+        let (mut admin, _) = counting_admin(&root);
+        let mut actor = actor_for(203);
+        let mut ports = crate::plugin_dispatch::Plugins::default();
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        assert_eq!(registered_source(&admin, &ports), Value::Null);
+        admin
+            .submit(Origin::Editor, replacing("update", OTHER, None), &actor)
+            .unwrap();
+        settle(&mut admin, &mut actor, &mut ports, 0);
+        assert_eq!(admin.error, None);
+        assert_eq!(registered_source(&admin, &ports), OTHER);
+        shut(admin, &mut actor, ports, root);
+    }
+    /// The status the editor polls must decode with the wire vocabulary: a code outside
+    /// `ErrorCode` made the server fail the whole response and end the runtime.
+    fn assert_status_decodes(status: Value, code: &str) {
+        let data = rad_api::ResponseData::decode(
+            rad_api::Operation::PluginStatus,
+            rad_api::Status::Ok,
+            status,
+        )
+        .unwrap_or_else(|_| panic!("plugin_status with error {code} must decode"));
+        let rad_api::ResponseData::PluginStatus(view) = data else {
+            panic!("plugin_status data");
+        };
+        assert_eq!(view.error.map(|e| e.to_string()).as_deref(), Some(code));
     }
 }
 
@@ -1005,8 +1569,11 @@ mod repair_tests {
     fn finish(mut admin: Admin, root: PathBuf) {
         admin.shutdown();
         admin.send(Job::Stop);
-        if let Some(worker) = admin.worker.take() {
-            worker.join().unwrap();
+        // The end is published after the worker dropped its store: the files are free.
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !admin.stopped() {
+            assert!(std::time::Instant::now() < end, "admin worker did not end");
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         std::fs::remove_dir_all(root).unwrap();
     }

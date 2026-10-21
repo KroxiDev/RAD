@@ -72,6 +72,12 @@ pub struct Host {
 }
 impl Host {
     /// Convenience for standalone/off-loop users. Runtime uses reserve_launch/spawn/attach.
+    ///
+    /// The plugin leads its own process group and gets `PR_SET_PDEATHSIG` SIGKILL, which
+    /// fires when the *thread that spawns it* exits, not the process. Call this from a
+    /// thread that lives as long as the plugins it launches: if that thread ends, its
+    /// plugins receive SIGKILL. Stopping, failing, reaping or dropping a plugin kills its
+    /// whole group (ADR 0013).
     pub fn activate(
         &mut self,
         command: Command,
@@ -314,6 +320,11 @@ impl Host {
             })
         })
     }
+    /// Next finished invocation, each reported exactly once. An invocation past its
+    /// deadline is reported as `Failure { code: TimedOut }` and stays a residual: it
+    /// keeps counting in `resources`, retains its credential revision and blocks
+    /// `idle`/`remove` until its late reply is drained or the process is reaped, and
+    /// neither reports it again. Termination before the deadline is reported as `Failed`.
     pub fn take_completion(&mut self) -> Option<(Correlation, Outcome)> {
         self.workers.values_mut().find_map(|w| {
             let generation = w.generation;
@@ -540,6 +551,10 @@ pub struct Prepared {
     worker: Option<Worker>,
 }
 impl LaunchRequest {
+    /// Spawns the plugin in its own process group with `PR_SET_PDEATHSIG` SIGKILL.
+    /// The death signal is tied to the *calling thread*: run this on a thread that
+    /// outlives the plugin (the runtime's long-lived admin thread). If that thread
+    /// terminates, every plugin it spawned receives SIGKILL.
     pub fn spawn(self, command: Command) -> Prepared {
         let worker = Worker::spawn(
             command,

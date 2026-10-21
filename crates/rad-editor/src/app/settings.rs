@@ -54,6 +54,7 @@ impl App {
                 });
                 ui.collapsing(tr(self.es, "Advanced"), |ui| {
                     ui.collapsing(tr(self.es, "Log"), |ui| self.plugin_log(ui));
+                    ui.collapsing(tr(self.es, "RAD log"), |ui| self.runtime_log_ui(ui));
                 });
             });
         // Plugin status is asked for only while its tab is in view.
@@ -108,6 +109,41 @@ impl App {
                         .desired_width(f32::INFINITY),
                 );
             }
+        }
+    }
+    /// RAD's own recent events, read on request: technical, so they live in Advanced.
+    fn runtime_log_ui(&mut self, ui: &mut egui::Ui) {
+        if self.connected
+            && !self.worker.busy()
+            && ui.button(tr(self.es, "Read recent log")).clicked()
+        {
+            self.send(crate::Request::RuntimeLog {});
+        }
+        let Some(log) = &self.runtime_log else {
+            return;
+        };
+        if log.entries.is_empty() {
+            ui.label(tr(self.es, "No recent messages"));
+        } else {
+            let mut text = log
+                .entries
+                .iter()
+                .map(crate::diagnostics::log_line)
+                .collect::<Vec<_>>()
+                .join("\n");
+            ui.add(
+                egui::TextEdit::multiline(&mut text)
+                    .interactive(false)
+                    .desired_rows(8)
+                    .desired_width(f32::INFINITY),
+            );
+        }
+        if log.dropped != "0" {
+            ui.label(format!(
+                "{} {}",
+                log.dropped,
+                tr(self.es, "older messages were discarded")
+            ));
         }
     }
     fn settings_tabs(&mut self, ui: &mut egui::Ui) {
@@ -166,6 +202,7 @@ impl App {
                 });
             }
         });
+        self.machine_section(ui, look);
         ui.add_space(6.);
         ui.label(look.section(tr(self.es, "Window")));
         ui.horizontal(|ui| {
@@ -239,6 +276,10 @@ impl App {
                 }
             }
         });
+        self.restore_confirmation(ui, look);
+    }
+    /// Once a copy is uploaded: what it holds, and the choice to replace everything with it.
+    pub(super) fn restore_confirmation(&mut self, ui: &mut egui::Ui, look: &Look) {
         if let Some(token) = self.restore_token.clone() {
             ui.add_space(4.);
             ui.label(look.muted_text(&self.restore_summary));

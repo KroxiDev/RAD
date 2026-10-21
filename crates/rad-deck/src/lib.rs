@@ -85,13 +85,15 @@ impl Desired {
 }
 mod hidraw;
 mod render;
-/// Construct only after an explicit physical handoff; this is not a client capability.
+/// The device RAD may open. Building it opens nothing: the user's consent is the machine
+/// setting «Usar el Stream Deck con RAD» (ADR 0006), which the runtime checks before it
+/// spawns a deck. Not a client capability.
 #[derive(Clone, Copy, Debug)]
 pub struct DeviceConfig {
     _private: (),
 }
 impl DeviceConfig {
-    pub fn xl_after_exclusive_handoff() -> Self {
+    pub fn xl() -> Self {
         Self { _private: () }
     }
 }

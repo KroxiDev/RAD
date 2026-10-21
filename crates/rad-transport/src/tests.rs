@@ -118,3 +118,81 @@ fn notification_output_keeps_latest_unsent_payload_and_never_replaces_partial_fr
     ));
     assert!(!Transport::queue_notice(&mut c, 1, &vec![0; 4097]));
 }
+
+#[test]
+fn an_accept_failure_is_the_connections_fault_unless_the_listener_is_broken() {
+    use io::ErrorKind::{ConnectionAborted, ConnectionReset};
+    for peer in [
+        io::Error::from(ConnectionAborted),
+        io::Error::from(ConnectionReset),
+        io::Error::from_raw_os_error(libc::EPROTO),
+    ] {
+        assert_eq!(accept_fault(&peer), AcceptFault::Peer, "{peer:?}");
+    }
+    for exhausted in [libc::EMFILE, libc::ENFILE, libc::ENOBUFS, libc::ENOMEM] {
+        let error = io::Error::from_raw_os_error(exhausted);
+        assert_eq!(accept_fault(&error), AcceptFault::Exhausted, "{error:?}");
+    }
+    for broken in [libc::EBADF, libc::EINVAL, libc::ENOTSOCK] {
+        let error = io::Error::from_raw_os_error(broken);
+        assert_eq!(accept_fault(&error), AcceptFault::Listener, "{error:?}");
+    }
+}
+
+#[test]
+fn a_connection_that_cannot_be_registered_is_closed_and_the_next_one_is_served() {
+    use std::{
+        io::Read,
+        os::unix::{fs::PermissionsExt, net::UnixStream as StdStream},
+    };
+    let dir = std::env::temp_dir().join(format!("rad-transport-register-{}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut t = Transport::bind(&dir, 1).unwrap();
+    let mut refused = StdStream::connect(dir.join("rad/editor.sock")).unwrap();
+    refused
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    t.listeners_ready = [true, false];
+    t.accept_with(Origin::Editor, &mut |_, _, _| {
+        Err(io::Error::from_raw_os_error(libc::ENOMEM))
+    })
+    .expect("one connection cannot be watched; the transport goes on");
+    assert_eq!(t.connection_count(), 0);
+    assert_eq!(t.take_connection_failures(), 1);
+    assert_eq!(t.take_connection_failures(), 0, "counted once");
+    // The refused peer sees its connection closed, not a hang.
+    assert_eq!(refused.read(&mut [0; 1]).unwrap(), 0);
+    // The next one is accepted as usual.
+    let _next = StdStream::connect(dir.join("rad/editor.sock")).unwrap();
+    t.listeners_ready = [true, false];
+    t.accept_connections(Origin::Editor).unwrap();
+    assert_eq!(t.connection_count(), 1);
+    assert_eq!(t.take_connection_failures(), 0);
+    drop(t);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn an_exhausted_accept_waits_for_its_retry_instead_of_spinning() {
+    use std::os::unix::fs::DirBuilderExt;
+    let dir = std::env::temp_dir().join(format!("rad-transport-exhausted-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .recursive(true)
+        .create(&dir)
+        .unwrap();
+    let mut t = Transport::bind(&dir, 1).unwrap();
+    t.drive(1000).unwrap();
+    t.accept_fault(0, AcceptFault::Exhausted).unwrap();
+    // Not ready "now": a loop that sleeps until the deadline does not spin.
+    assert_eq!(t.next_deadline(), Some(1000 + ACCEPT_RETRY_MS));
+    t.drive(1000 + ACCEPT_RETRY_MS - 1).unwrap();
+    assert_eq!(t.next_deadline(), Some(1000 + ACCEPT_RETRY_MS));
+    // The retry runs; the queue is empty, so nothing is left pending.
+    t.drive(1000 + ACCEPT_RETRY_MS).unwrap();
+    assert_eq!(t.next_deadline(), None);
+    assert_eq!(t.take_connection_failures(), 1);
+    drop(t);
+    std::fs::remove_dir_all(dir).unwrap();
+}

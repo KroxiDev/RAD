@@ -64,8 +64,9 @@ impl Launcher {
         command
             .arg("--channel-fd=3")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(Stdio::null());
+        // stderr is the caller's choice (the runtime's by default): the helper
+        // keeps it for its own diagnostics and gives applications /dev/null.
         // SAFETY: child-only async-signal-safe fd syscalls; socket is held through spawn.
         unsafe {
             command.pre_exec(move || {

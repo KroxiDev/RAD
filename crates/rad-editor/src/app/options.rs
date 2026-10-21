@@ -11,7 +11,7 @@ use crate::{
     plugins::FormDraft,
     session::Error,
     status::describe_error,
-    worker::Worker,
+    worker::{Polled, Pulse, Worker},
 };
 use eframe::egui;
 use rad_plugin_contract::ChoiceList;
@@ -29,15 +29,42 @@ impl PluginUi {
         &mut self,
         worker: &mut Worker<OptionsJob, OptionsEvent>,
         connected: bool,
-    ) {
-        if let Some(event) = worker.poll()
-            && let Some(form) = self
-                .form
-                .as_mut()
-                .and_then(|(_, loaded)| loaded.form.as_mut())
-        {
-            form.accept_answer(event.ticket, event.result);
-        }
+    ) -> Pulse {
+        let pulse = match worker.poll() {
+            Polled::Ready(event) => {
+                if let Some(form) = self
+                    .form
+                    .as_mut()
+                    .and_then(|(_, loaded)| loaded.form.as_mut())
+                {
+                    form.accept_answer(event.ticket, event.result);
+                }
+                Pulse::Answered
+            }
+            Polled::Failed { .. } | Polled::Closed { .. } => {
+                // The question was a read: its list says so and can be asked again.
+                if let Some(form) = self
+                    .form
+                    .as_mut()
+                    .and_then(|(_, loaded)| loaded.form.as_mut())
+                {
+                    let lost = Error {
+                        code: "runtime_unavailable".into(),
+                        cause: None,
+                        source_change: None,
+                        unknown: false,
+                    };
+                    form.accept_answer(self.tickets, Err(lost));
+                }
+                // The list failed; it is asked for again, on a replacement worker, when needed.
+                return Pulse::Lost;
+            }
+            Polled::Pending => Pulse::Quiet,
+        };
+        self.ask_next(worker, connected);
+        pulse
+    }
+    fn ask_next(&mut self, worker: &mut Worker<OptionsJob, OptionsEvent>, connected: bool) {
         if !connected || worker.busy() {
             return;
         }
@@ -68,6 +95,7 @@ impl PluginUi {
             let lost = Error {
                 code: "runtime_unavailable".into(),
                 cause: None,
+                source_change: None,
                 unknown: false,
             };
             form.accept_answer(ticket, Err(lost));
@@ -263,6 +291,7 @@ mod tests {
             Err(code) => Err(Error {
                 code: code.into(),
                 cause: None,
+                source_change: None,
                 unknown: false,
             }),
         };
@@ -812,6 +841,25 @@ mod conversation_tests {
         talk.ui.pump_options(&mut talk.worker, true);
         assert!(talk.asked.try_recv().is_err());
         assert!(!talk.worker.busy());
+    }
+
+    #[test]
+    fn a_worker_that_dies_with_a_question_out_fails_that_list_and_is_reported_lost() {
+        let mut talk = Conversation::new();
+        talk.worker =
+            Worker::spawn(|_: OptionsJob| -> OptionsEvent { panic!("synthetic worker death") });
+        assert_eq!(talk.ui.pump_options(&mut talk.worker, true), Pulse::Quiet);
+        assert!(talk.worker.busy(), "the question went out");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while talk.ui.pump_options(&mut talk.worker, true) != Pulse::Lost {
+            assert!(Instant::now() < deadline, "the loss went unnoticed");
+            std::thread::yield_now();
+        }
+        assert!(!talk.worker.busy());
+        assert!(
+            matches!(talk.form().list(1), Some(ListState::Failed(_))),
+            "the list says so instead of loading forever"
+        );
     }
 
     #[test]

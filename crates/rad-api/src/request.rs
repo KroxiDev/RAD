@@ -202,6 +202,14 @@ requests! {
     PluginSettings => "plugin_settings", false { plugin_id:String },
     SetPluginSettings => "set_plugin_settings", true { plugin_id:String, parameters:Option<PluginParameters> },
     PluginLog => "plugin_log", false { plugin_id:String },
+    RuntimeLog => "runtime_log", false {},
+    Recovery => "recovery", false {},
+    RecoveryReset => "recovery_reset", true { confirm:bool },
+    MachineSettings => "machine_settings", false {},
+    SetMachineSettings => "set_machine_settings", true {
+        #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="present_non_null")] use_stream_deck:Option<bool>,
+        #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="present_non_null")] start_with_session:Option<bool>
+    },
     PluginRetry => "plugin_retry", true { plugin_id:String },
     PluginStatus => "plugin_status", false {},
     PluginVisual => "plugin_visual", false { id:String },
@@ -210,7 +218,8 @@ requests! {
         operation:PluginOperation,
         #[serde(default,skip_serializing_if="Option::is_none")] plugin_id:Option<String>,
         #[serde(default,skip_serializing_if="Option::is_none")] source:Option<String>,
-        #[serde(default,skip_serializing_if="Option::is_none")] trusted:Option<bool>
+        #[serde(default,skip_serializing_if="Option::is_none")] trusted:Option<bool>,
+        #[serde(default,skip_serializing_if="Option::is_none")] replaces_source:Option<String>
     },
     CredentialStatus => "credential_status", false { plugin_id:String, slot:String },
     CredentialReplace => "credential_replace", true { plugin_id:String, slot:String, secret:String },

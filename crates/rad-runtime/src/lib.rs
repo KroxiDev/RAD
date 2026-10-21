@@ -1,10 +1,14 @@
 pub mod bootstrap;
 mod catalog;
 pub mod display;
+pub mod events;
+pub mod exit;
 pub mod lifecycle;
 pub mod native;
 pub mod persistence;
+pub mod recovery;
 pub mod server;
+pub mod startup;
 pub mod storage;
 pub mod transfers;
 
@@ -17,3 +21,7 @@ mod plugin_admin;
 mod credential_worker;
 
 pub mod machine_settings;
+
+mod private_file;
+
+mod thread_end;

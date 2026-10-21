@@ -742,3 +742,116 @@ fn catalog_accepts_inclusive_4096_entries() {
     assert!(l.is_available());
     stop(&mut l);
 }
+// --- Per-application systemd scope (ADR 0013) ---
+/// Private session bus whose activatable services are `(name, exec)`.
+fn private_bus(
+    f: &Fixture,
+    services: &[(&str, String)],
+    envs: &[(&str, &PathBuf)],
+) -> (Bus, String) {
+    use std::io::BufRead;
+    let dir = f.0.join("bus-services");
+    fs::create_dir(&dir).unwrap();
+    for (name, exec) in services {
+        fs::write(
+            dir.join(format!("{name}.service")),
+            format!("[D-BUS Service]\nName={name}\nExec={exec}\n"),
+        )
+        .unwrap();
+    }
+    let config = f.0.join("bus.conf");
+    fs::write(&config,format!("<busconfig><type>session</type><listen>unix:path={}</listen><auth>EXTERNAL</auth><servicedir>{}</servicedir><policy context=\"default\"><allow own=\"*\"/><allow send_destination=\"*\"/><allow receive_sender=\"*\"/></policy></busconfig>",f.0.join("bus").display(),dir.display())).unwrap();
+    let mut command = f.command_for("/usr/bin/dbus-daemon");
+    command
+        .arg("--nofork")
+        .arg(format!("--config-file={}", config.display()))
+        .arg("--print-address=1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    for (k, v) in envs {
+        command.env(k, v);
+    }
+    let mut bus = Bus(command.spawn().unwrap());
+    let mut address = String::new();
+    std::io::BufReader::new(bus.0.stdout.take().unwrap())
+        .read_line(&mut address)
+        .unwrap();
+    (bus, address.trim().to_string())
+}
+fn launch_fixture_app(
+    f: &Fixture,
+    address: &str,
+    stderr: fs::File,
+) -> (Launcher, PathBuf, PathBuf) {
+    let app = env!("CARGO_BIN_EXE_rad-launcher-fixture");
+    let output = f.0.join("app-output");
+    let pid = f.0.join("app-pid");
+    fs::write(
+        f.0.join("data/applications/scoped.app.desktop"),
+        format!("[Desktop Entry]\nType=Application\nName=Scoped\nExec={app} one\n"),
+    )
+    .unwrap();
+    let mut command = f.command();
+    command
+        .env("DBUS_SESSION_BUS_ADDRESS", address)
+        .env("RAD_FIXTURE_OUTPUT", &output)
+        .env("RAD_FIXTURE_PID", &pid)
+        .env("RAD_FIXTURE_STDERR", "1")
+        .stderr(stderr);
+    let mut l = Launcher::spawn(command).unwrap();
+    until(|| {
+        l.pump().unwrap();
+        l.catalog().is_some()
+    });
+    let job = intent("scoped.app.desktop");
+    l.submit(&job).unwrap();
+    let mut outcome = None;
+    until(|| {
+        l.pump().unwrap();
+        outcome = l.take_completion();
+        outcome.is_some()
+    });
+    assert_eq!(outcome, Some((job.id, LaunchOutcome::Accepted)));
+    until(|| output.exists() && pid.exists());
+    (l, output, pid)
+}
+#[test]
+fn launched_app_is_moved_to_its_own_transient_scope() {
+    let f = Fixture::new();
+    let log = f.0.join("systemd-log");
+    let (_bus, address) = private_bus(
+        &f,
+        &[(
+            "org.freedesktop.systemd1",
+            env!("CARGO_BIN_EXE_rad-launcher-fake-systemd").into(),
+        )],
+        &[("RAD_FAKE_SYSTEMD_LOG", &log)],
+    );
+    let stderr = fs::File::create(f.0.join("helper-stderr")).unwrap();
+    let (mut l, _, pid) = launch_fixture_app(&f, &address, stderr);
+    let pid: u32 = fs::read_to_string(pid).unwrap().trim().parse().unwrap();
+    until(|| fs::read_to_string(&log).is_ok_and(|s| s.ends_with('\n')));
+    let call: serde_json::Value = serde_json::from_str(&fs::read_to_string(&log).unwrap()).unwrap();
+    assert_eq!(call["name"], format!("app-rad-scoped.app-{pid}.scope"));
+    assert_eq!(call["mode"], "fail");
+    assert_eq!(call["pids"], serde_json::json!([pid]));
+    assert_eq!(call["aux"], 0);
+    stop(&mut l);
+    assert_eq!(fs::read_to_string(f.0.join("helper-stderr")).unwrap(), "");
+}
+#[test]
+fn missing_systemd_still_accepts_and_reports_one_diagnostic_line() {
+    let f = Fixture::new();
+    let (_bus, address) = private_bus(&f, &[], &[]);
+    let path = f.0.join("helper-stderr");
+    let (mut l, output, _) = launch_fixture_app(&f, &address, fs::File::create(&path).unwrap());
+    assert!(output.exists());
+    until(|| fs::read_to_string(&path).is_ok_and(|s| s.ends_with('\n')));
+    // Give a hypothetical second diagnostic time to appear before counting.
+    std::thread::sleep(Duration::from_millis(200));
+    let text = fs::read_to_string(&path).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("scoped.app.desktop"), "{text}");
+    assert!(!text.contains("fixture-app-stderr-marker"), "{text}");
+    stop(&mut l);
+}

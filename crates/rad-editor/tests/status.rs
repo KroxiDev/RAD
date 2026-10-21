@@ -75,6 +75,14 @@ fn error_codes_read_as_sentences_and_unknown_codes_have_plain_fallback() {
         "Esa versión ya está seleccionada — no hay nada que actualizar"
     );
     assert_eq!(
+        describe_error("source_changed", false),
+        "The plugin's source changed — review it and confirm"
+    );
+    assert_eq!(
+        describe_error("source_changed", true),
+        "La fuente del plugin cambió: revísala y confirma"
+    );
+    assert_eq!(
         describe_error("some_future_code", false),
         "Something went wrong"
     );

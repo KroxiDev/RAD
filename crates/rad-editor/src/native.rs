@@ -79,6 +79,8 @@ pub enum Reply {
         visuals: Vec<crate::plugins::Visual>,
     },
     Connected,
+    /// The runtime is in recovery mode and refused a request that is not about plugins.
+    RecoveryRequired,
     Refresh(Refresh),
     Inspection(Inspection),
     Response {
@@ -307,6 +309,18 @@ pub fn start_with_clock(
         let plugin_form = matches!(&job, Job::PluginForm { .. });
         let plugin_visual = matches!(&job, Job::PluginVisuals { .. });
         let transfer_job = matches!(job, Job::Transfer { .. } | Job::TransferStep);
+        // Only the plugin manager also answers `recovery_required`, so any other job
+        // refused with it was refused by the runtime's recovery mode.
+        let recovery_aware = match &job {
+            Job::Request(request) => !request.operation().as_str().starts_with("plugin"),
+            Job::Refresh { .. }
+            | Job::Inspect(_)
+            | Job::Image { .. }
+            | Job::AppIcon { .. }
+            | Job::Transfer { .. }
+            | Job::TransferStep => true,
+            _ => false,
+        };
         palette.read(&theme);
         // Transfers belong to their original session and must never be resumed on a new one.
         // Local theme work neither renews nor keeps the RPC alive.
@@ -325,6 +339,7 @@ pub fn start_with_clock(
                 .map_err(|e| Error {
                     code: e.code.into(),
                     cause: None,
+                    source_change: None,
                     unknown: false,
                 })
         } else {
@@ -350,6 +365,7 @@ pub fn start_with_clock(
                         Err(Error {
                             code: e.code.into(),
                             cause: None,
+                            source_change: None,
                             unknown: false,
                         })
                     }
@@ -359,6 +375,7 @@ pub fn start_with_clock(
                 None => Err(Error {
                     code: "runtime_unavailable".into(),
                     cause: None,
+                    source_change: None,
                     unknown: false,
                 }),
                 Some(s) => match other {
@@ -384,6 +401,7 @@ pub fn start_with_clock(
                                     Err(Error {
                                         code: "operation_not_allowed".into(),
                                         cause: None,
+                                        source_change: None,
                                         unknown: false,
                                     })
                                 }
@@ -437,6 +455,7 @@ pub fn start_with_clock(
                             Err(Error {
                                 code: "busy".into(),
                                 cause: None,
+                                source_change: None,
                                 unknown: false,
                             })
                         } else {
@@ -457,6 +476,12 @@ pub fn start_with_clock(
                 },
             },
         });
+        let result = match result {
+            Err(error) if recovery_aware && error.code == "recovery_required" => {
+                Ok(Reply::RecoveryRequired)
+            }
+            other => other,
+        };
         Event {
             plugin_apply,
             plugin_admin,
@@ -518,6 +543,7 @@ fn options_session<'a>(
         let client = Client::connect(runtime, Endpoint::Editor).map_err(|e| Error {
             code: e.code.into(),
             cause: None,
+            source_change: None,
             unknown: false,
         })?;
         *connection = Some((Session::new(client), Instant::now()));

@@ -1,7 +1,6 @@
 //! Process entry policy; no authority, storage or device logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Options {
-    pub xl_exclusive: bool,
     pub help: bool,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +17,6 @@ impl Options {
         let mut options = Self::default();
         for arg in args {
             match arg.to_str() {
-                Some("--xl-exclusive") if !options.xl_exclusive => options.xl_exclusive = true,
                 Some("--help") if !options.help => options.help = true,
                 _ => return Err(LifecycleError::Arguments),
             }
@@ -91,8 +89,16 @@ impl Paths {
     /// Rejects symlinks in all components; existing parent permissions are unchanged.
     /// This is not a security boundary against concurrent same-UID OS access.
     pub fn prepare(&self) -> Result<(), LifecycleError> {
+        self.prepare_runtime()?;
+        self.prepare_data()
+    }
+    /// Apart from the data directory because the exit classes differ (ADR 0011): an unsafe
+    /// runtime directory blocks any restart, an unsafe data directory does not.
+    pub fn prepare_runtime(&self) -> Result<(), LifecycleError> {
         check_directories(&self.runtime, false)?;
-        check_private(&self.runtime)?;
+        check_private(&self.runtime)
+    }
+    pub fn prepare_data(&self) -> Result<(), LifecycleError> {
         check_directories(&self.data, true)?;
         check_private(&self.data)
     }

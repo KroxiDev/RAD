@@ -2296,6 +2296,7 @@ name = "rad-store"
 version = "0.1.0"
 dependencies = [
  "image",
+ "libc",
  "rad-codec",
  "rad-core",
  "rad-media",

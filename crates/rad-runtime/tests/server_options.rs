@@ -12,6 +12,7 @@ use std::{
 };
 
 const PLUGIN: &str = "org.rad.test.options";
+const REGISTERED_ORIGIN: &str = "https://github.com/owner/repo";
 
 struct Directory(PathBuf);
 impl Drop for Directory {
@@ -49,9 +50,15 @@ fn seed(store: &Path) {
     )
     .unwrap();
     let bytes = rad_plugin_package::encode(&candidate);
+    let origin = rad_plugin_manager::GithubSource::parse(REGISTERED_ORIGIN).unwrap();
     let mut prepared = Some(
         manager
-            .prepare(rad_plugin_manager::Operation::Install, Some(&bytes))
+            .prepare_from_source(
+                rad_plugin_manager::Operation::Install,
+                Some(&bytes),
+                Some(&origin),
+                None,
+            )
             .unwrap(),
     );
     assert!(matches!(
@@ -776,6 +783,37 @@ fn asking_for_options_needs_no_execute_and_changes_nothing_anywhere() {
         // The plugin was only asked, never told to act.
         let visual = await_visual(&mut editor, "b1", |v| v["availability"] == "current");
         assert_eq!(visual["text"], "invocations:0");
+    });
+}
+
+#[test]
+fn an_update_from_another_repository_is_refused_with_both_origins_in_the_error() {
+    world("source-changed", |runtime| {
+        let mut editor = connect(&runtime, Endpoint::Editor);
+        ready(&mut editor);
+        let status = call(&mut editor, "plugin_status", json!({}));
+        assert_eq!(status["items"][0]["source"], REGISTERED_ORIGIN);
+        for operation in ["update", "reinstall"] {
+            let response = editor
+                .request(
+                    "plugin_admin",
+                    json!({"operation":operation,"plugin_id":PLUGIN,"trusted":true,
+                           "source":"https://github.com/other/repo/releases/tag/v2"}),
+                )
+                .unwrap();
+            let error = response.error.expect("the origin change must be confirmed");
+            assert_eq!(error.code, "source_changed", "{operation}");
+            assert_eq!(
+                error.details,
+                json!({"registered":REGISTERED_ORIGIN,
+                       "requested":"https://github.com/other/repo/releases/tag/v2"}),
+                "{operation}"
+            );
+            assert_eq!(
+                error.outcome,
+                Some(rad_client::response::Outcome::NotApplied)
+            );
+        }
     });
 }
 

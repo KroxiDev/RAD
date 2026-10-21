@@ -6,7 +6,7 @@ use crate::{
     native::{self, Event, Job, OptionsEvent, OptionsJob, Reply, TransferKind},
     session::{Board, Inspection},
     theme::Palette,
-    worker::Worker,
+    worker::{Polled, Pulse, SubmitError, Worker},
 };
 use eframe::egui;
 use serde_json::{Value, json};
@@ -18,14 +18,20 @@ mod credentials;
 mod deck;
 mod inspector;
 mod look;
+mod machine;
 mod options;
 mod plugins;
+mod recovery;
+mod service;
 mod settings;
 
 use look::Look;
 
 /// Pause after the last keystroke before the application list is searched again.
 const SEARCH_DEBOUNCE_MS: u64 = 250;
+
+/// Pause after starting the service so the runtime can open its socket before connecting.
+const SERVICE_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Duration a wait starts with when it is put on a key.
 const DEFAULT_WAIT_MS: u64 = 1000;
@@ -119,6 +125,10 @@ pub struct App {
     /// must not hold up Apply or the polling that `worker` does.
     options_worker: Worker<OptionsJob, OptionsEvent>,
     credential_worker: credentials::CredentialWorker,
+    /// Replace a worker whose thread died, a bounded number of times in a row.
+    worker_respawn: crate::worker::Respawner<Job, Event>,
+    options_respawn: crate::worker::Respawner<OptionsJob, OptionsEvent>,
+    credential_respawn: crate::worker::Respawner<credentials::Job, credentials::Event>,
     credentials: credentials::Panel,
     credential_selection: Option<String>,
     control: Controller,
@@ -176,10 +186,30 @@ pub struct App {
     textures: std::collections::BTreeMap<String, egui::TextureHandle>,
     image_attempts: std::collections::BTreeSet<String>,
     plugins: plugins::PluginUi,
+    /// Owner of every call to systemd; absent where the editor must not touch the system.
+    service_worker: Option<Worker<crate::service::Job, crate::service::Outcome>>,
+    service: service::ServiceUi,
+    /// What the runtime says this computer is set to do; absent until it has answered.
+    machine: Option<crate::machine::Settings>,
+    machine_due: bool,
+    /// A change waiting for systemd to enable or disable starting RAD with the session.
+    machine_pending: Option<crate::machine::Change>,
+    recovery: crate::recovery::Mode,
+    recovery_due: bool,
+    recovery_reset_confirm: bool,
+    /// The previous exit the user has already seen: its code and time.
+    previous_exit_seen: Option<(String, String)>,
+    runtime_log: Option<rad_api::RuntimeLogView>,
 }
 impl App {
     pub fn new(runtime: PathBuf, theme: PathBuf) -> Self {
-        Self::with_preferences_path(runtime, theme, crate::preferences::default_path())
+        let mut app =
+            Self::with_preferences_path(runtime, theme, crate::preferences::default_path());
+        app.service_worker = Some(crate::service::worker(
+            crate::service::user_service(),
+            SERVICE_SETTLE,
+        ));
+        app
     }
     fn with_preferences_path(
         runtime: PathBuf,
@@ -193,9 +223,22 @@ impl App {
         let preference_error = loaded.as_ref().err().map(ToString::to_string);
         let preferences = loaded.ok().flatten().unwrap_or_default();
         let es = preferences.language(&crate::preferences::system_locale());
+        let options_respawn = {
+            let runtime = runtime.clone();
+            crate::worker::Respawner::new(move || native::start_options(runtime.clone()))
+        };
+        let credential_respawn = {
+            let runtime = runtime.clone();
+            crate::worker::Respawner::new(move || credentials::start(runtime.clone()))
+        };
+        let worker_respawn = {
+            let runtime = runtime.clone();
+            let theme = theme.clone();
+            crate::worker::Respawner::new(move || native::start(runtime.clone(), theme.clone()))
+        };
         let options_worker = native::start_options(runtime.clone());
         let credential_worker = credentials::start(runtime.clone());
-        let mut worker = native::start(runtime.clone(), theme);
+        let mut worker = native::start(runtime.clone(), theme.clone());
         let _ = worker.submit(Job::Connect);
         let mut app = Self {
             preferences,
@@ -203,6 +246,9 @@ impl App {
             worker,
             options_worker,
             credential_worker,
+            worker_respawn,
+            options_respawn,
+            credential_respawn,
             credentials: Default::default(),
             credential_selection: None,
             control: Controller::default(),
@@ -252,6 +298,16 @@ impl App {
             textures: Default::default(),
             image_attempts: Default::default(),
             plugins: Default::default(),
+            service_worker: None,
+            service: Default::default(),
+            machine: None,
+            machine_due: false,
+            machine_pending: None,
+            recovery: Default::default(),
+            recovery_due: false,
+            recovery_reset_confirm: false,
+            previous_exit_seen: None,
+            runtime_log: None,
         };
         if let Some(error) = preference_error {
             app.warn(tr(
@@ -293,11 +349,66 @@ impl App {
     }
     /// A user command waits behind the in-flight poll; controls never depend on polling.
     fn command(&mut self, job: Job) -> bool {
-        let accepted = self.worker.enqueue(job).is_ok();
-        if !accepted {
-            self.warn(tr(self.es, "Busy — not sent"));
+        let refused = self.worker.enqueue(job).err();
+        match refused {
+            None => {}
+            Some(SubmitError::Busy) => self.warn(tr(self.es, "Busy — not sent")),
+            Some(SubmitError::Disconnected) => self.warn(tr(self.es, "Not applied — try again")),
         }
-        accepted
+        refused.is_none()
+    }
+    /// The user asked to reconnect: a worker given up on is replaced first.
+    /// The user asked to reconnect: every worker that gave up starts again with a fresh count.
+    fn reconnect(&mut self, ctx: &egui::Context) {
+        if self.worker_respawn.gave_up() {
+            let wake = ctx.clone();
+            self.worker_respawn
+                .revive(&mut self.worker, move || wake.request_repaint());
+        }
+        if self.credential_respawn.gave_up() {
+            let wake = ctx.clone();
+            self.credential_respawn
+                .revive(&mut self.credential_worker, move || wake.request_repaint());
+        }
+        if self.options_respawn.gave_up() {
+            let wake = ctx.clone();
+            self.options_respawn
+                .revive(&mut self.options_worker, move || wake.request_repaint());
+        }
+        self.command(Job::Connect);
+    }
+    /// The worker's thread ended. A job in flight has an unknown outcome: it is not repeated,
+    /// whatever waited for its answer stops waiting, and the state is read again. A command
+    /// that never left is said not to have been applied. Replacement is bounded; once the
+    /// limit is reached the bar offers Retry.
+    fn worker_lost(&mut self, ctx: &egui::Context, in_flight: bool, unsent: bool) {
+        ctx.request_repaint();
+        self.connected = false;
+        self.attempted = true;
+        self.transfer_active = false;
+        self.pending_action = None;
+        self.icon_candidate = None;
+        self.icon_asked = false;
+        self.plugins.abandon_pending();
+        self.plugins.visuals.clear();
+        self.plugins.status = Value::Null;
+        self.plugins.dependency_credentials = None;
+        self.credentials.clear();
+        if in_flight {
+            self.resolving_unknown = true;
+            self.force = true;
+            self.overview_due = true;
+            self.inspect_needed = self.selected().is_some();
+        }
+        if unsent {
+            self.warn(tr(self.es, "Not applied — try again"));
+        } else if in_flight {
+            self.say(tr(self.es, "Checking what changed…"));
+        }
+        let wake = ctx.clone();
+        self.reconnect_needed = self
+            .worker_respawn
+            .replace(&mut self.worker, move || wake.request_repaint());
     }
     fn send(&mut self, request: Request) {
         self.command(Job::Request(request));
@@ -445,6 +556,10 @@ impl App {
                 self.connected = false;
             }
             for kind in changed {
+                // Nothing is read while the runtime is in recovery mode: it would refuse.
+                if !self.recovery.is_normal() {
+                    break;
+                }
                 match kind {
                     rad_api::NoticeKind::Board => {
                         self.force = true;
@@ -466,13 +581,23 @@ impl App {
                 }
             }
         }
-        if let Some(event) = self.worker.poll() {
+        let polled = self.worker.poll();
+        match &polled {
+            Polled::Failed { unsent } => self.worker_lost(ctx, true, *unsent),
+            Polled::Closed { unsent } => self.worker_lost(ctx, false, *unsent),
+            Polled::Ready(_) | Polled::Pending => {}
+        }
+        if let Polled::Ready(event) = polled {
             // Some handlers finish this turn early; keep newly invalidated work runnable.
             ctx.request_repaint();
             self.palette = event.palette;
             // One recovery attempt per lost RPC, including a definitely-unsent mutation.
             // A failed Connect starts disconnected, so it cannot trigger a retry loop.
             let connection_lost = self.connected && !event.connected;
+            // Connecting says nothing of the worker's health; any other answer does.
+            if matches!(&event.result, Ok(reply) if !matches!(reply, Reply::Connected)) {
+                self.worker_respawn.answered();
+            }
             self.connected = event.connected;
             match event.result {
                 Ok(Reply::PluginApplied(r)) => {
@@ -515,6 +640,11 @@ impl App {
                     self.accept_plugin_visuals(ctx, &revision, visuals);
                 }
                 Err(e) => {
+                    // The runtime did not explain: nothing is retried until something changes.
+                    self.recovery_due = false;
+                    if matches!(self.recovery, crate::recovery::Mode::Asking) {
+                        self.recovery = Default::default();
+                    }
                     if connection_lost {
                         self.reconnect_needed = true;
                         self.force = true;
@@ -542,6 +672,9 @@ impl App {
                     }
                     if event.plugin_admin {
                         self.plugins.admin_pending = false;
+                        if let Some(change) = e.source_change.clone() {
+                            self.plugins.source_refused(change);
+                        }
                     }
                     if event.plugin_apply {
                         self.plugins.form_pending = false;
@@ -598,7 +731,12 @@ impl App {
                         self.connected = false;
                     }
                 }
+                Ok(Reply::RecoveryRequired) => self.enter_recovery(),
                 Ok(Reply::Connected) => {
+                    self.recovery = Default::default();
+                    self.recovery_due = false;
+                    self.machine = None;
+                    self.machine_due = true;
                     self.plugins.reconnect();
                     self.credentials.clear();
                     self.attempted = true;
@@ -750,6 +888,11 @@ impl App {
                         }
                         return;
                     }
+                    if self.recovery_response(&operation, &r)
+                        || self.machine_response(&operation, &r)
+                    {
+                        return;
+                    }
                     if operation == "restore_commit" && self.plugins.restore_result(r.status) {
                         self.credentials.clear();
                         self.settings_open = true;
@@ -852,6 +995,7 @@ impl App {
             self.reconnect_needed = false;
             let _ = self.worker.submit(Job::Connect);
         }
+        self.pump_service(ctx);
         if !self.worker.busy() && self.connected {
             let now = self.now_ms();
             let next_image = self.board.as_ref().and_then(|b| {
@@ -869,14 +1013,17 @@ impl App {
                     ))
                 })
             });
+            let normal = self.recovery.is_normal();
             match self.schedule.choose([
-                self.force || self.overview_due,
-                self.result_due && self.control.result_request().is_some(),
+                normal && (self.force || self.overview_due),
+                normal && self.result_due && self.control.result_request().is_some(),
                 self.transfer_active,
-                self.inspect_needed,
-                self.catalog_due.is_some_and(|due| now >= due),
-                self.plugins.has_work(),
-                next_image.is_some(),
+                normal && self.inspect_needed,
+                normal && self.catalog_due.is_some_and(|due| now >= due),
+                normal && self.plugins.has_work(),
+                normal && next_image.is_some(),
+                normal && self.machine_due,
+                self.recovery_due,
             ]) {
                 Some(0) => {
                     let force = std::mem::take(&mut self.force);
@@ -921,6 +1068,16 @@ impl App {
                         revision,
                     });
                 }
+                Some(7) => {
+                    self.machine_due = false;
+                    let _ = self
+                        .worker
+                        .submit(Job::Request(Request::MachineSettings {}));
+                }
+                Some(8) => {
+                    self.recovery_due = false;
+                    let _ = self.worker.submit(Job::Request(Request::Recovery {}));
+                }
                 _ => {}
             }
         }
@@ -929,9 +1086,48 @@ impl App {
             self.styled = Some(self.palette.clone());
         }
     }
+    /// Work waiting for the worker that a repaint must start.
+    fn reads_due(&self) -> bool {
+        self.force
+            || self.overview_due
+            || self.inspect_needed
+            || self.transfer_active
+            || self.plugins.has_work()
+            || self.catalog_due.is_some_and(|due| self.now_ms() >= due)
+            || (self.result_due && self.control.result_request().is_some())
+    }
+    /// Results of the credential and option-list workers; a dead one is replaced, within
+    /// the same bound as the main worker.
+    fn pump_auxiliary(&mut self, ctx: &egui::Context) {
+        match self.credentials.pump(&mut self.credential_worker) {
+            Pulse::Answered => self.credential_respawn.answered(),
+            Pulse::Lost => {
+                let wake = ctx.clone();
+                self.credential_respawn
+                    .replace(&mut self.credential_worker, move || wake.request_repaint());
+            }
+            Pulse::Quiet => {}
+        }
+        match self
+            .plugins
+            .pump_options(&mut self.options_worker, self.connected)
+        {
+            Pulse::Answered => self.options_respawn.answered(),
+            Pulse::Lost => {
+                let wake = ctx.clone();
+                self.options_respawn
+                    .replace(&mut self.options_worker, move || wake.request_repaint());
+            }
+            Pulse::Quiet => {}
+        }
+    }
     /// Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) reach the runtime unless a text field wants them.
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        if !self.connected || self.credentials.editing() || ctx.egui_wants_keyboard_input() {
+        if !self.connected
+            || !self.recovery.is_normal()
+            || self.credentials.editing()
+            || ctx.egui_wants_keyboard_input()
+        {
             return;
         }
         use egui::{Key, Modifiers};
@@ -958,6 +1154,10 @@ impl eframe::App for App {
             let wake = ctx.clone();
             self.credential_worker
                 .set_waker(move || wake.request_repaint());
+            if let Some(service) = &self.service_worker {
+                let wake = ctx.clone();
+                service.set_waker(move || wake.request_repaint());
+            }
             let wake = ctx.clone();
             self.notices = Some(crate::notices::Notices::start(
                 self.runtime.clone(),
@@ -970,18 +1170,20 @@ impl eframe::App for App {
             self.wake_registered = true;
         }
         self.pump(&ctx);
-        self.credentials.pump(&mut self.credential_worker);
+        self.pump_auxiliary(&ctx);
         if self.credential_selection != self.selected() {
             self.credentials.clear();
             self.credential_selection = self.selected();
         }
-        self.plugins
-            .pump_options(&mut self.options_worker, self.connected);
         self.shortcuts(&ctx);
         let look = Look::new(&self.palette);
         // Background polling must not gate the controls: disabling them every poll made
         // the panels blink and took keyboard focus away from their text fields.
         let editable = self.connected && !self.transfer_active;
+        if !self.recovery.is_normal() {
+            self.recovery_view(ui, &look);
+            return;
+        }
         egui::Panel::top("bar")
             .frame(look.panel(look.surface, 10))
             .show(ui, |ui| self.bar(ui, &look));
@@ -1026,16 +1228,7 @@ impl eframe::App for App {
         self.settings_window(&ctx, &look);
         self.plugin_form_window(&ctx);
         deck::drag_ghost(&ctx, &look);
-        if self.connected
-            && !self.worker.busy()
-            && (self.force
-                || self.overview_due
-                || self.inspect_needed
-                || self.transfer_active
-                || self.plugins.has_work()
-                || self.catalog_due.is_some_and(|due| self.now_ms() >= due)
-                || (self.result_due && self.control.result_request().is_some()))
-        {
+        if self.connected && !self.worker.busy() && (self.machine_due || self.reads_due()) {
             ctx.request_repaint();
         }
     }
@@ -1144,6 +1337,7 @@ mod connection_loss_tests {
                 result: Err(crate::session::Error {
                     code: "runtime_unavailable".into(),
                     cause: None,
+                    source_change: None,
                     unknown: false,
                 }),
             }
@@ -1165,3 +1359,6 @@ mod connection_loss_tests {
         assert!(!app.connected);
     }
 }
+
+#[cfg(test)]
+mod worker_loss_tests;

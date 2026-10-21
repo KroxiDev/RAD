@@ -1,7 +1,7 @@
 //! Pure IPC adapter; trusted endpoint origin, no I/O or second authority.
 mod external;
 mod plugins;
-pub use external::{Capabilities, External, TransferKind};
+pub use external::{Capabilities, External, TransferKind, parse_transfer};
 pub use plugins::{OptionsSubject, PluginAdmin, PluginOperation, PluginOptions};
 mod admin;
 mod edits;
@@ -335,16 +335,7 @@ impl Protocol {
             }
             R::Result { execution_id } => execution::result(a, c, execution_id),
             R::Get { .. } | R::List { .. } | R::GetSection { .. } => queries::read(a, c, request),
-            R::Hello {} => Ok(
-                json!({"protocol":1,"session_id":format!("{:032x}",self.session),"capabilities":self.operations(c.origin),"limits":{"frame_bytes":65536,"page_items":32,"page_bytes":49152,"value_bytes":8192,
-                "json_depth":16,"string_bytes":16384,"array_items":256,
-                "connections":8,"automation_connections":6,"requests_per_connection":4,"requests_global":32,
-                "output_frames_per_connection":16,"output_bytes_per_connection":1048576,
-                "hello_ms":2000,"partial_frame_ms":2000,"idle_ms":60000,"write_ms":2000,
-                "request_ms":10000,"queued_request_ms":5000,"active_executions":16,"live_jobs":32,
-                "terminal_results":256,"terminal_bytes":4194304,"terminal_ttl_ms":600000,
-                "result_bytes":12288,"error_message_bytes":256}}),
-            ),
+            R::Hello {} => Ok(hello_data(self.session, &self.operations(c.origin))),
             R::Status {} => {
                 let s = a.status(c.origin);
                 let mut v = json!({"storage_state":match a.storage_state(){StorageState::Ready=>"ready",StorageState::Uncertain=>"uncertain",StorageState::RecoveryRequired=>"recovery_required"},"view_revision":s.revision.map(|r|r.value().to_string()),"active_folder_id":s.active.map(|b|short(b.short()))});
@@ -553,6 +544,9 @@ impl Protocol {
                 "plugin_status",
                 "plugin_retry",
                 "plugin_log",
+                "runtime_log",
+                "machine_settings",
+                "set_machine_settings",
                 "plugin_dependencies",
                 "plugin_manifest",
                 "plugin_settings",
@@ -595,6 +589,48 @@ impl Protocol {
         ops
     }
 }
+/// The data of `hello`: the same session and limits whatever the mode, with the operations
+/// the endpoint announces.
+fn hello_data(session: NonZeroU128, operations: &[&str]) -> Value {
+    json!({"protocol":1,"session_id":format!("{:032x}",session),"capabilities":operations,"limits":{"frame_bytes":65536,"page_items":32,"page_bytes":49152,"value_bytes":8192,
+    "json_depth":16,"string_bytes":16384,"array_items":256,
+    "connections":8,"automation_connections":6,"requests_per_connection":4,"requests_global":32,
+    "output_frames_per_connection":16,"output_bytes_per_connection":1048576,
+    "hello_ms":2000,"partial_frame_ms":2000,"idle_ms":60000,"write_ms":2000,
+    "request_ms":10000,"queued_request_ms":5000,"active_executions":16,"live_jobs":32,
+    "terminal_results":256,"terminal_bytes":4194304,"terminal_ttl_ms":600000,
+    "result_bytes":12288,"error_message_bytes":256}})
+}
+
+/// What a runtime in recovery mode serves (ADR 0011); the normal `hello` never announces
+/// it. Whoever decides what is announced is this crate, not the runtime.
+pub fn recovery_operations(origin: Origin) -> &'static [rad_api::Operation] {
+    use rad_api::Operation as Op;
+    match origin {
+        Origin::Editor => &[
+            Op::Hello,
+            Op::Recovery,
+            Op::RecoveryReset,
+            Op::TransferBegin,
+            Op::TransferWrite,
+            Op::TransferFinish,
+            Op::TransferDrop,
+            Op::RestoreCommit,
+        ],
+        Origin::Automation => &[Op::Hello],
+    }
+}
+
+/// The answer to `hello` in recovery mode: no Authority exists, so none is consulted.
+pub fn recovery_hello(session: NonZeroU128, origin: Origin) -> rad_api::Hello {
+    let operations: Vec<_> = recovery_operations(origin)
+        .iter()
+        .map(|operation| operation.as_str())
+        .collect();
+    serde_json::from_value(hello_data(session, &operations))
+        .expect("hello data follows the client contract")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResponseTooLarge;
 impl Protocol {

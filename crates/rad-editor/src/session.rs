@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 pub struct Error {
     pub code: String,
     pub cause: Option<String>,
+    /// Set when the runtime refused an update from another source until it is confirmed.
+    pub source_change: Option<crate::plugins::SourceChange>,
     pub unknown: bool,
 }
 impl Error {
@@ -16,6 +18,7 @@ impl Error {
         Self {
             code: "invalid_request".into(),
             cause: None,
+            source_change: None,
             unknown: false,
         }
     }
@@ -49,6 +52,7 @@ impl<P: Port> Session<P> {
             return Err(Error {
                 code: "runtime_unavailable".into(),
                 cause: None,
+                source_change: None,
                 unknown: false,
             });
         }
@@ -58,6 +62,7 @@ impl<P: Port> Session<P> {
                 Err(Error {
                     code: e.code.into(),
                     cause: None,
+                    source_change: None,
                     unknown: e.outcome == Some(Outcome::Unknown),
                 })
             }
@@ -66,6 +71,9 @@ impl<P: Port> Session<P> {
                 Err(Error {
                     code: e.code.to_string(),
                     cause: e.details["cause"].as_str().map(str::to_owned),
+                    source_change: (e.code == "source_changed")
+                        .then(|| crate::plugins::SourceChange::from_details(&e.details))
+                        .flatten(),
                     unknown: e.outcome == Some(Outcome::Unknown),
                 })
             }
@@ -195,6 +203,7 @@ fn same_revision(data: &Value, revision: &str) -> Result<(), Error> {
         return Err(Error {
             code: "cursor_expired".into(),
             cause: None,
+            source_change: None,
             unknown: false,
         });
     }
@@ -288,6 +297,7 @@ fn same_entity_revision(data: &rad_api::ResponseData, revision: &str) -> Result<
         return Err(Error {
             code: "cursor_expired".into(),
             cause: None,
+            source_change: None,
             unknown: false,
         });
     }
