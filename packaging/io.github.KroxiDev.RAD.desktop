@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=RAD
+Comment=Rust Action Deck
+Exec=rad-editor
+Icon=io.github.KroxiDev.RAD
+StartupWMClass=io.github.KroxiDev.RAD
+Terminal=false
+Categories=Utility;

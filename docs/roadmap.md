@@ -290,17 +290,16 @@ Cambios puntuales pedidos por el usuario tras probar el editor (2026-10-21), ant
 la fase 4. Lo visual se valida con el usuario: cada pantalla se le muestra y se ajusta
 con lo que diga. E1–E3 son independientes de E4–E5.
 
-### E1 · Ícono de RAD
+### E1 · Ícono de RAD — hecho (commit `feat: add shared RAD desktop icon`)
 
-- **Hoy:** RAD no tiene ícono, y la ventana toma como app_id el nombre que eframe
-  recibe (`crates/rad-editor/src/main.rs:17`).
-- **Cambio:** un solo archivo fuente del ícono en `packaging/`, del que salen la
-  ventana, el menú de aplicaciones y la bandeja; app_id explícito y estable. Ícono
-  provisional: la K del perfil de GitHub del autor, hasta que el usuario elija el
-  definitivo, que se cambia reemplazando solo ese archivo. Revisarlo a 16–24 px: si
-  el fondo negro estorba, usar la K recortada sobre fondo transparente.
-- **Pruebas:** el ícono embebido se decodifica en los tamaños usados; la entrada del
-  menú y el app_id coinciden.
+- **Entrega:** `packaging/rad.png` es la K provisional original de GitHub y la única
+  fuente de imagen; se reemplaza ese PNG y se recompila para cambiarla. La ventana
+  usa el PNG embebido y el app_id estable `io.github.KroxiDev.RAD`; la plantilla
+  `.desktop` comparte esa identidad y nombre de ícono. E2 conserva la instalación
+  automática del menú; E3 consume el mismo PNG para la bandeja.
+- **Validación focal:** probe temporal rojo–verde, decodificación y presencia de la K
+  a 16, 24, 48 y 256 px; cuatro tests existentes de íconos y clippy de biblioteca y
+  binario del editor. Sin ventanas ni hardware.
 
 ### E2 · RAD en el menú de aplicaciones
 

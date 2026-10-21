@@ -21,6 +21,7 @@ impl Controller {
 
 #[cfg(feature = "gui")]
 pub mod app;
+pub mod app_icon;
 pub mod catalog;
 pub mod commands;
 pub mod icons;
