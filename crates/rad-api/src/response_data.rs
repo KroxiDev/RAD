@@ -53,7 +53,8 @@ dto!(StatusView {
     #[serde(default,skip_serializing_if="Option::is_none")] global_permissions: Option<Permissions>,
     #[serde(default,skip_serializing_if="Option::is_none")] history_operations: Option<usize>,
     #[serde(default,skip_serializing_if="Option::is_none")] deck_state: Option<DeckState>,
-    #[serde(default,skip_serializing_if="Option::is_none")] recovered_previous: Option<bool>
+    #[serde(default,skip_serializing_if="Option::is_none")] recovered_previous: Option<bool>,
+    #[serde(default,skip_serializing_if="Option::is_none")] previous_exit: Option<PreviousExit>
 });
 dto!(EntityPage { items: Vec<EntityView>, next_cursor: Option<String>, view_revision: String });
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

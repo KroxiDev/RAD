@@ -1,5 +1,7 @@
 //! The sole runtime owner. Clients never own publication, history or execution.
 mod client_api;
+#[cfg(test)]
+mod contained_tests;
 mod credentials;
 mod options;
 mod transfers;
@@ -9,7 +11,7 @@ use rad_authority::{Authority, Effect, RequestId};
 use rad_core::configuration::Origin;
 use rad_launcher::monotonic_ms;
 use rad_protocol::{Capabilities, External, IncomingContext, Protocol, Resolution};
-use rad_transport::{RequestKey, Transport};
+use rad_transport::{RequestKey, Transport, TransportError};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -20,6 +22,8 @@ use std::{
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeError {
+    /// The instance lock or the sockets cannot be had: nothing can be served.
+    Blocked,
     Startup,
     Transport,
     Clock,
@@ -65,12 +69,20 @@ pub struct Server {
     brightness: u8,
     _wake: Arc<mio::Waker>,
     pub recovered_previous: bool,
+    previous_exit: Option<rad_api::PreviousExit>,
 }
 impl Server {
     pub fn new(runtime: &Path, data: &Path, session: NonZeroU128) -> Result<Self, RuntimeError> {
         // Instance lock precedes opening Store, so a second process cannot reaffirm it.
-        let transport =
-            Transport::bind(runtime, session.get()).map_err(|_| RuntimeError::Transport)?;
+        let transport = Transport::bind(runtime, session.get()).map_err(|error| match error {
+            // What keeps requests from being served, and no restart fixes.
+            TransportError::InstanceBusy | TransportError::UnsafePath | TransportError::Io => {
+                RuntimeError::Blocked
+            }
+            _ => RuntimeError::Transport,
+        })?;
+        // After the instance lock, so a refused second instance never consumes the record.
+        let previous_exit = crate::exit::take_previous(data);
         let boot = bootstrap::open(
             data,
             session,
@@ -135,6 +147,7 @@ impl Server {
             brightness,
             _wake: wake,
             recovered_previous: boot.recovered_previous,
+            previous_exit,
             reconciliation_attempted: false,
         })
     }
@@ -145,11 +158,49 @@ impl Server {
             .map_err(|_| RuntimeError::Clock)?;
         self.effects(effects)
     }
+    /// Answers a started request. A response the transport refuses (empty or too large)
+    /// becomes a generic error for that client; it never ends the runtime.
     fn respond(&mut self, key: RequestKey, response: Response) -> Result<(), RuntimeError> {
-        let bytes = serde_json::to_vec(&response).map_err(|_| RuntimeError::Protocol)?;
-        self.transport
-            .finish(key, &bytes)
-            .map_err(|_| RuntimeError::Transport)
+        if let Ok(bytes) = serde_json::to_vec(&response) {
+            match self.transport.finish(key, &bytes) {
+                Ok(()) => return Ok(()),
+                Err(TransportError::InvalidResponse) => {}
+                // Already answered or gone: nothing is left to answer.
+                Err(TransportError::UnknownRequest) => {
+                    crate::exit::contained("response_unknown_request");
+                    return Ok(());
+                }
+                Err(_) => return Err(RuntimeError::Transport),
+            }
+        }
+        crate::exit::contained("response_refused");
+        let generic = self.generic_error(&response);
+        let bytes = serde_json::to_vec(&generic).map_err(|_| RuntimeError::Protocol)?;
+        if self.transport.finish(key, &bytes).is_err() {
+            crate::exit::contained("response_dropped");
+        }
+        Ok(())
+    }
+    /// A change that was answered is not "not applied", whatever its answer looked like.
+    fn generic_error(&self, refused: &Response) -> Response {
+        let outcome = match refused.status {
+            Status::Applied | Status::Admitted => Some(Outcome::Unknown),
+            Status::Error => refused.error.as_ref().and_then(|error| error.outcome),
+            Status::Ok => None,
+        };
+        Response {
+            v: 1,
+            id: refused.id.clone(),
+            session_id: Some(format!("{:032x}", self.session)),
+            status: Status::Error,
+            data: rad_api::ResponseData::None,
+            error: Some(Error {
+                code: rad_api::ErrorCode::ResourceExhausted,
+                message: "Request rejected".into(),
+                details: json!({}),
+                outcome,
+            }),
+        }
     }
     fn error(&self, context: IncomingContext, code: &str, mutation: bool) -> Response {
         self.error_with_details(context, code, json!({}), mutation)
@@ -238,7 +289,10 @@ impl Server {
                         .map_err(|_| RuntimeError::Protocol)?;
                     queue.extend(self.persistence.route(&mut self.actor, effects));
                 }
-                Effect::DisplayClockOverflow => return Err(RuntimeError::Clock),
+                Effect::DisplayClockOverflow => {
+                    // The deck just does not go to sleep by itself; input still wakes it.
+                    crate::exit::contained("display_clock_overflow");
+                }
                 Effect::InputRejected { .. }
                 | Effect::CollectionFinished { .. }
                 | Effect::ExportExpired { .. } => {}
@@ -263,6 +317,19 @@ impl Server {
     }
     /// Trusted bootstrap only, after the user's exclusive StreamController handoff.
     pub fn attach_hardware(&mut self, config: rad_deck::DeviceConfig) -> Result<(), RuntimeError> {
+        self.attach_deck_with(|desired, wake| {
+            let deck = rad_deck::Deck::spawn(config, desired, wake)?;
+            Ok(Box::new(deck))
+        })
+    }
+    /// `spawn` is the seam for the failure path; production always passes the real deck.
+    fn attach_deck_with(
+        &mut self,
+        spawn: impl FnOnce(
+            rad_deck::Desired,
+            Arc<mio::Waker>,
+        ) -> Result<Box<dyn crate::display::DeckPort>, rad_deck::DeckError>,
+    ) -> Result<(), RuntimeError> {
         if self.deck.is_some() {
             return Err(RuntimeError::Protocol);
         }
@@ -273,9 +340,29 @@ impl Server {
             self.asleep,
             self.plugin_visuals.as_ref(),
         );
-        let deck = rad_deck::Deck::spawn(config, desired, self._wake.clone())
-            .map_err(|_| RuntimeError::Protocol)?;
-        self.attach_deck_port(Box::new(deck))
+        match spawn(desired, self._wake.clone()) {
+            Ok(deck) => self.attach_deck_port(deck),
+            Err(_) => {
+                // Contained: the runtime serves without a deck and says so, instead of ending.
+                self.deck_inaccessible = true;
+                crate::exit::contained("deck_spawn_failed");
+                Ok(())
+            }
+        }
+    }
+    /// What clients see of the deck. A deck that could not be had is `Inaccessible`, not
+    /// `Disabled`: the user asked for it.
+    fn deck_state(&self) -> rad_api::DeckState {
+        use rad_api::DeckState;
+        if self.deck.is_none() && !self.deck_inaccessible {
+            DeckState::Disabled
+        } else if self.deck_connected {
+            DeckState::Connected
+        } else if self.deck_inaccessible {
+            DeckState::Inaccessible
+        } else {
+            DeckState::Disconnected
+        }
     }
     fn pump_deck(&mut self) -> Result<(), RuntimeError> {
         // Bound matches the adapter event budget; reports are never coalesced.
@@ -363,21 +450,18 @@ impl Server {
         );
         Ok(())
     }
-    fn sync_credentials(&mut self) -> Result<(), RuntimeError> {
+    fn sync_credentials(&mut self) {
         if let Some(native) = &mut self.native {
-            native
-                .sync_credentials(
-                    &self.actor,
-                    &self
-                        .waiting_options
-                        .iter()
-                        .filter_map(options::WaitingOptions::binding)
-                        .collect::<Vec<_>>(),
-                    &self.transport,
-                )
-                .map_err(|_| RuntimeError::Protocol)?;
+            native.sync_credentials(
+                &self.actor,
+                &self
+                    .waiting_options
+                    .iter()
+                    .filter_map(options::WaitingOptions::binding)
+                    .collect::<Vec<_>>(),
+                &self.transport,
+            );
         }
-        Ok(())
     }
     /// Pumps plugins and the launcher; `true` when that changed something (see `Native::pump`).
     fn pump_native(&mut self) -> Result<bool, RuntimeError> {
@@ -615,7 +699,7 @@ impl Server {
     /// waits on them, since the plugin acknowledges installs through its own readiness.
     fn settle_round(&mut self) -> Result<bool, RuntimeError> {
         let mut advanced = self.poll_credentials()?;
-        self.sync_credentials()?;
+        self.sync_credentials();
         advanced |= self.pump_native()?;
         advanced |= self.poll_admin()?;
         advanced |= self.poll_visuals();
@@ -693,14 +777,9 @@ impl Server {
                         && response.error.is_none()
                         && let rad_api::ResponseData::Status(status) = &mut response.data
                     {
-                        status.deck_state = Some(if self.deck.is_none() {
-                            rad_api::DeckState::Disabled
-                        } else if self.deck_connected {
-                            rad_api::DeckState::Connected
-                        } else {
-                            rad_api::DeckState::Disconnected
-                        });
+                        status.deck_state = Some(self.deck_state());
                         status.recovered_previous = Some(self.recovered_previous);
+                        status.previous_exit = self.previous_exit.clone();
                     }
                     self.effects(effects)?;
                     self.respond(incoming.key, *response)?;
@@ -727,7 +806,7 @@ impl Server {
         self.pump_options()?;
         // Answered questions leave `waiting_options`, so the credentials installed only for
         // them are released here rather than on a later wake.
-        self.sync_credentials()?;
+        self.sync_credentials();
         self.respond_credentials()?;
         let effects = self.reconcile_once();
         self.effects(effects)?;

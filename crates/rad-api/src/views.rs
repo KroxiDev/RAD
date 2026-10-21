@@ -186,6 +186,14 @@ pub enum PluginAttentionCode {
     Failed,
     Busy,
 }
+/// Why the previous run of the runtime ended unexpectedly: a stable code, never prose.
+/// `at_unix_ms` is a decimal string, like every 64-bit counter of the API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreviousExit {
+    pub code: String,
+    pub at_unix_ms: String,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OverviewView {
@@ -198,4 +206,6 @@ pub struct OverviewView {
     pub settings: Settings,
     pub global_permissions: Permissions,
     pub history_operations: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_exit: Option<PreviousExit>,
 }

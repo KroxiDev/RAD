@@ -35,7 +35,8 @@ universal del runtime. La validación semántica y de permisos sigue en Authorit
 - `inspector {id: string}`: entidad, apariencia cuando corresponde, todas las
   acciones y configuración del plugin cuando existe, con una `view_revision`.
 - `overview {}`: `storage`, `deck`, `plugins` que requieren atención,
-  `last_restart`, carpeta activa, ajustes y permisos globales e historial.
+  `last_restart`, `previous_exit` (opcional), carpeta activa, ajustes y permisos
+  globales e historial.
 
 Cada proyección se construye sin ceder el actor ni hacer I/O entre componentes.
 El cliente no debe mezclar silenciosamente board e inspector de revisiones
@@ -45,9 +46,22 @@ Una vista que supera el presupuesto de respuesta de 48 KiB produce
 `resource_exhausted`, nunca una vista truncada o parcialmente coherente.
 
 `deck` distingue `disabled`, `connected`, `disconnected` e `inaccessible`.
+`inaccessible` incluye el deck que el runtime no pudo iniciar: no termina por ello.
 `storage` distingue `ready`, `uncertain`, `recovery_required`. Estos códigos no
 prometen que el modo recuperación de arranque (fase 3) ya esté implementado.
 `last_restart` es `clean` o `recovered_previous` según la reconciliación de inicio.
+
+`previous_exit` aparece en `overview` y en el `status` del Editor solo cuando el
+arranque anterior terminó de forma inesperada (clase «inesperada» de
+[ADR 0011](adr/0011-salidas-y-modo-recuperacion.md)); si no, el campo no existe.
+Es `{code, at_unix_ms}`: `code` es un código estable, nunca prosa (`startup`,
+`storage`, `transport`, `clock`, `protocol` o `panic`) y `at_unix_ms` los
+milisegundos Unix del suceso, como cadena decimal. El runtime lo lee del archivo
+privado `last-exit.json` de su directorio de datos y lo borra al arrancar: se
+informa una vez, y un archivo ilegible se ignora. Las salidas limpias y las
+bloqueantes no se registran; de ellas informa el estado de la unidad. Los
+códigos de salida del proceso no forman parte de esta API: su tabla está en
+`crates/rad-runtime/src/exit.rs`.
 
 Los plugins instalados incompatibles aparecen una sola vez en `overview.plugins`
 con `code: "needs_update"`, aunque no puedan registrarse ni ejecutarse. Su aparición

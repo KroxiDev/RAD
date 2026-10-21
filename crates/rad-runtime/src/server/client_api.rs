@@ -1,7 +1,7 @@
 //! Client projections and coalesced invalidations; no state authority lives here.
 use super::*;
 use rad_api::{
-    DeckState, Notice, NoticeKind, OverviewView, PluginAttention, PluginAttentionCode, RestartState,
+    Notice, NoticeKind, OverviewView, PluginAttention, PluginAttentionCode, RestartState,
 };
 
 #[derive(Default)]
@@ -14,7 +14,7 @@ pub(super) struct Notices {
     execution: u64,
 }
 impl Server {
-    fn overview(&self) -> OverviewView {
+    pub(super) fn overview(&self) -> OverviewView {
         let status = self.actor.status(Origin::Editor);
         let settings = self
             .actor
@@ -60,15 +60,7 @@ impl Server {
                     rad_api::StorageState::RecoveryRequired
                 }
             },
-            deck: if self.deck.is_none() {
-                DeckState::Disabled
-            } else if self.deck_connected {
-                DeckState::Connected
-            } else if self.deck_inaccessible {
-                DeckState::Inaccessible
-            } else {
-                DeckState::Disconnected
-            },
+            deck: self.deck_state(),
             plugins: plugins
                 .into_iter()
                 .map(|(id, code)| PluginAttention { id, code })
@@ -94,6 +86,7 @@ impl Server {
                 .editor_view(Origin::Editor)
                 .expect("editor view")
                 .history_operations,
+            previous_exit: self.previous_exit.clone(),
         }
     }
     pub(super) fn client_api(
@@ -155,7 +148,11 @@ impl Server {
         }
         Ok(true)
     }
-    fn send_notice(&mut self, connection: u64, kind: NoticeKind) -> Result<(), RuntimeError> {
+    pub(super) fn send_notice(
+        &mut self,
+        connection: u64,
+        kind: NoticeKind,
+    ) -> Result<(), RuntimeError> {
         let notice = Notice {
             v: rad_api::VERSION,
             session_id: format!("{:032x}", self.session),
@@ -163,9 +160,15 @@ impl Server {
             revision: self.notices.epoch.to_string(),
         };
         let payload = serde_json::to_vec(&notice).map_err(|_| RuntimeError::Protocol)?;
-        self.transport
+        // Notices coalesce and a missed one is recovered by the next: a refusal is not fatal.
+        if self
+            .transport
             .notify(connection, kind.key(), &payload)
-            .map_err(|_| RuntimeError::Transport)
+            .is_err()
+        {
+            crate::exit::contained("notice_dropped");
+        }
+        Ok(())
     }
     pub(super) fn publish_notices(&mut self) -> Result<(), RuntimeError> {
         self.notices

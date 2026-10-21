@@ -5,6 +5,10 @@
 # --xl-exclusive. Do not enable both controllers or infer exclusive handoff.
 [Unit]
 Description=RAD local action deck authority
+# Restart without loops (ADR 0011): at most 5 starts in 5 minutes, then the unit stays
+# failed and the Editor says so. These two belong to [Unit], not [Service].
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -17,7 +21,16 @@ ExecStart=/usr/local/bin/rad-runtime
 # Without systemd's user manager the applications stay in this cgroup.
 KillMode=mixed
 KillSignal=SIGTERM
-Restart=no
+# Restart after unexpected exits (code 1, a panic, a signal), never after a clean stop
+# (0) or a blocking condition (75: another instance, an unusable socket or runtime
+# directory, an invalid environment), which a restart cannot fix. Classes: exit.rs.
+Restart=on-failure
+RestartPreventExitStatus=75
+# The wait grows from RestartSec to RestartMaxDelaySec in RestartSteps steps. Versions
+# of systemd before 254 ignore the last two and wait RestartSec every time.
+RestartSec=1
+RestartSteps=4
+RestartMaxDelaySec=30
 TimeoutStopSec=30
 
 [Install]

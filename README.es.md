@@ -103,6 +103,13 @@ runtime/helper antes de habilitarla con tu gestor de servicios de usuario. El
 ejemplo arranca sin hardware; añade `--xl-exclusive` solo después de asegurar
 el control exclusivo. Nada se instala ni habilita automáticamente.
 
+La unidad reinicia el runtime tras un fallo inesperado (código de salida 1 o una
+caída) con una espera creciente, y se detiene tras 5 arranques en 5 minutos. No lo
+reinicia tras una parada limpia (0) ni cuando reiniciar no sirve (75: hay otra
+instancia en marcha, o el directorio de runtime o el entorno no se pueden usar). Las
+clases de salida están en
+[`crates/rad-runtime/src/exit.rs`](crates/rad-runtime/src/exit.rs).
+
 ## Cómo funciona
 
 ```text

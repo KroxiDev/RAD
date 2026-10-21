@@ -100,6 +100,12 @@ together before enabling it with your user service manager. The example starts
 without hardware; add `--xl-exclusive` only after arranging exclusive ownership.
 Nothing is installed or enabled automatically.
 
+The unit restarts the runtime after unexpected failures (exit code 1 or a crash) with a
+growing delay, and stops after 5 starts in 5 minutes. It does not restart after a clean
+stop (0) or when a restart cannot help (75: another instance is running, or the runtime
+directory or environment is unusable). The exit classes are tabulated in
+[`crates/rad-runtime/src/exit.rs`](crates/rad-runtime/src/exit.rs).
+
 ## How it works
 
 ```text

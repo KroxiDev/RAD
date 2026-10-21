@@ -212,7 +212,7 @@ fn binary_help_and_invalid_environment_never_start_runtime() {
         .env_clear()
         .output()
         .unwrap();
-    assert!(!invalid.status.success());
+    assert_eq!(invalid.status.code(), Some(75), "blocking, not unexpected");
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("XDG_RUNTIME_DIR"));
 }
 
@@ -316,7 +316,7 @@ fn binary_private_session_shutdown_and_corrupt_startup_preserve_material() {
     let invalid = b"not a sqlite database; preserve this material";
     fs::write(&database, invalid).unwrap();
     let output = command().output().unwrap();
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1), "unexpected, not blocking");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Material conservado"), "{stderr}");
     assert!(stderr.contains("restaurar manualmente"));

@@ -3,6 +3,8 @@ use rad_authority::{Authority, Effect};
 use rad_core::execution::{Completion, Failure};
 use rad_launcher::{LaunchOutcome, Launcher, LauncherError, monotonic_ms};
 use rad_transport::Transport;
+#[cfg(all(test, feature = "fixture-tests"))]
+use std::time::Instant;
 use std::{
     collections::VecDeque,
     os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd},
@@ -12,7 +14,7 @@ pub struct Native {
     plugins: crate::plugin_dispatch::Plugins,
     _exit: Option<OwnedFd>,
     writable: bool,
-    plugin_io: std::collections::BTreeSet<(u64, i32)>,
+    plugin_io: PluginIo,
 }
 impl Native {
     pub fn attach(launcher: Launcher, transport: &Transport) -> Result<Self, LauncherError> {
@@ -164,21 +166,30 @@ impl Native {
                 .map_err(|_| LauncherError::Io)?;
             self.writable = writable;
         }
-        self.register_plugin_io(transport)?;
+        // A plugin retired for unregistrable descriptors is a binding change too.
+        self.plugin_io.sync(&mut self.plugins.host, transport);
         advanced |= self.binding_states() != bindings_before;
         Ok((output, advanced))
     }
 }
 
-impl Native {
-    fn register_plugin_io(&mut self, transport: &Transport) -> Result<(), LauncherError> {
+/// Descriptors of the plugin processes that the shared wait already watches.
+#[derive(Default)]
+struct PluginIo {
+    registered: std::collections::BTreeSet<(u64, i32)>,
+}
+impl PluginIo {
+    /// Registers the descriptors that appeared since the last call. Whatever cannot be
+    /// registered belongs to one plugin, so that plugin is retired and the rest go on.
+    fn sync(&mut self, host: &mut rad_plugin_host::Host, transport: &Transport) {
         let mut live = std::collections::BTreeSet::new();
-        for (generation, fd, write) in self.plugins.host.io_sources() {
+        let mut failed = std::collections::BTreeSet::new();
+        for (generation, fd, write) in host.io_sources() {
             let raw = fd.as_raw_fd();
             let identity = (generation, raw);
             live.insert(identity);
-            if !self.plugin_io.contains(&identity) {
-                transport
+            if !self.registered.contains(&identity)
+                && transport
                     .register_worker_io(
                         &mut mio::unix::SourceFd(&raw),
                         if write {
@@ -187,21 +198,36 @@ impl Native {
                             mio::Interest::READABLE
                         },
                     )
-                    .map_err(|_| LauncherError::Io)?;
+                    .is_err()
+            {
+                failed.insert(generation);
             }
         }
+        // A failed identity stays in `live`: it is not retried while the plugin winds down.
         // Closing a pipe/pidfd automatically removes its kernel registration.
-        self.plugin_io = live;
-        Ok(())
+        self.registered = live;
+        for generation in failed {
+            let id = host
+                .bindings()
+                .find(|(_, bound, _)| *bound == generation)
+                .map(|(manifest, ..)| manifest.id.clone());
+            if let Some(id) = id {
+                crate::exit::contained("plugin_io_unregistrable");
+                host.retire(&id);
+            }
+        }
     }
+}
+
+impl Native {
     pub(crate) fn sync_credentials(
         &mut self,
         actor: &Authority,
         extra: &[(String, u64, rad_authority::plugins::CredentialSnapshot)],
         transport: &Transport,
-    ) -> Result<(), LauncherError> {
+    ) {
         self.plugins.sync_credentials(actor, extra);
-        self.register_plugin_io(transport)
+        self.plugin_io.sync(&mut self.plugins.host, transport);
     }
     pub(crate) fn plugin_host_mut(&mut self) -> &mut rad_plugin_host::Host {
         &mut self.plugins.host
@@ -224,5 +250,93 @@ impl Native {
             .bindings()
             .map(|(m, g, s)| (m.id.clone(), g, s))
             .collect()
+    }
+}
+
+#[cfg(all(test, feature = "fixture-tests"))]
+mod plugin_io_tests {
+    use super::*;
+    use rad_plugin_host::{Host, State};
+    use std::{os::unix::fs::PermissionsExt, process::Command, time::Duration};
+
+    fn binary(name: &str) -> std::path::PathBuf {
+        std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(name)
+    }
+
+    fn manifest(id: &str) -> rad_plugin_contract::Manifest {
+        serde_json::from_value(serde_json::json!({"contract":1,"capabilities":["controls"],"id":id,"version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[rad_plugin_host::TARGET],"actions":[{"id":"run","label":"Run","gestures":["hold"],"schema":{"version":1,"fields":[{"id":"mode","label":"Mode","required":true,"kind":{"type":"choice","options":["echo","end_fail"]}}]},"credential_slots":[]}],"visuals":[]})).unwrap()
+    }
+
+    #[test]
+    fn a_plugin_whose_descriptors_cannot_be_registered_is_retired_and_the_others_go_on() {
+        const BROKEN: &str = "org.rad.fixture";
+        const HEALTHY: &str = "org.rad.test.options";
+        let runtime = std::env::temp_dir().join(format!("rad-plugin-io-{}", std::process::id()));
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let transport = Transport::bind(&runtime, 7).unwrap();
+        let mut host = Host::default();
+        let broken = host
+            .activate(
+                Command::new(binary("rad-plugin-fixture-v1")),
+                manifest(BROKEN),
+                0,
+            )
+            .unwrap();
+        let healthy_manifest = serde_json::from_slice(include_bytes!(
+            "../../rad-plugin-host/test-plugins/options-manifest.json"
+        ))
+        .unwrap();
+        let healthy = host
+            .activate(
+                Command::new(binary("rad-plugin-options-fixture")),
+                healthy_manifest,
+                0,
+            )
+            .unwrap();
+        // The kernel refuses a second registration of the same descriptor.
+        let register = |host: &Host, generation: u64| {
+            let (_, fd, _) = host
+                .io_sources()
+                .into_iter()
+                .find(|(g, _, _)| *g == generation)
+                .unwrap();
+            transport.register_worker_io(
+                &mut mio::unix::SourceFd(&fd.as_raw_fd()),
+                mio::Interest::READABLE,
+            )
+        };
+        register(&host, broken).unwrap();
+        let mut io = PluginIo::default();
+        io.sync(&mut host, &transport);
+        let end = Instant::now() + Duration::from_secs(5);
+        let mut now = 0;
+        while host.state(BROKEN) != Some(State::Reaped) {
+            assert!(Instant::now() < end, "the broken plugin must be retired");
+            now += 1;
+            host.pump(now).unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_ne!(host.state(HEALTHY), Some(State::Reaped));
+        assert!(
+            register(&host, healthy).is_err(),
+            "the healthy plugin's descriptors are registered"
+        );
+        // Nothing more to do, and nothing fails, once the broken one is gone.
+        io.sync(&mut host, &transport);
+        host.shutdown();
+        while host.resources().0 > 0 {
+            assert!(Instant::now() < end);
+            now += 1;
+            host.pump(now).unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let _ = std::fs::remove_dir_all(&runtime);
     }
 }
