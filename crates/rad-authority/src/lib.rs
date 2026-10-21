@@ -925,6 +925,11 @@ impl Authority {
             Err(reason) => vec![self.reject(request, Rejection::Execution(reason))],
         }
     }
+    /// Report how a dispatched job ended. `Succeeded` and `Failed` are its real
+    /// termination; `TimedOut` is the hand-over of its residual to the adapter, which
+    /// keeps it under its own limits (see `Engine::complete`). Either way the job's
+    /// retained configuration revision and plugin binding are released here, as
+    /// nothing after dispatch reads them.
     pub fn job_complete(
         &mut self,
         id: DispatchId,

@@ -512,6 +512,7 @@ impl Run {
 pub enum Completion {
     Succeeded,
     Failed(Failure),
+    TimedOut,
 }
 impl Engine {
     /// Stop only steps not dispatched yet; in-flight jobs retain their credit and outcome.
@@ -532,7 +533,11 @@ impl Engine {
             Ok(())
         })
     }
-    /// Report actual job termination, not just a timeout or cancellation request.
+    /// Report how a dispatched job ended. `Succeeded` and `Failed` report its real
+    /// termination. `TimedOut` hands the job over: Engine ends the execution as
+    /// `TimedOut` (once, whether or not its own deadline was processed yet) and frees
+    /// the job's credit, while the adapter that owns the residual keeps it under its
+    /// own limits until the late reply or its reap. A second report is `UnknownDispatch`.
     pub fn complete(
         &mut self,
         id: DispatchId,
@@ -580,6 +585,7 @@ impl State {
         completion: Completion,
     ) -> Result<Vec<DispatchIntent>, ExecutionError> {
         if self.residuals.remove(&id) {
+            // The deadline already ended the step and nothing visible changes: only the credit is freed.
             return Ok(vec![]);
         }
         let run = self
@@ -601,6 +607,11 @@ impl State {
             Completion::Failed(reason) => {
                 run.result.steps[i].status = StepStatus::Failed(reason);
                 run.stop_pending(ExecutionStatus::Failed);
+            }
+            Completion::TimedOut => {
+                // The adapter keeps the residual: Engine holds no credit for it.
+                run.result.steps[i].status = StepStatus::TimedOut;
+                run.stop_pending(ExecutionStatus::TimedOut);
             }
         }
         if run.snapshot.button.mode == Mode::Sequential {

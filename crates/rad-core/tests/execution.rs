@@ -1293,3 +1293,66 @@ fn cleanup_pin_survives_result_capacity_and_gets_ttl_after_release() {
     engine.advance(2 * RESULT_TTL_MS + 1).unwrap();
     assert!(engine.result(held).is_none());
 }
+
+#[test]
+fn adapter_reported_timeout_ends_the_execution_once_in_either_order_and_frees_credit() {
+    let c = actions(2);
+    let started = |e: &mut Engine| {
+        e.admit(
+            c.configuration(),
+            Target::Button(button(&c)),
+            Trigger::Editor,
+            &[],
+        )
+        .unwrap()
+    };
+    // The adapter reports first: Engine has not processed its own deadline yet.
+    let mut e = Engine::new(1, 1).unwrap();
+    let run = started(&mut e);
+    assert!(
+        e.complete(run.dispatches[0].id, Completion::TimedOut)
+            .unwrap()
+            .is_empty()
+    );
+    let result = e.result(run.id).unwrap();
+    assert_eq!(result.status, ExecutionStatus::TimedOut);
+    assert_eq!(result.steps[0].status, StepStatus::TimedOut);
+    assert_eq!(result.steps[1].status, StepStatus::NotDispatched);
+    assert_eq!(
+        e.usage(),
+        Usage {
+            active_executions: 0,
+            jobs: 0,
+            residual_jobs: 0
+        }
+    );
+    let before = e.result(run.id).unwrap().clone();
+    assert!(e.advance(5000).unwrap().is_empty());
+    assert_eq!(e.result(run.id).unwrap(), before);
+    assert_eq!(e.usage().residual_jobs, 0);
+    assert_eq!(
+        e.complete(run.dispatches[0].id, Completion::TimedOut)
+            .unwrap_err(),
+        ExecutionError::UnknownDispatch
+    );
+    // Engine processes its deadline first: the report only frees the credit.
+    let mut e = Engine::new(1, 1).unwrap();
+    let run = started(&mut e);
+    e.advance(5000).unwrap();
+    assert_eq!(e.usage().residual_jobs, 1);
+    assert!(
+        e.complete(run.dispatches[0].id, Completion::TimedOut)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(e.usage().jobs, 0);
+    assert_eq!(e.usage().residual_jobs, 0);
+    let result = e.result(run.id).unwrap();
+    assert_eq!(result.status, ExecutionStatus::TimedOut);
+    assert_eq!(result.steps[0].status, StepStatus::TimedOut);
+    assert_eq!(
+        e.complete(run.dispatches[0].id, Completion::TimedOut)
+            .unwrap_err(),
+        ExecutionError::UnknownDispatch
+    );
+}

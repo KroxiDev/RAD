@@ -61,7 +61,9 @@ fn answer<T>(table: &mut Table<T>, request: u64, now: u64, value: T) -> bool {
         false
     }
 }
-/// Report every request past its deadline as `value`; its reply may still arrive later.
+/// Report every request past its deadline as `value`, once. The request stays as a
+/// residual (counted, holding its credential revision) until its late reply is drained
+/// or `settle` runs; neither reports it again.
 fn expire<T: Clone>(table: &mut Table<T>, now: u64, value: T) -> bool {
     let mut expired = false;
     for p in table.values_mut() {
@@ -614,10 +616,10 @@ impl Worker {
         if self.state == State::Ready && self.credential_deadline().is_some_and(|d| now >= d) {
             self.fail(Diagnostic::Deadline);
         }
-        let failed = Outcome::Failure {
-            code: FailureCode::Failed,
+        let timed_out = Outcome::Failure {
+            code: FailureCode::TimedOut,
         };
-        if expire(&mut self.pending, now, failed) {
+        if expire(&mut self.pending, now, timed_out) {
             self.record(Diagnostic::Deadline);
         }
         // A late list is harmless: unlike a late action it records nothing and never kills.
@@ -1146,7 +1148,19 @@ mod credential_tests {
         w.queries
             .insert(101, Pending::with_credentials(10, Some(1)));
         host.pump(10).unwrap();
-        host.take_completion();
+        assert_eq!(
+            host.take_completion(),
+            Some((
+                Correlation {
+                    generation: 1,
+                    request: 100
+                },
+                Outcome::Failure {
+                    code: FailureCode::TimedOut
+                }
+            ))
+        );
+        assert!(host.take_completion().is_none());
         host.take_options();
         assert_eq!(host.release_credentials(&id, 1, 1), Err(Error::Residual));
         reply(
@@ -1161,6 +1175,7 @@ mod credential_tests {
             11,
         );
         assert_eq!(host.release_credentials(&id, 1, 1), Err(Error::Residual));
+        assert!(host.take_completion().is_none(), "drained, not reported");
         reply(
             &mut host,
             Correlation {
@@ -1173,6 +1188,21 @@ mod credential_tests {
             11,
         );
         assert!(host.release_credentials(&id, 1, 1).is_ok());
+    }
+    #[test]
+    fn reaping_forgets_a_reported_timeout_and_frees_its_credential_revision() {
+        let mut table: Table = Table::new();
+        table.insert(1, Pending::with_credentials(10, Some(1)));
+        assert!(expire(&mut table, 10, Outcome::Success));
+        assert_eq!(take(&mut table), Some((1, Outcome::Success)));
+        assert!(table[&1].residual && table[&1].credential_revision == Some(1));
+        settle(
+            &mut table,
+            Outcome::Failure {
+                code: FailureCode::Failed,
+            },
+        );
+        assert!(table.is_empty(), "no second report, nothing retained");
     }
     #[test]
     fn install_and_release_deadlines_are_scheduled_and_revision_storage_is_bounded() {

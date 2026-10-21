@@ -314,6 +314,11 @@ impl Host {
             })
         })
     }
+    /// Next finished invocation, each reported exactly once. An invocation past its
+    /// deadline is reported as `Failure { code: TimedOut }` and stays a residual: it
+    /// keeps counting in `resources`, retains its credential revision and blocks
+    /// `idle`/`remove` until its late reply is drained or the process is reaped, and
+    /// neither reports it again. Termination before the deadline is reported as `Failed`.
     pub fn take_completion(&mut self) -> Option<(Correlation, Outcome)> {
         self.workers.values_mut().find_map(|w| {
             let generation = w.generation;
