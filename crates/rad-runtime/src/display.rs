@@ -81,18 +81,32 @@ pub(crate) fn project_with_plugins(
             .actions
             .iter()
             .any(|a| matches!(a,Visible::Visible(a) if a.kind==ActionType::Launcher));
-        let text = plugin
-            .as_ref()
-            .map(|v| v.text.as_str())
-            .unwrap_or_else(|| view.appearance.label(&button.name));
+        let native_sleep = !external
+            && view.appearance.image.is_none()
+            && button
+                .actions
+                .iter()
+                .any(|a| matches!(a, Visible::Visible(a) if a.kind == ActionType::Sleep));
+        let text = plugin.as_ref().map(|v| v.text.as_str()).unwrap_or_else(|| {
+            if native_sleep {
+                view.appearance.text.as_str()
+            } else {
+                view.appearance.label(&button.name)
+            }
+        });
         let stale = plugin
             .as_ref()
             .is_some_and(|v| v.view.availability == crate::plugin_visuals::Availability::Stale);
         let color = plugin.as_ref().and_then(|v| v.view.color);
-        let position = plugin
-            .as_ref()
-            .map(|v| v.position)
-            .unwrap_or_else(|| view.appearance.effective_text_position());
+        let position = plugin.as_ref().map(|v| v.position).unwrap_or_else(|| {
+            if native_sleep {
+                view.appearance
+                    .text_position
+                    .unwrap_or(TextPosition::Bottom)
+            } else {
+                view.appearance.effective_text_position()
+            }
+        });
         let placement = match position {
             TextPosition::Top => TextPlacement::Top,
             TextPosition::Middle => TextPlacement::Middle,
@@ -101,6 +115,7 @@ pub(crate) fn project_with_plugins(
             TextPosition::BelowImage => TextPlacement::BelowPicture,
         };
         KeyVisual::new(text, image, unavailable, launcher)
+            .sleep_icon(native_sleep)
             .text_at(placement)
             .stale(stale)
             .background_color(color)

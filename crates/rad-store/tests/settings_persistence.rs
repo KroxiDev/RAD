@@ -171,3 +171,58 @@ fn valid_digest_cannot_make_a_document_without_required_settings_recoverable() {
     assert!(Store::open(&fixture.db()).is_err());
     assert_eq!(std::fs::read(fixture.db()).unwrap(), before);
 }
+
+#[test]
+fn native_sleep_and_its_duplicate_survive_store_reopen_without_changing_settings() {
+    let fixture = Fixture::new();
+    let base = initial();
+    let c = base
+        .configuration()
+        .prepare_edit(
+            base.registry(),
+            Origin::Editor,
+            Edit::CreateButton {
+                folder: base.configuration().data().principal,
+                position: 0,
+                name: "Sleep".into(),
+            },
+        )
+        .unwrap();
+    let button = c.configuration().data().buttons[0].binding.identity();
+    let c = c
+        .configuration()
+        .prepare_edits(
+            c.registry(),
+            Origin::Editor,
+            &[
+                Edit::AddAction {
+                    button,
+                    kind: ActionKind::Sleep,
+                },
+                Edit::DuplicateButton {
+                    button,
+                    folder: c.configuration().data().principal,
+                    position: 1,
+                },
+            ],
+        )
+        .unwrap();
+    let mut store = Store::create(&fixture.db(), &base).unwrap();
+    assert!(matches!(
+        store.commit(&c),
+        CommitOutcome::Applied { changed: true, .. }
+    ));
+    drop(store);
+    let store = Store::open(&fixture.db()).unwrap();
+    let loaded = store.load().unwrap();
+    assert_eq!(loaded.configuration, *c.configuration());
+    assert_eq!(
+        loaded.configuration.settings(),
+        base.configuration().settings()
+    );
+    assert_eq!(loaded.configuration.data().buttons.len(), 2);
+    let buttons = &loaded.configuration.data().buttons;
+    assert_eq!(buttons[0].actions[0].kind, ActionKind::Sleep);
+    assert_eq!(buttons[1].actions[0].kind, ActionKind::Sleep);
+    assert_ne!(buttons[0].actions[0].binding, buttons[1].actions[0].binding);
+}

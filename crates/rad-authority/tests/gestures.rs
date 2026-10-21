@@ -209,3 +209,101 @@ fn hold_end_failure_updates_original_result_and_survives_result_ttl() {
     );
     assert_ne!(a.execution_revision(), before);
 }
+
+#[test]
+fn native_sleep_ends_original_hold_and_cancels_its_unsent_steps() {
+    use rad_authority::{Command, Outcome};
+    for simultaneous in [false, true] {
+        let mut a = setup(Mode::Sequential);
+        fn apply(a: &mut Authority, edit: Edit) {
+            let ticket = a.reserve(1, Origin::Editor).unwrap();
+            let request = ticket.request();
+            let effects = a.submit(ticket, Command::Edits(vec![edit]));
+            let id = effects
+                .iter()
+                .find_map(|e| {
+                    if let Effect::Persist { id, .. } = e {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let revision = a.editor_view(Origin::Editor).unwrap().revision + 1;
+            a.complete(
+                id,
+                Outcome::Applied {
+                    revision,
+                    changed: true,
+                },
+            );
+            a.finish(request);
+        }
+        let root = a.status(Origin::Editor).active.unwrap();
+        apply(
+            &mut a,
+            Edit::CreateButton {
+                folder: root.identity(),
+                position: 1,
+                name: "Sleep".into(),
+            },
+        );
+        let folder = a.folder(Origin::Editor, root.short()).unwrap();
+        let rad_authority::Visible::Visible(sleep) = folder.slots[1].clone().unwrap() else {
+            panic!("visible");
+        };
+        apply(
+            &mut a,
+            Edit::AddAction {
+                button: sleep.identity(),
+                kind: ActionKind::Sleep,
+            },
+        );
+        let (effects, jobs) = if simultaneous {
+            a.input_report(0, [false; 32]).unwrap();
+            let mut down = [false; 32];
+            down[0] = true;
+            down[1] = true;
+            let effects = a.input_report(1, down).unwrap();
+            let jobs = effects
+                .iter()
+                .filter_map(|e| {
+                    if let Effect::Dispatch(job) = e {
+                        Some(job.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            (effects, jobs)
+        } else {
+            let jobs = start(&mut a);
+            let ticket = a.reserve(1, Origin::Editor).unwrap();
+            let effects = a.submit(
+                ticket,
+                Command::Run {
+                    target: Target::Button(sleep.identity()),
+                },
+            );
+            (effects, jobs)
+        };
+        assert_eq!(jobs.len(), 1);
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::Display { asleep: true, .. }))
+        );
+        assert!(effects.iter().any(
+            |e| matches!(e,Effect::ReleaseHold{execution} if *execution==jobs[0].id.execution())
+        ));
+        assert!(
+            !a.job_complete(jobs[0].id, Completion::Succeeded)
+                .unwrap()
+                .iter()
+                .any(|e| matches!(e, Effect::Dispatch(_)))
+        );
+        assert_eq!(a.plugin_change_allowed("fixture"), Err(PluginError::InUse));
+        a.hold_released(jobs[0].id.execution());
+        assert_eq!(a.plugin_change_allowed("fixture"), Ok(()));
+    }
+}

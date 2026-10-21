@@ -20,7 +20,7 @@ fn v3_imports_real_v2_without_losing_configuration_or_inflating_default_profiles
     let config = Configuration::from_data(data.clone(), &registry).unwrap();
     let bytes = encode(&config).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(value["version"], 3);
+    assert_eq!(value["version"], 4);
     assert_eq!(decode_data(&bytes).unwrap(), data);
     assert_eq!(bytes.len(), old.len());
     assert_eq!(
@@ -45,7 +45,7 @@ fn v2_importer_rejects_v3_gesture_fields_instead_of_silently_accepting_them() {
 }
 
 #[test]
-fn canonical_v3_golden_keeps_nondefault_gesture_and_long_threshold() {
+fn v3_golden_import_keeps_nondefault_gesture_and_long_threshold() {
     let bytes = include_bytes!("../../../docs/fixtures/v3/profile.json");
     let data = decode_data(bytes).unwrap();
     assert_eq!(
@@ -64,6 +64,9 @@ fn canonical_v3_golden_keeps_nondefault_gesture_and_long_threshold() {
     let registry = IdentityRegistry::from_records(77, records).unwrap();
     assert_eq!(
         encode(&Configuration::from_data(data, &registry).unwrap()).unwrap(),
-        bytes
+        String::from_utf8(bytes.to_vec())
+            .unwrap()
+            .replacen("\"version\":3", "\"version\":4", 1)
+            .as_bytes()
     );
 }

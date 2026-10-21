@@ -318,5 +318,7 @@
   "value kept": "se conserva el valor",
   "{message} · {count} plugins": "{message} · {count} plugins",
   "≤{count} bytes": "≤{count} bytes",
-  "⏵ Try": "⏵ Probar"
+  "⏵ Try": "⏵ Probar",
+  "Sleep Stream Deck": "Suspender Stream Deck",
+  "Any key wakes the deck without running its action": "Cualquier tecla despierta el deck sin ejecutar su acción"
 }

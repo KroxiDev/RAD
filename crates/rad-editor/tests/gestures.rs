@@ -28,3 +28,11 @@ fn hold_requires_every_action_to_be_external_and_manifest_compatible() {
 fn empty_hold_plan_can_always_be_changed_back_to_press() {
     assert_eq!(plan_gestures(&[], &[]), vec![Gesture::Press]);
 }
+
+#[test]
+fn native_sleep_supports_press_and_long_press_but_never_hold() {
+    assert_eq!(
+        plan_gestures(&[json!({"fields":{"type":"sleep"}})], &[]),
+        vec![Gesture::Press, Gesture::LongPress]
+    );
+}

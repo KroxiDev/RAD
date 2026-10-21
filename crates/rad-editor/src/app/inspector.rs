@@ -227,12 +227,21 @@ impl App {
             return;
         };
         let published = view.appearance["image"].as_str();
+        let sleep_icon = self.draft.image.is_empty()
+            && view.appearance["visual_type"].is_null()
+            && (view.appearance["native_icon"] == "sleep"
+                || self.inspection.as_ref().is_some_and(|inspection| {
+                    inspection
+                        .actions
+                        .iter()
+                        .any(|action| action["fields"]["type"] == "sleep")
+                }));
         let (label, position, image) = if self.inspection.is_some() {
             (
                 key_label(
                     &self.draft.text,
                     &self.draft.name,
-                    !self.draft.image.is_empty(),
+                    !self.draft.image.is_empty() || sleep_icon,
                 ),
                 self.draft.text_position.clone(),
                 published.filter(|reference| *reference == self.draft.image),
@@ -242,7 +251,7 @@ impl App {
                 key_label(
                     &string(&view.appearance["text"]),
                     &string(&view.entity["fields"]["name"]),
-                    published.is_some(),
+                    published.is_some() || sleep_icon,
                 ),
                 string(&view.appearance["text_position"]),
                 published,
@@ -250,7 +259,7 @@ impl App {
         };
         let texture = image.and_then(|reference| self.textures.get(reference));
         if !self.plugin_face(ui, look, id, preview) {
-            paint_key(ui, look, preview, &label, &position, texture);
+            paint_key(ui, look, preview, &label, &position, texture, sleep_icon);
         }
     }
     /// Button that opens how the text is placed: at the top, in the middle or at the
@@ -457,6 +466,14 @@ impl App {
             }
             "return" => {
                 ui.label(tr(self.es, "Go back to the parent folder"));
+            }
+            "sleep" => {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(22., 22.), egui::Sense::hover());
+                paint_icon(ui.painter(), rect.center(), Icon::Moon, look.muted);
+                ui.label(tr(self.es, "Sleep Stream Deck")).on_hover_text(tr(
+                    self.es,
+                    "Any key wakes the deck without running its action",
+                ));
             }
             "wait" => {
                 ui.label(tr(self.es, "Wait"));

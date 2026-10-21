@@ -32,6 +32,7 @@ pub struct KeyVisual {
     stale: bool,
     background: Option<[u8; 4]>,
     generic_launcher: bool,
+    sleep_icon: bool,
 }
 impl KeyVisual {
     pub fn new(
@@ -48,7 +49,13 @@ impl KeyVisual {
             stale: false,
             background: None,
             generic_launcher,
+            sleep_icon: false,
         }
+    }
+    /// Native fallback only: a custom image always takes precedence.
+    pub fn sleep_icon(mut self, sleep: bool) -> Self {
+        self.sleep_icon = sleep;
+        self
     }
     /// Last known content is not live. Presentation only; never an execution gate.
     pub fn stale(mut self, stale: bool) -> Self {

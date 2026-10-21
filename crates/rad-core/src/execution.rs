@@ -108,6 +108,7 @@ pub enum Operation {
         parameters: Vec<u8>,
     },
     Navigate(EntityIdentity),
+    Sleep,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchIntent {
@@ -399,6 +400,7 @@ impl State {
                         ActionKind::Return => {
                             Operation::Navigate(folder.parent.ok_or(ExecutionError::NotFound)?)
                         }
+                        ActionKind::Sleep => Operation::Sleep,
                         ActionKind::Wait(wait) => return Ok(Planned::Wait(wait.milliseconds())),
                     },
                 })

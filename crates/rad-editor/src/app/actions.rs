@@ -14,6 +14,7 @@ const HEADER_HEIGHT: f32 = 24.;
 pub(super) enum Category {
     Navigation,
     Timing,
+    Device,
     Plugins,
     Applications,
 }
@@ -110,6 +111,7 @@ impl App {
         let title = match category {
             Category::Navigation => tr(self.es, "Navigation"),
             Category::Timing => tr(self.es, "Timing"),
+            Category::Device => tr(self.es, "Stream Deck"),
             Category::Plugins => tr(self.es, "Plugins"),
             Category::Applications => tr(self.es, "Applications"),
         };
@@ -164,6 +166,10 @@ impl App {
                 ui.add_space(6.);
                 if self.category(ui, look, Category::Timing) {
                     self.list_action(ui, look, Badge::Glyph("⏱"), NewAction::Wait);
+                }
+                ui.add_space(6.);
+                if self.category(ui, look, Category::Device) {
+                    self.list_action(ui, look, Badge::Icon(Icon::Moon), NewAction::Sleep);
                 }
                 self.plugin_rows(ui, look);
                 ui.add_space(6.);

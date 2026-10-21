@@ -7,6 +7,10 @@ fn representative_wire_vectors_share_structural_definition() {
         ("board", json!({"folder_id":null})),
         ("inspector", json!({"id":"b1"})),
         (
+            "add_action",
+            json!({"button_id":"b1","type":"sleep","parameters":null}),
+        ),
+        (
             "edit",
             json!({"changes":[{"kind":"set","id":"b1","field":"name","value":"Name"}]}),
         ),

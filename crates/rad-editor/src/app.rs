@@ -41,6 +41,7 @@ const DEFAULT_WAIT_MS: u64 = 1000;
 enum NewAction {
     Launcher(Entry),
     Wait,
+    Sleep,
     Plugin(crate::plugins::CatalogEntry),
 }
 #[derive(Clone)]
@@ -516,6 +517,7 @@ impl App {
                 ("launcher", json!({"desktop_entry":entry.desktop_entry}))
             }
             NewAction::Wait => ("wait", json!({"milliseconds":DEFAULT_WAIT_MS})),
+            NewAction::Sleep => ("sleep", Value::Null),
             NewAction::Plugin(_) => unreachable!(),
         };
         let sent = self.command(Job::Request(crate::commands::add_action(
@@ -530,6 +532,7 @@ impl App {
         match action {
             NewAction::Launcher(entry) => entry.name.clone(),
             NewAction::Wait => tr(self.es, "Wait").into(),
+            NewAction::Sleep => tr(self.es, "Sleep Stream Deck").into(),
             NewAction::Plugin(entry) => entry.label.clone(),
         }
     }

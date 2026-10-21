@@ -87,7 +87,7 @@ fn unsupported_version_is_distinct_from_malformed_document() {
     let json = String::from_utf8(encode(&c).unwrap()).unwrap();
     assert_eq!(
         decode_data(
-            json.replacen("\"version\":3", "\"version\":4", 1)
+            json.replacen("\"version\":4", "\"version\":5", 1)
                 .as_bytes()
         ),
         Err(CodecError::UnsupportedVersion)
@@ -211,8 +211,8 @@ fn duplicate_unknown_nested_fields_malformed_and_untrusted_semantics() {
     let (c, r) = full();
     let json = String::from_utf8(encode(&c).unwrap()).unwrap();
     for bad in [
-        json.replacen("\"version\":3", "\"version\":3,\"version\":3", 1),
-        json.replacen("\"version\":3", "\"version\":3,\"secret\":null", 1),
+        json.replacen("\"version\":4", "\"version\":4,\"version\":4", 1),
+        json.replacen("\"version\":4", "\"version\":4,\"secret\":null", 1),
         json.replacen("\"serial\":\"1\"", "\"serial\":\"1\",\"serial\":\"1\"", 1),
         json.replacen("\"parent\":null", "\"parent\":null,\"parent\":null", 1),
         json.replacen("\"consult\":true", "\"consult\":true,\"extra\":false", 1),

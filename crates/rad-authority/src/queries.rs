@@ -12,6 +12,7 @@ pub enum ActionType {
     External(rad_core::configuration::ExternalType),
     EnterFolder,
     Return,
+    Sleep,
     Wait,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +70,7 @@ impl Authority {
                     }
                     rad_core::configuration::ActionKind::EnterFolder(_) => ActionType::EnterFolder,
                     rad_core::configuration::ActionKind::Return => ActionType::Return,
+                    rad_core::configuration::ActionKind::Sleep => ActionType::Sleep,
                     rad_core::configuration::ActionKind::Wait(_) => ActionType::Wait,
                 };
                 Visible::Visible(ActionView {

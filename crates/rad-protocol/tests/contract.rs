@@ -2076,3 +2076,100 @@ fn machine_settings_operations_are_announced_to_the_editor_and_never_to_automati
         }
     }
 }
+
+#[test]
+fn native_sleep_can_be_added_and_run_through_the_public_api_without_an_idle_timer() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":0,"name":"Sleep"}),
+    );
+    apply(
+        &mut a,
+        "set_settings",
+        json!({"changes":{"sleep_ms":"0","brightness_percent":42}}),
+    );
+    apply(
+        &mut a,
+        "add_action",
+        json!({"button_id":"b1","type":"sleep","parameters":null}),
+    );
+    let inspector = response(call(
+        &mut a,
+        Origin::Editor,
+        "inspector",
+        json!({"id":"b1"}),
+    ));
+    assert_eq!(inspector.status, rad_api::response::Status::Ok);
+    assert_eq!(
+        serde_json::to_value(&inspector.data).unwrap()["appearance"]["native_icon"],
+        "sleep"
+    );
+    let board = response(call(
+        &mut a,
+        Origin::Editor,
+        "board",
+        json!({"folder_id":null}),
+    ));
+    assert_eq!(
+        serde_json::to_value(&board.data).unwrap()["keys"][0]["appearance"]["native_icon"],
+        "sleep"
+    );
+    let appearance = response(call(
+        &mut a,
+        Origin::Editor,
+        "get_section",
+        json!({"id":"b1","section":"appearance","cursor":null}),
+    ));
+    let appearance = serde_json::to_value(&appearance.data).unwrap();
+    assert!(
+        appearance["items"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"name":"text_position","value":"bottom"}))
+    );
+    assert!(
+        appearance["items"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"name":"native_icon","value":"sleep"}))
+    );
+    let invalid = response(call(
+        &mut a,
+        Origin::Editor,
+        "add_action",
+        json!({"button_id":"b1","type":"sleep","parameters":{"milliseconds":1}}),
+    ));
+    assert_eq!(invalid.error.unwrap().code, "invalid_request");
+    let Resolution::Command(command) = call(&mut a, Origin::Editor, "run", json!({"id":"b1"}))
+    else {
+        panic!("run command");
+    };
+    let ticket = a.reserve(4, Origin::Editor).unwrap();
+    let effects = a.submit(ticket, command);
+    assert!(effects.iter().any(|e| matches!(
+        e,
+        rad_authority::Effect::Display {
+            brightness: 42,
+            asleep: true
+        }
+    )));
+    assert!(!effects.iter().any(|e| matches!(
+        e,
+        rad_authority::Effect::Dispatch(_) | rad_authority::Effect::Persist { .. }
+    )));
+    a.input_report(0, [false; 32]).unwrap();
+    let mut pressed = [false; 32];
+    pressed[0] = true;
+    let wake = a.input_report(1, pressed).unwrap();
+    assert!(
+        wake.iter()
+            .any(|e| matches!(e, rad_authority::Effect::Wake))
+    );
+    assert!(
+        !wake
+            .iter()
+            .any(|e| matches!(e, rad_authority::Effect::HardwareAccepted { .. }))
+    );
+}

@@ -159,3 +159,73 @@ const PNG: &[u8] = &[
     0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 0,
     5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
+
+#[test]
+fn native_sleep_has_a_crescent_fallback_but_preserves_custom_image_and_text() {
+    let image = std::sync::Arc::new(rad_media::normalize(PNG).unwrap());
+    let first = Configuration::prepare_new(&IdentityRegistry::new(877).unwrap()).unwrap();
+    let c = first
+        .configuration()
+        .prepare_edit(
+            first.registry(),
+            Origin::Editor,
+            Edit::CreateButton {
+                folder: first.configuration().data().principal,
+                position: 0,
+                name: "Sleep".into(),
+            },
+        )
+        .unwrap();
+    let b = c.configuration().data().buttons[0].binding.identity();
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
+            Edit::AddAction {
+                button: b,
+                kind: ActionKind::Sleep,
+            },
+        )
+        .unwrap();
+    let mut keys = std::array::from_fn(|_| KeyVisual::default());
+    keys[0] = KeyVisual::new("", None, false, false)
+        .sleep_icon(true)
+        .text_at(TextPlacement::Bottom);
+    assert_eq!(
+        project(
+            &Authority::new(c.clone(), 1, NonZeroU128::new(1).unwrap()),
+            &BTreeMap::new(),
+            42,
+            false
+        ),
+        Desired::new(keys, 42, false).unwrap()
+    );
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
+            Edit::SetAppearance {
+                button: b,
+                appearance: Appearance {
+                    text: "Night".into(),
+                    image: Some("custom".into()),
+                    text_position: Some(TextPosition::Top),
+                },
+            },
+        )
+        .unwrap();
+    let mut keys = std::array::from_fn(|_| KeyVisual::default());
+    keys[0] =
+        KeyVisual::new("Night", Some(image.clone()), false, false).text_at(TextPlacement::Top);
+    assert_eq!(
+        project(
+            &Authority::new(c, 1, NonZeroU128::new(1).unwrap()),
+            &BTreeMap::from([("custom".into(), image)]),
+            42,
+            false
+        ),
+        Desired::new(keys, 42, false).unwrap()
+    );
+}

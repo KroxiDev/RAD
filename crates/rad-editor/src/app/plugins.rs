@@ -1300,6 +1300,7 @@ impl App {
             text,
             face.map(|f| f.position.as_str()).unwrap_or("middle"),
             face.and_then(|f| f.texture.as_ref()),
+            false,
         );
         if state != "current" {
             // A small tag in the corner: the face is not live, whatever it still shows.

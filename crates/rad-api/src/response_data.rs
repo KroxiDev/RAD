@@ -73,6 +73,7 @@ pub enum AppearanceField {
     Text(String),
     Image(Option<String>),
     TextPosition(TextPosition),
+    NativeIcon(crate::NativeIcon),
 }
 dto!(AppearanceSection { section: AppearanceSectionName, items: Vec<AppearanceField>, next_cursor: Option<String>, view_revision: String, visual_type: Option<String> });
 dto!(ActionsSection { section: ActionsSectionName, items: Vec<ActionView>, next_cursor: Option<String>, view_revision: String });

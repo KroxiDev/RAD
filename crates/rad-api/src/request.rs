@@ -12,6 +12,8 @@ pub struct PluginParameters {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ActionParameters {
+    /// A parameterless native action serializes as JSON null.
+    None,
     Plugin(PluginParameters),
     Launcher(LauncherParameters),
     Wait(WaitParameters),

@@ -45,6 +45,7 @@ pub(super) fn paint_key(
     label: &str,
     text_position: &str,
     texture: Option<&egui::TextureHandle>,
+    sleep_icon: bool,
 ) {
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     let radius = CornerRadius::same(KEY_RADIUS);
@@ -62,6 +63,9 @@ pub(super) fn paint_key(
         egui::Image::from_texture((texture.id(), fitted))
             .corner_radius(radius)
             .paint_at(ui, egui::Rect::from_center_size(picture.center(), fitted));
+    }
+    if sleep_icon && texture.is_none() {
+        super::look::paint_moon(&painter, picture.center(), 22. * unit, look.text);
     }
     if label.is_empty() {
         return;
@@ -93,7 +97,7 @@ pub(super) fn paint_key(
             (top, Some((top - 3., top + height + 3.)))
         }
     };
-    if let (Some((from, to)), true) = (band, texture.is_some()) {
+    if let (Some((from, to)), true) = (band, texture.is_some() || sleep_icon) {
         let band =
             egui::Rect::from_min_max(egui::pos2(rect.left(), from), egui::pos2(rect.right(), to));
         // Square corners would poke out of the key where the band reaches its edge.
@@ -192,7 +196,7 @@ impl App {
                 key_label(
                     &string(&b.appearance["text"]),
                     &string(&b.entity["fields"]["name"]),
-                    b.appearance["image"].is_string(),
+                    b.appearance["image"].is_string() || b.appearance["native_icon"] == "sleep",
                 )
             })
             .unwrap_or_default();
@@ -225,7 +229,15 @@ impl App {
                     .and_then(|reference| self.textures.get(reference));
                 let position = string(&view.appearance["text_position"]);
                 if !self.plugin_face(ui, look, id.as_deref().unwrap_or(""), rect) {
-                    paint_key(ui, look, rect, &label, &position, texture);
+                    paint_key(
+                        ui,
+                        look,
+                        rect,
+                        &label,
+                        &position,
+                        texture,
+                        view.appearance["native_icon"] == "sleep",
+                    );
                 }
                 if response.hovered() {
                     painter.rect_filled(rect, radius, egui::Color32::from_white_alpha(10));

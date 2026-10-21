@@ -19,7 +19,7 @@ pub(crate) fn import(bytes: &[u8]) -> Result<document::Document, CodecError> {
         .as_object_mut()
         .ok_or(CodecError::InvalidDocument)?
         .remove("gui_language");
-    value["version"] = serde_json::json!(3);
+    value["version"] = serde_json::json!(4);
     value["grid"] = serde_json::json!([8, 4]);
     value["plugin_dependencies"] = serde_json::json!({});
     value["plugin_settings"] = serde_json::json!({});

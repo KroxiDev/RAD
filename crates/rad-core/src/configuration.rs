@@ -229,6 +229,7 @@ pub enum ActionKind {
     },
     EnterFolder(EntityIdentity),
     Return,
+    Sleep,
     Wait(Wait),
 }
 #[derive(Debug, Clone, PartialEq, Eq)]

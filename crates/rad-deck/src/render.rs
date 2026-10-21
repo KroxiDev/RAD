@@ -41,7 +41,23 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
     // The generic launcher picture needs room of its own: centred text leaves it none.
     let centred_text = !key.text.is_empty() && key.text_placement == TextPlacement::Middle;
     let generic = key.image.is_none() && key.generic_launcher && !centred_text;
-    if generic {
+    let moon = key.image.is_none() && key.sleep_icon;
+    if moon {
+        let center_y = top as f32 + height as f32 / 2.;
+        let radius = 22.;
+        for y in top..top + height {
+            for x in 0..SIDE {
+                let dx = x as f32 + 0.5 - 48.;
+                let dy = y as f32 + 0.5 - center_y;
+                if dx * dx + dy * dy <= radius * radius
+                    && (dx - 11.).powi(2) + (dy + 8.).powi(2) > radius * radius
+                {
+                    canvas.put_pixel(x, y, image::Rgb([225, 230, 245]));
+                }
+            }
+        }
+    }
+    if generic && !moon {
         let offset = top + (height - PICTURE) / 2;
         for y in 12..54 {
             for x in 22..74 {
@@ -59,7 +75,7 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
             &mut canvas,
             &key.text,
             key.text_placement,
-            key.image.is_some() || generic,
+            key.image.is_some() || generic || moon,
         );
     }
     // An amber pause marks last-known content. Unavailable takes precedence.
@@ -168,6 +184,28 @@ mod tests {
     use super::*;
     use image::ImageEncoder;
     use std::sync::Arc;
+    #[test]
+    fn sleep_crescent_is_visible_without_text_and_never_overwrites_a_custom_image() {
+        let plain = KeyVisual::default();
+        let moon = plain.clone().sleep_icon(true);
+        let pixels = rgb(&moon).unwrap();
+        let lit = pixels.pixels().filter(|p| p.0 != [0, 0, 0]).count();
+        assert!(
+            lit > 200 && lit < 1500,
+            "a crescent, not blank or a full key"
+        );
+        assert_ne!(pixels, rgb(&plain).unwrap());
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(&[255, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        let image = Arc::new(rad_media::normalize(&bytes).unwrap());
+        let custom = KeyVisual::new("", Some(image), false, false);
+        assert_eq!(
+            rgb(&custom.clone().sleep_icon(true)).unwrap(),
+            rgb(&custom).unwrap()
+        );
+    }
     #[test]
     fn image_is_letterboxed_and_rotated_for_xl_without_cropping() {
         let mut bytes = Vec::new();

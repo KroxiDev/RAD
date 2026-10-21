@@ -32,7 +32,7 @@ fn complete_settings_roundtrip_with_zero_sleep_max_durations_and_language() {
             *c.configuration()
         );
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["version"], 3);
+        assert_eq!(value["version"], 4);
         assert!(value["settings"]["sleep_ms"].is_string());
         assert!(value["settings"]["press_threshold_ms"].is_string());
         assert_eq!(bytes, encode(c.configuration()).unwrap());
@@ -162,7 +162,7 @@ fn strict_settings_reject_duplicates_unknown_fields_nulls_and_noncanonical_durat
         assert!(decode_data(&serde_json::to_vec(&bad).unwrap()).is_err());
     }
     let mut future = original;
-    future["version"] = serde_json::json!(4);
+    future["version"] = serde_json::json!(5);
     assert_eq!(
         decode_data(&serde_json::to_vec(&future).unwrap()),
         Err(CodecError::UnsupportedVersion)

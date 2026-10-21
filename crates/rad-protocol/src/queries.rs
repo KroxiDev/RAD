@@ -1,9 +1,6 @@
 use super::*;
 use rad_authority::{ActionType, ActionView, Cursor, EntityView, QueryError, Visible};
-use rad_core::{
-    configuration::{Mode, TextPosition},
-    permissions::LocalPermissions,
-};
+use rad_core::{configuration::Mode, permissions::LocalPermissions};
 pub(super) fn read(
     a: &Authority,
     c: IncomingContext,
@@ -64,23 +61,17 @@ pub(super) fn read(
                     if cursor.is_some() {
                         return Err("cursor_expired");
                     };
-                    let v = a.appearance(c.origin, id).ok_or("not_found")?;
-                    // The position is reported resolved: what a renderer must draw.
-                    let text_position = match v.appearance.effective_text_position() {
-                        TextPosition::Top => "top",
-                        TextPosition::Middle => "middle",
-                        TextPosition::Bottom => "bottom",
-                        TextPosition::AboveImage => "above_image",
-                        TextPosition::BelowImage => "below_image",
-                    };
-                    let visual_type = match &v.visual {
-                        rad_authority::VisualView::Static => None,
-                        rad_authority::VisualView::External(key) => {
-                            Some(format!("{}#{}", key.plugin(), key.name()))
-                        }
-                    };
+                    let v = super::views::appearance(a, c, id)?;
+                    let mut items = vec![
+                        json!({"name":"text","value":v.text}),
+                        json!({"name":"image","value":v.image}),
+                        json!({"name":"text_position","value":v.text_position}),
+                    ];
+                    if let Some(icon) = v.native_icon {
+                        items.push(json!({"name":"native_icon","value":icon}));
+                    }
                     Ok(
-                        json!({"visual_type":visual_type,"section":"appearance","items":[{"name":"text","value":v.appearance.text},{"name":"image","value":v.appearance.image},{"name":"text_position","value":text_position}],"next_cursor":null,"view_revision":rev}),
+                        json!({"visual_type":v.visual_type,"section":"appearance","items":items,"next_cursor":null,"view_revision":rev}),
                     )
                 }
                 rad_api::Section::Actions => {
@@ -132,6 +123,7 @@ fn action(v: &ActionView, rev: &str) -> Value {
         ActionType::Launcher => "launcher".to_owned(),
         ActionType::EnterFolder => "enter_folder".to_owned(),
         ActionType::Return => "return".to_owned(),
+        ActionType::Sleep => "sleep".to_owned(),
         ActionType::Wait => "wait".to_owned(),
         ActionType::External(t) => format!("{}:{}", t.plugin(), t.name()),
     };

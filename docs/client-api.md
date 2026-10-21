@@ -153,6 +153,36 @@ El editor nunca escribe la configuración por su cuenta.
   ninguno); una copia **de otra** instalación se remapea como en una restauración normal
   (ADR 0003), o se adopta tal cual si no se pudo leer ningún contador.
 
+## Acción nativa Sleep
+
+`add_action {button_id, type:"sleep", parameters:null}` añade un paso nativo sin
+parámetros; objetos de parámetros de otros tipos se rechazan como
+`invalid_request` (`not_applied`). `get` e `inspector` lo proyectan con
+`type:"sleep"` y `parameters:null`. Persiste en documento v4 (ADR 0017), se copia
+y entra en el historial como cualquier acción. No depende de un plugin.
+
+`run {id}` desde CLI o «Probar», y la entrada física, pasan por la misma admisión
+con permisos vigentes y snapshot. Authority completa el paso localmente como
+satisfactorio al activar exactamente el reposo de inactividad; no crea un trabajo
+externo ni cambia configuración o navegación. No garantiza recepción física si
+el deck está ausente. Los siguientes pasos del plan siguen normalmente. Admite
+`press` y `long_press`, no `hold`. Funciona con `sleep_ms:"0"`.
+
+Soltar la tecla que activó Sleep no despierta. Una nueva presión de cualquier
+tecla despierta y se consume hasta su liberación, sin ejecutar acciones; restaura
+el brillo configurado y conserva la carpeta activa. Reposar termina los Hold
+originales como el reposo automático.
+
+`get_section` de apariencia añade el item tipado `native_icon` solo cuando existe
+el visual nativo; conserva los tres items anteriores y su orden.
+Las apariencias compuestas del editor pueden incluir `native_icon:"sleep"`, enum tipado de
+presentación, cuando la tecla contiene esta acción y no tiene imagen ni visual
+externo. El texto propio y su colocación se conservan. El campo se omite para las
+apariencias anteriores, preservando sus vectores v1; el cliente nuevo admite su
+ausencia. Un cliente anterior con DTO cerrado necesita actualizarse para mostrar
+esa apariencia nueva. Los contratos de automatización de las acciones anteriores,
+el framing y JSON CLI siguen en v1.
+
 ## CLI JSON y salida de proceso
 
 La versión de JSON/exit codes es `rad_api::CLI_VERSION = 1`; el campo

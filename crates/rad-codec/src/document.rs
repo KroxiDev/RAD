@@ -122,6 +122,7 @@ pub(crate) enum ActionKind {
     },
     EnterFolder(Identity),
     Return,
+    Sleep,
     Wait(String),
 }
 #[derive(Serialize, Deserialize)]

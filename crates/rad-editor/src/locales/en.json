@@ -318,5 +318,7 @@
   "value kept": "value kept",
   "{message} · {count} plugins": "{message} · {count} plugins",
   "≤{count} bytes": "≤{count} bytes",
-  "⏵ Try": "⏵ Try"
+  "⏵ Try": "⏵ Try",
+  "Sleep Stream Deck": "Sleep Stream Deck",
+  "Any key wakes the deck without running its action": "Any key wakes the deck without running its action"
 }

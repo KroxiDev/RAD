@@ -167,6 +167,7 @@ pub(super) enum Icon {
     Grip,
     /// A thin cross: take this away.
     Close,
+    Moon,
 }
 
 /// Draws `icon` around `center` with strokes, so it never depends on the fonts' glyphs.
@@ -174,6 +175,7 @@ pub(super) fn paint_icon(painter: &egui::Painter, center: egui::Pos2, icon: Icon
     let stroke = Stroke::new(1.7, color);
     let at = |x: f32, y: f32| center + egui::vec2(x, y);
     match icon {
+        Icon::Moon => paint_moon(painter, center, 7., color),
         Icon::Back => {
             painter.line(vec![at(2.5, -5.5), at(-3., 0.), at(2.5, 5.5)], stroke);
         }
@@ -267,6 +269,34 @@ pub(super) fn paint_icon(painter: &egui::Painter, center: egui::Pos2, icon: Icon
             }
         }
     }
+}
+
+/// Crescent made from horizontal strips between two circles; no font or bitmap asset.
+pub(super) fn paint_moon(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
+    let mut mesh = egui::Mesh::default();
+    let steps = 48;
+    for row in 0..steps {
+        let y0 = -radius + 2. * radius * row as f32 / steps as f32;
+        let y1 = -radius + 2. * radius * (row + 1) as f32 / steps as f32;
+        let y = (y0 + y1) / 2.;
+        let outer = (radius * radius - y * y).max(0.).sqrt();
+        let inner_y = y + radius * 0.36;
+        let right = if inner_y.abs() < radius {
+            (radius * 0.5 - (radius * radius - inner_y * inner_y).sqrt()).min(outer)
+        } else {
+            outer
+        };
+        if right > -outer {
+            mesh.add_colored_rect(
+                egui::Rect::from_min_max(
+                    center + egui::vec2(-outer, y0),
+                    center + egui::vec2(right, y1),
+                ),
+                color,
+            );
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// Square icon button drawn with strokes, independent of the bundled fonts' glyph coverage.

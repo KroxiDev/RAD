@@ -115,7 +115,10 @@ pub(super) fn validate_data(
             }
             bindings.push(action.binding);
             match action.kind {
-                ActionKind::Launcher(_) | ActionKind::External { .. } | ActionKind::Wait(_) => {}
+                ActionKind::Launcher(_)
+                | ActionKind::External { .. }
+                | ActionKind::Wait(_)
+                | ActionKind::Sleep => {}
                 ActionKind::EnterFolder(target) => {
                     let owner = data
                         .folders

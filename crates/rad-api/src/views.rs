@@ -92,6 +92,14 @@ pub struct AppearanceView {
     pub image: Option<String>,
     pub text_position: TextPosition,
     pub visual_type: Option<String>,
+    /// A native fallback picture, never a replacement for an image or plugin visual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_icon: Option<NativeIcon>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeIcon {
+    Sleep,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

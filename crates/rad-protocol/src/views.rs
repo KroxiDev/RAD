@@ -85,6 +85,7 @@ fn action_fields(v: rad_authority::ActionView) -> EntityFields {
         ActionType::Wait => "wait".into(),
         ActionType::EnterFolder => "enter_folder".into(),
         ActionType::Return => "return".into(),
+        ActionType::Sleep => "sleep".into(),
         ActionType::External(key) => format!("{}:{}", key.plugin(), key.name()),
     };
     let parameters = match (v.desktop_entry, v.wait_ms) {
@@ -107,10 +108,29 @@ fn action_fields(v: rad_authority::ActionView) -> EntityFields {
         folder_id: v.destination.map(|b| short(b.short())),
     })
 }
-fn appearance(a: &Authority, c: IncomingContext, id: ShortId) -> Checked<AppearanceView> {
+pub(super) fn appearance(
+    a: &Authority,
+    c: IncomingContext,
+    id: ShortId,
+) -> Checked<AppearanceView> {
     use rad_core::configuration::TextPosition as P;
     let v = a.appearance(c.origin, id).ok_or("not_found")?;
-    let text_position = match v.appearance.effective_text_position() {
+    let has_sleep = match a.get(c.origin, id) {
+        Some(rad_authority::EntityView::Button(button)) => button.actions.iter().any(|action| {
+            matches!(action, Visible::Visible(action) if action.kind == rad_authority::ActionType::Sleep)
+        }),
+        _ => false,
+    };
+    let native_icon = (v.appearance.image.is_none()
+        && matches!(v.visual, rad_authority::VisualView::Static)
+        && has_sleep)
+        .then_some(rad_api::NativeIcon::Sleep);
+    let position = if native_icon.is_some() {
+        v.appearance.text_position.unwrap_or(P::Bottom)
+    } else {
+        v.appearance.effective_text_position()
+    };
+    let text_position = match position {
         P::Top => rad_api::TextPosition::Top,
         P::Middle => rad_api::TextPosition::Middle,
         P::Bottom => rad_api::TextPosition::Bottom,
@@ -128,6 +148,7 @@ fn appearance(a: &Authority, c: IncomingContext, id: ShortId) -> Checked<Appeara
         image: v.appearance.image,
         text_position,
         visual_type,
+        native_icon,
     })
 }
 pub(super) fn board(

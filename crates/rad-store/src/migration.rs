@@ -160,7 +160,7 @@ pub(crate) fn migrate_documents(
     path: &Path,
     connection: &mut Connection,
 ) -> Result<(), StoreError> {
-    const BACKUP: &str = ".document-v2-backup";
+    let mut backup = ".document-v2-backup";
     let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
     let registry = ledger::read(&tx)?;
     crate::recovery::validate(&tx)?;
@@ -173,24 +173,29 @@ pub(crate) fn migrate_documents(
     let mut corrupt = Vec::new();
     for (id, bytes) in documents {
         match rad_codec::document_version(&bytes) {
-            Ok(version) if version > 3 => return Err(StoreError::UnsupportedVersion),
-            Ok(1 | 2) => match Store::read_revision(&tx, id, &registry) {
-                Ok(_) => migrate.push(id),
-                Err(StoreError::Corrupt | StoreError::Invalid) => corrupt.push(id),
-                Err(error) => return Err(error),
-            },
+            Ok(version) if version > 4 => return Err(StoreError::UnsupportedVersion),
+            Ok(version @ 1..=3) => {
+                if version == 3 {
+                    backup = ".document-v3-backup";
+                }
+                match Store::read_revision(&tx, id, &registry) {
+                    Ok(_) => migrate.push(id),
+                    Err(StoreError::Corrupt | StoreError::Invalid) => corrupt.push(id),
+                    Err(error) => return Err(error),
+                }
+            }
             _ => {}
         }
     }
     if migrate.is_empty() {
         return Ok(());
     }
-    preserve(path, BACKUP)?;
+    preserve(path, backup)?;
     tx.rollback()?;
     database::configure(connection)?;
     let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
     let work = (|| -> Result<(), StoreError> {
-        if !same_bytes(path, &backup_path(path, BACKUP))? || ledger::read(&tx)? != registry {
+        if !same_bytes(path, &backup_path(path, backup))? || ledger::read(&tx)? != registry {
             return Err(StoreError::Corrupt);
         }
         for id in corrupt {

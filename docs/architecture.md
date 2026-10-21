@@ -235,3 +235,4 @@ Estas piezas parecen simplificables y no lo son:
 | [0014](adr/0014-residual-de-plugins-en-el-host.md) | El residual de un plugin vencido pasa al Host |
 | [0015](adr/0015-gesto-del-plan-y-documento-v3.md) | Un gesto por botón, umbral global de pulsación larga y documento v3 |
 | [0016](adr/0016-presencia-de-escritorio.md) | Identidad de escritorio, bandeja independiente y activación de un único editor |
+| [0017](adr/0017-accion-nativa-sleep-y-documento-v4.md) | Acción nativa Sleep, transición compartida con inactividad y documento v4 |

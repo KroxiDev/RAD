@@ -202,8 +202,10 @@ pub fn plan_gestures(actions: &[Value], catalog: &[CatalogEntry]) -> Vec<rad_api
                         .find(|entry| entry.type_key == kind && !entry.visual)
                         .is_some_and(|entry| entry.gestures.contains(gesture))
                 } else {
-                    matches!(kind, "launcher" | "wait" | "return" | "enter_folder")
-                        && *gesture != Gesture::Hold
+                    matches!(
+                        kind,
+                        "launcher" | "wait" | "return" | "enter_folder" | "sleep"
+                    ) && *gesture != Gesture::Hold
                 }
             })
         })

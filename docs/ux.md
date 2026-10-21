@@ -71,6 +71,11 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
 - **Plugins.** Los oficiales se instalan desde una lista, con un botón; uno de
   terceros, pegando su enlace de GitHub. Actualizar usa el origen registrado. Mientras
   un plugin funcione, no hay avisos.
+- **Suspender Stream Deck.** Acción nativa con media luna en la categoría Stream
+  Deck. Activa inmediatamente el mismo reposo configurado por inactividad, incluso
+  cuando el reposo automático está desactivado. Cualquier tecla despierta sin
+  ejecutar su acción; conserva carpeta y brillo. La luna predeterminada no
+  reemplaza una imagen propia ni un visual de plugin.
 - **Gestos.** El editor ofrece pulsar, mantener o pulsación larga solo si la acción
   los admite.
 - **Pantallas.** Ajustes y los formularios ocupan la ventana o el panel de la tecla,

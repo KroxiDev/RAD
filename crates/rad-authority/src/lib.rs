@@ -998,6 +998,13 @@ impl Authority {
                 if exists {
                     e.extend(self.sync_input());
                 }
+            } else if intent.operation == rad_core::execution::Operation::Sleep {
+                e.extend(self.enter_sleep());
+                intents.extend(
+                    self.engine
+                        .complete(intent.id, Completion::Succeeded)
+                        .expect("fresh sleep dispatch, prevalidated scheduling horizon"),
+                );
             } else {
                 let revision = self.runs[&intent.id.execution()];
                 self.jobs.insert(intent.id, revision);
@@ -1157,7 +1164,9 @@ impl Authority {
                 }
                 rad_core::input::Output::Candidate { key, button }
                 | rad_core::input::Output::Gesture { key, button, .. } => {
-                    if self.state == StorageState::Ready {
+                    // An earlier candidate in this batch may have put the deck to sleep.
+                    // HoldEnd above must still run, but invalidated starts are consumed.
+                    if self.state == StorageState::Ready && !self.asleep {
                         let gesture = match output {
                             rad_core::input::Output::Gesture { gesture, .. } => gesture,
                             _ => rad_core::input::ControlGesture::Press,
@@ -1407,17 +1416,21 @@ impl Authority {
             .sleep_deadline
             .is_some_and(|deadline| deadline <= self.now)
         {
-            self.sleep_deadline = None;
-            self.asleep = true;
-            let output = self
-                .input
-                .handle(self.now, rad_core::input::Change::Sleep)
-                .expect("monotonic sleep");
-            let mut effects = self.input_effects(output);
-            effects.push(self.display_effect());
-            return effects;
+            return self.enter_sleep();
         }
         vec![]
+    }
+    /// Manual actions and the idle deadline share the exact same input/display transition.
+    fn enter_sleep(&mut self) -> Vec<Effect> {
+        self.sleep_deadline = None;
+        self.asleep = true;
+        let output = self
+            .input
+            .handle(self.now, rad_core::input::Change::Sleep)
+            .expect("monotonic sleep");
+        let mut effects = self.input_effects(output);
+        effects.push(self.display_effect());
+        effects
     }
     fn project_display(&mut self) -> Vec<Effect> {
         let mut e = self.reset_sleep_deadline();

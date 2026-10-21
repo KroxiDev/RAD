@@ -5,6 +5,8 @@ mod v1;
 mod v1_document;
 mod v2;
 mod v2_document;
+mod v3;
+mod v3_document;
 use document as d;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecError {
@@ -13,13 +15,13 @@ pub enum CodecError {
     InvalidValue,
     TooLarge,
 }
-/// Encode the canonical v3 deck document.
+/// Encode the canonical v4 deck document.
 /// No historical ledger, media bytes or runtime state.
 pub fn encode(config: &Configuration) -> Result<Vec<u8>, CodecError> {
     let data = config.data();
     let doc = d::Document {
         settings: write_settings(data.settings),
-        version: 3,
+        version: 4,
         grid: [data.grid.columns(), data.grid.rows()],
         plugin_dependencies: data
             .plugin_dependencies
@@ -71,7 +73,8 @@ pub fn decode_data(bytes: &[u8]) -> Result<ConfigurationData, CodecError> {
     let doc: d::Document = match version {
         1 => v1::import(bytes)?,
         2 => v2::import(bytes)?,
-        3 => serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?,
+        3 => v3::import(bytes)?,
+        4 => serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?,
         _ => return Err(CodecError::UnsupportedVersion),
     };
     check_strings(&doc)?;
@@ -275,6 +278,7 @@ fn write_button(v: &ButtonData) -> d::Button {
                     },
                     ActionKind::EnterFolder(id) => d::ActionKind::EnterFolder(write_identity(*id)),
                     ActionKind::Return => d::ActionKind::Return,
+                    ActionKind::Sleep => d::ActionKind::Sleep,
                     ActionKind::Wait(wait) => d::ActionKind::Wait(wait.milliseconds().to_string()),
                 },
             })
@@ -338,6 +342,7 @@ fn read_button(v: d::Button) -> Result<ButtonData, CodecError> {
                             ActionKind::EnterFolder(read_identity(id)?)
                         }
                         d::ActionKind::Return => ActionKind::Return,
+                        d::ActionKind::Sleep => ActionKind::Sleep,
                         d::ActionKind::Wait(milliseconds) => ActionKind::Wait(
                             Wait::new(decimal(&milliseconds)?)
                                 .map_err(|_| CodecError::InvalidValue)?,

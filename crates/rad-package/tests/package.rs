@@ -842,7 +842,7 @@ fn future_document_in_package_reports_unsupported_version() {
     let length = u32::from_be_bytes(bytes[20..24].try_into().unwrap()) as usize;
     let document = String::from_utf8(bytes[60..60 + length].to_vec())
         .unwrap()
-        .replace("\"version\":3", "\"version\":4");
+        .replace("\"version\":4", "\"version\":5");
     let bytes = with_document(bytes, document.into_bytes());
     let (root, area) = area();
     assert!(matches!(
@@ -912,7 +912,7 @@ fn frozen_v2_package_imports_then_roundtrips_v3_with_portable_settings_and_count
     assert_eq!(
         rad_codec::encode(&configuration).unwrap(),
         include_str!("../../../docs/fixtures/v2/profile.json")
-            .replacen("\"version\":2", "\"version\":3", 1)
+            .replacen("\"version\":2", "\"version\":4", 1)
             .as_bytes()
     );
     let mut encoded = vec![];
@@ -931,6 +931,66 @@ fn frozen_v2_package_imports_then_roundtrips_v3_with_portable_settings_and_count
     assert_eq!(reimported.data, *configuration.data());
     assert_eq!(reimported.identity.counters, registry.counters());
     drop(media_again);
+    drop(media);
+    drop(area);
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn native_sleep_survives_a_portable_copy_and_restores_without_running_or_new_settings() {
+    use rad_core::configuration::*;
+    let c = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
+            Edit::CreateButton {
+                folder: c.configuration().data().principal,
+                position: 0,
+                name: "Sleep".into(),
+            },
+        )
+        .unwrap();
+    let button = c.configuration().data().buttons[0].binding.identity();
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
+            Edit::AddAction {
+                button,
+                kind: ActionKind::Sleep,
+            },
+        )
+        .unwrap();
+    let mut bytes = vec![];
+    export(
+        ExportSnapshot {
+            configuration: c.configuration(),
+            registry: c.registry(),
+            media: &mut Empty,
+        },
+        &mut bytes,
+    )
+    .unwrap();
+    let (root, area) = area();
+    let prepared = prepare(&mut bytes.as_slice(), &area).unwrap();
+    let target = Configuration::prepare_new(&IdentityRegistry::new(99).unwrap()).unwrap();
+    let (restored, media) = prepared
+        .confirm(
+            target.configuration(),
+            target.registry(),
+            Origin::Editor,
+            true,
+        )
+        .unwrap();
+    assert_eq!(restored.configuration().data(), c.configuration().data());
+    assert_eq!(
+        restored.configuration().data().buttons[0].actions[0].kind,
+        ActionKind::Sleep
+    );
+    assert!(media.catalog().is_empty());
     drop(media);
     drop(area);
     std::fs::remove_dir(root).unwrap();

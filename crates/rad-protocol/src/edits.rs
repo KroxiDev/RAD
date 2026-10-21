@@ -49,6 +49,7 @@ pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
         } => {
             let id = parse_id(button_id)?;
             let kind = match (type_key.as_str(), parameters) {
+                ("sleep", rad_api::ActionParameters::None) => ActionKind::Sleep,
                 ("launcher", rad_api::ActionParameters::Launcher(p)) => {
                     ActionKind::Launcher(launcher(&p.desktop_entry)?)
                 }
@@ -129,6 +130,7 @@ fn milliseconds(value: u64) -> Checked<Wait> {
 }
 fn parameters(value: &rad_api::ActionParameters) -> Checked<ActionParameters> {
     Ok(match value {
+        rad_api::ActionParameters::None => return Err("invalid_request"),
         rad_api::ActionParameters::Plugin(p) => ActionParameters::External(parameter_bytes(p)?),
         rad_api::ActionParameters::Launcher(p) => {
             ActionParameters::Launcher(launcher(&p.desktop_entry)?)
