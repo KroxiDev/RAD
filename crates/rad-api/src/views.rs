@@ -235,6 +235,9 @@ impl RecoveryCause {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecoveryAction {
+    /// «Restaurar una copia»: the transfer operations with `kind: "restore"` and
+    /// `restore_commit`.
+    Restore,
     /// `recovery_reset`: start again with an empty configuration.
     Reset,
     /// Show the detail; always available.

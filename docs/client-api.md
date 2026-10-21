@@ -111,13 +111,14 @@ instancia y los sockets, no toma el deck ni lanza plugins, y solo atiende lo sig
 El editor nunca escribe la configuración por su cuenta.
 
 - `hello` se responde igual (mismos `limits`) con solo las operaciones de recuperación:
-  Editor `hello`, `recovery`, `recovery_reset`; Automation `hello`.
+  Editor `hello`, `recovery`, `recovery_reset`, `transfer_begin`, `transfer_write`,
+  `transfer_finish`, `transfer_drop`, `restore_commit`; Automation `hello`.
 - `recovery {}` (solo Editor; Automation recibe `permission_denied`) devuelve
   `{cause, actions, detail:{code, counters_read}}`.
 
 | `cause` | Cuándo | `detail.code` | `actions` |
 |---|---|---|---|
-| `unreadable` | La base no tiene ninguna revisión válida | `corrupt`, `invalid` | `reset`, `details` |
+| `unreadable` | La base no tiene ninguna revisión válida | `corrupt`, `invalid` | `restore`, `reset`, `details` |
 | `newer_version` | La escribió una versión más nueva de RAD | `unsupported_version` | `details` |
 | `unsafe_folder` | La carpeta de datos o `state.sqlite3` no es privado y propio (ni enlace) | `unsafe_directory`, `unsafe_database_file` | `details` |
 
@@ -133,7 +134,24 @@ El editor nunca escribe la configuración por su cuenta.
   conexiones abiertas siguen sirviendo: el editor relee sus vistas.
 - Todo lo demás, en ambos endpoints, responde `recovery_required` (`not_applied` si es una
   mutación). En modo normal `recovery` y `recovery_reset` no se anuncian ni se atienden.
-- «Restaurar una copia» llegará como otra acción de `actions`.
+- `restore` es «Restaurar una copia» y solo existe con `unreadable`. Se sube el paquete con
+  las operaciones de siempre (`transfer_begin {kind:"restore"}`, `transfer_write`,
+  `transfer_finish` → `restore_prepared` con su resumen, `transfer_drop`) y se confirma con
+  `restore_commit {transfer_id, confirm_replace:true}`. Una operación a la vez: la siguiente
+  espera en la cola. Esas operaciones con una causa distinta de `unreadable`, o
+  `transfer_begin` con un `kind` distinto de `restore`, responden `operation_not_allowed`
+  (`not_applied`; no se crea nada en la carpeta de datos); `transfer_read` y `media_read` siguen en
+  `recovery_required`. `restore_commit` sin `confirm_replace: true` responde
+  `confirmation_required`; una copia que no se puede aceptar, `invalid_request`; si falla
+  antes de reemplazar la base, `storage_error` y sigue en recuperación (todos
+  `not_applied`). Si tiene éxito responde `applied` con `{changed, revision}` como
+  `recovery_reset`: el archivo dañado queda como `state.sqlite3.damaged-<ms>`, la base nueva
+  contiene la copia y el runtime pasa a modo normal en el mismo proceso. La base nueva
+  siempre es de la instalación del archivo dañado (una aleatoria si no se pudo leer) y
+  nunca adopta el token de la copia: una copia **de esta instalación** conserva sus IDs y
+  los contadores del archivo dañado quedan reservados (lo que se cree después no choca con
+  ninguno); una copia **de otra** instalación se remapea como en una restauración normal
+  (ADR 0003), o se adopta tal cual si no se pudo leer ningún contador.
 
 ## CLI JSON y salida de proceso
 
@@ -302,6 +320,7 @@ gets `permission_denied`.
 | `export_failed` | | An export's snapshot could not be made; that export got an error and its lease went back. |
 | `recovery_mode` | cause | The runtime could not open the configuration and entered recovery mode (`unreadable`, `newer_version`, `unsafe_folder`). |
 | `recovery_reset` | | «Empezar de nuevo» finished; the runtime went on in normal mode. |
+| `recovery_restored` | | «Restaurar una copia» finished; the runtime went on in normal mode with the copy. |
 
 `machine_settings {}` is an editor-only read of the machine's own options (ADR 0005,
 0006): `{use_stream_deck, start_with_session}`, both booleans. They never travel in

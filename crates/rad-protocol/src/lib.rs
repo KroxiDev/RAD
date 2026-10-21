@@ -1,7 +1,7 @@
 //! Pure IPC adapter; trusted endpoint origin, no I/O or second authority.
 mod external;
 mod plugins;
-pub use external::{Capabilities, External, TransferKind};
+pub use external::{Capabilities, External, TransferKind, parse_transfer};
 pub use plugins::{OptionsSubject, PluginAdmin, PluginOperation, PluginOptions};
 mod admin;
 mod edits;
@@ -607,7 +607,16 @@ fn hello_data(session: NonZeroU128, operations: &[&str]) -> Value {
 pub fn recovery_operations(origin: Origin) -> &'static [rad_api::Operation] {
     use rad_api::Operation as Op;
     match origin {
-        Origin::Editor => &[Op::Hello, Op::Recovery, Op::RecoveryReset],
+        Origin::Editor => &[
+            Op::Hello,
+            Op::Recovery,
+            Op::RecoveryReset,
+            Op::TransferBegin,
+            Op::TransferWrite,
+            Op::TransferFinish,
+            Op::TransferDrop,
+            Op::RestoreCommit,
+        ],
         Origin::Automation => &[Op::Hello],
     }
 }

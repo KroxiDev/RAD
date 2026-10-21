@@ -41,6 +41,7 @@ event_codes! {
     ExportFailed => "export_failed",
     RecoveryMode => "recovery_mode",
     RecoveryReset => "recovery_reset",
+    RecoveryRestored => "recovery_restored",
     MachineSettingsUnreadable => "machine_settings_unreadable",
 }
 

@@ -1951,7 +1951,16 @@ fn recovery_hello_announces_only_the_recovery_subset_with_the_normal_limits() {
     let session = NonZeroU128::new(7).unwrap();
     assert_eq!(
         rad_protocol::recovery_operations(Origin::Editor),
-        [Op::Hello, Op::Recovery, Op::RecoveryReset]
+        [
+            Op::Hello,
+            Op::Recovery,
+            Op::RecoveryReset,
+            Op::TransferBegin,
+            Op::TransferWrite,
+            Op::TransferFinish,
+            Op::TransferDrop,
+            Op::RestoreCommit
+        ]
     );
     assert_eq!(
         rad_protocol::recovery_operations(Origin::Automation),
@@ -1991,7 +2000,16 @@ fn recovery_hello_announces_only_the_recovery_subset_with_the_normal_limits() {
         serde_json::to_value(rad_protocol::recovery_hello(session, Origin::Editor)).unwrap();
     assert_eq!(
         editor["capabilities"],
-        json!(["hello", "recovery", "recovery_reset"])
+        json!([
+            "hello",
+            "recovery",
+            "recovery_reset",
+            "transfer_begin",
+            "transfer_write",
+            "transfer_finish",
+            "transfer_drop",
+            "restore_commit"
+        ])
     );
 }
 

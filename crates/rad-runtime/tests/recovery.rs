@@ -204,7 +204,16 @@ fn an_unreadable_configuration_serves_only_the_recovery_surface() {
         let editor = announced(&root, "editor.sock");
         assert_eq!(
             editor["capabilities"],
-            json!(["hello", "recovery", "recovery_reset"])
+            json!([
+                "hello",
+                "recovery",
+                "recovery_reset",
+                "transfer_begin",
+                "transfer_write",
+                "transfer_finish",
+                "transfer_drop",
+                "restore_commit"
+            ])
         );
         assert_eq!(editor["limits"]["frame_bytes"], 65536);
         let automation = announced(&root, "automation.sock");
@@ -218,7 +227,7 @@ fn an_unreadable_configuration_serves_only_the_recovery_surface() {
             data(&view),
             json!({
                 "cause":"unreadable",
-                "actions":["reset","details"],
+                "actions":["restore","reset","details"],
                 "detail":{"code":"corrupt","counters_read":false}
             })
         );
@@ -347,23 +356,91 @@ fn create_button(editor: &mut Client, folder: &str, position: usize, name: &str)
     panic!("the runtime stayed busy")
 }
 
+/// A copy of the configuration as the real server exports it: base64 chunks with the
+/// bytes each one holds.
+type Copy = Vec<(String, usize)>;
+fn export_copy(editor: &mut Client) -> Copy {
+    let token = request_ok(
+        editor,
+        "transfer_begin",
+        json!({"kind":"export","size":null}),
+    )["transfer_id"]
+        .clone();
+    let (mut pieces, mut offset) = (vec![], 0);
+    loop {
+        let part = request_ok(
+            editor,
+            "transfer_read",
+            json!({"transfer_id":token,"offset":offset.to_string()}),
+        );
+        let text = part["base64"].as_str().unwrap().to_owned();
+        let bytes = text.len() / 4 * 3 - text.bytes().rev().take_while(|b| *b == b'=').count();
+        offset += bytes;
+        pieces.push((text, bytes));
+        if part["eof"] == true {
+            return pieces;
+        }
+    }
+}
+/// Uploads `copy` and returns the token with the answer to `transfer_finish`.
+fn upload_copy(editor: &mut Client, copy: &Copy) -> (Value, Value) {
+    let size: usize = copy.iter().map(|(_, bytes)| bytes).sum();
+    let token = request_ok(
+        editor,
+        "transfer_begin",
+        json!({"kind":"restore","size":size.to_string()}),
+    )["transfer_id"]
+        .clone();
+    let mut offset = 0;
+    for (text, bytes) in copy {
+        request_ok(
+            editor,
+            "transfer_write",
+            json!({"transfer_id":token,"offset":offset.to_string(),"base64":text}),
+        );
+        offset += bytes;
+    }
+    let prepared = request_ok(editor, "transfer_finish", json!({"transfer_id":token}));
+    (token, prepared)
+}
+fn request_ok(client: &mut Client, operation: &str, args: Value) -> Value {
+    let answer = client.request(operation, args).unwrap();
+    assert!(answer.error.is_none(), "{operation}: {answer:?}");
+    data(&answer)
+}
+
 /// Creates two buttons through a real server, so both the current and the previous
 /// revision name the first one; returns the installation of that data.
 fn populated(fixture: &Fixture) -> u128 {
+    populate(fixture, false).0
+}
+/// The same, plus a copy exported after the two buttons and a third button the copy does
+/// not hold.
+fn populated_with_copy(fixture: &Fixture) -> (u128, Copy) {
+    populate(fixture, true)
+}
+fn populate(fixture: &Fixture, exporting: bool) -> (u128, Copy) {
     let Opened::Serving(server) = fixture.open() else {
         panic!("a new folder starts normally")
     };
     let mut mode = Mode::Serving(server);
     let root = fixture.root.clone();
-    mode.run(move || {
+    let copy = mode.run(move || {
         let mut editor = connect(&root, Endpoint::Editor);
         for (position, name) in ["Marker-button-name", "Other"].into_iter().enumerate() {
             let made = create_button(&mut editor, "f1", position, name);
             assert_eq!(made.status, Status::Applied, "{made:?}");
         }
+        if !exporting {
+            return vec![];
+        }
+        let copy = export_copy(&mut editor);
+        let made = create_button(&mut editor, "f1", 2, "Later");
+        assert_eq!(made.status, Status::Applied, "{made:?}");
+        copy
     });
     drop(mode);
-    installation(fixture)
+    (installation(fixture), copy)
 }
 fn installation(fixture: &Fixture) -> u128 {
     let boot = bootstrap::open(&fixture.data(), fixture.session(), 1).unwrap();
@@ -575,4 +652,158 @@ fn a_hot_journal_that_survives_the_failed_open_is_kept_with_the_evidence() {
     assert_eq!(names.len(), 2, "{names:?}");
     assert_eq!(names[1], format!("{}-journal", names[0]));
     assert_eq!(std::fs::read(&evidence[1]).unwrap(), journal);
+}
+
+/// Restores `copy` from recovery mode on `fixture`, whose database is already damaged,
+/// and runs `after` on the editor connection that did it.
+fn restore_into<T: Send + 'static>(
+    fixture: &Fixture,
+    copy: Copy,
+    after: impl FnOnce(&mut Client) -> T + Send + 'static,
+) -> T {
+    let mut mode = fixture.recovery();
+    let root = fixture.root.clone();
+    let value = mode.run(move || {
+        let mut editor = connect(&root, Endpoint::Editor);
+        let (token, prepared) = upload_copy(&mut editor, &copy);
+        assert_eq!(prepared["summary"]["entities"], 3);
+        let restored = editor
+            .request(
+                "restore_commit",
+                json!({"transfer_id":token,"confirm_replace":true}),
+            )
+            .unwrap();
+        assert_eq!(restored.status, Status::Applied, "{restored:?}");
+        assert_eq!(data(&restored)["changed"], true);
+        // The same connection now finds the normal runtime, with the copy in it.
+        assert_eq!(
+            editor.request("overview", json!({})).unwrap().status,
+            Status::Ok
+        );
+        after(&mut editor)
+    });
+    assert!(matches!(mode, Mode::Serving(_)));
+    value
+}
+fn name_of(editor: &mut Client, id: &str) -> Option<String> {
+    let answer = editor.request("get", json!({"id":id})).unwrap();
+    (answer.status == Status::Ok)
+        .then(|| data(&answer)["fields"]["name"].as_str().unwrap().to_owned())
+}
+
+#[test]
+fn a_copy_of_this_installation_keeps_its_identifiers_and_does_not_reuse_the_damaged_ones() {
+    let fixture = Fixture::new();
+    let (installation_before, copy) = populated_with_copy(&fixture);
+    spoil_every_revision(&fixture.database(), b"Marker-button-name");
+    let damaged = std::fs::read(fixture.database()).unwrap();
+
+    let created = restore_into(&fixture, copy, |editor| {
+        assert_eq!(name_of(editor, "b1").as_deref(), Some("Marker-button-name"));
+        assert_eq!(name_of(editor, "b2").as_deref(), Some("Other"));
+        assert_eq!(name_of(editor, "b3"), None, "the damaged file's own button");
+        let made = create_button(editor, "f1", 2, "After");
+        assert_eq!(made.status, Status::Applied, "{made:?}");
+        name_of(editor, "b4")
+    });
+    // The new button follows the three the damaged file had handed out.
+    assert_eq!(created.as_deref(), Some("After"));
+    let evidence = fixture.evidence();
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(std::fs::read(&evidence[0]).unwrap(), damaged);
+    assert_eq!(installation(&fixture), installation_before);
+}
+
+#[test]
+fn a_copy_of_another_installation_is_remapped_over_the_damaged_ones_identity() {
+    let fixture = Fixture::new();
+    let installation_before = populated(&fixture);
+    spoil_every_revision(&fixture.database(), b"Marker-button-name");
+    let other = Fixture::new();
+    let (installation_other, copy) = populated_with_copy(&other);
+    assert_ne!(installation_other, installation_before);
+
+    restore_into(&fixture, copy, |editor| {
+        // The copy's b1 and b2 are not the new identifiers: those follow the damaged file's.
+        assert_eq!(name_of(editor, "b1"), None);
+        assert_eq!(name_of(editor, "b2"), None);
+        let mut names: Vec<_> = ["b3", "b4"]
+            .into_iter()
+            .map(|id| name_of(editor, id).expect(id))
+            .collect();
+        names.sort();
+        assert_eq!(names, ["Marker-button-name", "Other"]);
+    });
+    assert_eq!(installation(&fixture), installation_before);
+}
+
+#[test]
+fn restoring_needs_confirmation_and_only_an_unreadable_configuration_may_do_it() {
+    let fixture = Fixture::new();
+    fixture.with_database(b"bytes that are not a database");
+    let mut mode = fixture.recovery();
+    let root = fixture.root.clone();
+    mode.run(move || {
+        let mut editor = connect(&root, Endpoint::Editor);
+        assert_eq!(
+            refusal(
+                &editor
+                    .request(
+                        "restore_commit",
+                        json!({"transfer_id":"x","confirm_replace":false})
+                    )
+                    .unwrap()
+            ),
+            ("confirmation_required", Some(Outcome::NotApplied))
+        );
+        assert_eq!(
+            refusal(
+                &editor
+                    .request("transfer_begin", json!({"kind":"export","size":null}))
+                    .unwrap()
+            ),
+            ("operation_not_allowed", Some(Outcome::NotApplied))
+        );
+        assert_eq!(
+            refusal(
+                &editor
+                    .request("transfer_read", json!({"transfer_id":"x","offset":"0"}))
+                    .unwrap()
+            ),
+            ("recovery_required", None)
+        );
+        let mut automation = connect(&root, Endpoint::Automation);
+        assert_eq!(
+            refusal(
+                &automation
+                    .request("transfer_begin", json!({"kind":"restore","size":"10"}))
+                    .unwrap()
+            ),
+            ("permission_denied", Some(Outcome::NotApplied))
+        );
+    });
+    drop(mode);
+
+    let newer = Fixture::new();
+    populated(&newer);
+    // The server that made the data left its own transfer folder; recovery must not add one.
+    std::fs::remove_dir_all(newer.data().join("transfers")).unwrap();
+    let mut bytes = std::fs::read(newer.database()).unwrap();
+    bytes[60..64].copy_from_slice(&3u32.to_be_bytes());
+    std::fs::write(newer.database(), &bytes).unwrap();
+    let mut mode = newer.recovery();
+    let root = newer.root.clone();
+    mode.run(move || {
+        let mut editor = connect(&root, Endpoint::Editor);
+        assert_eq!(
+            refusal(
+                &editor
+                    .request("transfer_begin", json!({"kind":"restore","size":"10"}))
+                    .unwrap()
+            ),
+            ("operation_not_allowed", Some(Outcome::NotApplied))
+        );
+    });
+    assert!(!newer.data().join("transfers").exists());
+    assert_eq!(std::fs::read(newer.database()).unwrap(), bytes);
 }

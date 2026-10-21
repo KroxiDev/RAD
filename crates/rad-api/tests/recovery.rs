@@ -60,7 +60,7 @@ fn recovery_view_decodes_by_operation_with_closed_snake_case_enums() {
     }
     for bad in [
         json!({"cause":"made_up","actions":[],"detail":{"code":"corrupt","counters_read":false}}),
-        json!({"cause":"unreadable","actions":["restore"],"detail":{"code":"corrupt","counters_read":false}}),
+        json!({"cause":"unreadable","actions":["made_up"],"detail":{"code":"corrupt","counters_read":false}}),
         json!({"cause":"unreadable","actions":[],"detail":{"code":"made_up","counters_read":false}}),
         json!({"cause":"unreadable","actions":[],"detail":{"code":"corrupt","counters_read":"no"}}),
         json!({"cause":"unreadable","actions":[],"detail":{"code":"corrupt"}}),

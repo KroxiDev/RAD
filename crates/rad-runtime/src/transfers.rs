@@ -28,6 +28,26 @@ pub enum Error {
     UnsupportedVersion,
     DocumentLimit,
 }
+impl Error {
+    /// The wire code of the failure.
+    pub(crate) fn wire_code(self) -> &'static str {
+        match self {
+            Self::NotAllowed => "permission_denied",
+            Self::NotFound => "not_found",
+            Self::Capacity | Self::Busy | Self::DocumentLimit => "resource_exhausted",
+            Self::Expired => "deadline_exceeded",
+            Self::Io => "storage_error",
+            Self::UnsupportedVersion => "unsupported_version",
+            Self::Invalid | Self::ConfirmationRequired => "invalid_request",
+        }
+    }
+    pub(crate) fn details(self) -> serde_json::Value {
+        match self {
+            Self::DocumentLimit => serde_json::json!({"cause":"document_limit"}),
+            _ => serde_json::json!({}),
+        }
+    }
+}
 #[derive(Debug, Clone, Copy)]
 pub struct Context {
     pub connection: u64,
@@ -113,6 +133,59 @@ pub enum Output {
     },
     Reaped,
 }
+impl Output {
+    /// The client's answer for the outputs that are only data to hand back (`None` for the
+    /// others, which the runtime handles because they also change its own state). Shared
+    /// by both modes.
+    pub(crate) fn into_data(self) -> Option<rad_api::ResponseData> {
+        use rad_api::{
+            Empty, ExportReady, ImagePrepared, PluginVersion, ResponseData as D, RestorePlugin,
+            RestorePrepared, RestoreSummary as Summary, Transfer,
+        };
+        Some(match self {
+            Self::Begun { transfer_id } => D::Transfer(Transfer { transfer_id }),
+            Self::Written | Self::Dropped => D::Empty(Empty {}),
+            Self::ImagePrepared { media_ref } => D::ImagePrepared(ImagePrepared { media_ref }),
+            Self::RestorePrepared {
+                transfer_id,
+                summary,
+            } => {
+                let plugins: Vec<_> = summary
+                    .plugins
+                    .iter()
+                    .map(|p| RestorePlugin {
+                        id: p.id.clone(),
+                        version: p.version.map(|v| PluginVersion {
+                            major: v.major,
+                            minor: v.minor,
+                            patch: v.patch,
+                        }),
+                        origin: p.origin.clone(),
+                    })
+                    .collect();
+                let complete = plugins.len() <= 32
+                    && serde_json::to_vec(&plugins).is_ok_and(|bytes| bytes.len() <= 32 * 1024);
+                D::RestorePrepared(RestorePrepared {
+                    transfer_id,
+                    summary: Summary {
+                        entities: summary.entities,
+                        media_count: summary.media_count,
+                        media_bytes: summary.media_bytes,
+                        document_bytes: summary.document_bytes as u64,
+                        plugins_count: plugins.len(),
+                        plugins_complete: complete,
+                        plugins: if complete { plugins } else { vec![] },
+                    },
+                })
+            }
+            Self::ExportReady { transfer_id, size } => D::ExportReady(ExportReady {
+                transfer_id,
+                size: size.to_string(),
+            }),
+            _ => return None,
+        })
+    }
+}
 #[derive(Debug, Clone)]
 pub struct Handle {
     pub transfer_id: String,
@@ -176,6 +249,14 @@ impl Transfers {
             released: vec![],
         })
     }
+    /// Recovers the transfer area at `root`, or creates it when there is none yet.
+    pub fn open(root: &Path, session: u128) -> Result<Self, Error> {
+        match std::fs::symlink_metadata(root) {
+            Ok(_) => Self::recover(root, session),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::create(root, session),
+            Err(_) => Err(Error::Io),
+        }
+    }
     pub fn create(root: &Path, session: u128) -> Result<Self, Error> {
         let files = files::Area::create(root)?;
         let area =
@@ -193,6 +274,16 @@ impl Transfers {
     pub fn execute(
         &mut self,
         store: &mut Store,
+        context: Context,
+        op: Operation,
+    ) -> Result<Output, Error> {
+        self.execute_with(Some(store), context, op)
+    }
+    /// `store` is `None` where no Store is open (restoring in recovery mode): what needs
+    /// one is refused with [`Error::NotAllowed`].
+    pub fn execute_with(
+        &mut self,
+        store: Option<&mut Store>,
         context: Context,
         op: Operation,
     ) -> Result<Output, Error> {
@@ -238,7 +329,7 @@ impl Transfers {
     }
     fn execute_inner(
         &mut self,
-        store: &mut Store,
+        store: Option<&mut Store>,
         context: Context,
         op: Operation,
         end: Instant,
@@ -264,9 +355,13 @@ impl Transfers {
                 {
                     return Err(Error::Invalid);
                 }
+                if kind == Kind::Export && store.is_none() {
+                    return Err(Error::NotAllowed);
+                }
                 let out = self.begin(context, kind, size, export_revision)?;
                 if let Output::Begun { transfer_id } = &out
                     && kind == Kind::Export
+                    && let Some(store) = store
                 {
                     let t = self.entries.get_mut(transfer_id).unwrap();
                     match export::write(
@@ -380,6 +475,7 @@ impl Transfers {
                 })
             }
             Operation::LoadVisual { resolved_key } => store
+                .ok_or(Error::NotAllowed)?
                 .image(&resolved_key)
                 .map(|image| Output::Visual { image })
                 .map_err(|_| Error::NotFound),
@@ -387,7 +483,10 @@ impl Transfers {
                 resolved_key,
                 offset,
             } => {
-                let image = store.image(&resolved_key).map_err(|_| Error::NotFound)?;
+                let image = store
+                    .ok_or(Error::NotAllowed)?
+                    .image(&resolved_key)
+                    .map_err(|_| Error::NotFound)?;
                 let offset = usize::try_from(offset).map_err(|_| Error::Invalid)?;
                 if offset > image.png_bytes().len() {
                     return Err(Error::Invalid);
@@ -643,6 +742,28 @@ impl Transfers {
                 CommitOutcome::NotApplied(StoreError::Invalid)
             }
         }
+    }
+    /// Like [`Transfers::commit`], but the verified media go into a new base at `path`
+    /// (the way out of recovery mode) instead of into an open Store.
+    pub fn create_store(
+        &mut self,
+        path: &Path,
+        candidate: &Candidate,
+        connection: u64,
+        transfer_id: &str,
+    ) -> Result<Store, StoreError> {
+        let t = self
+            .lookup(transfer_id, connection)
+            .map_err(|_| StoreError::Invalid)?;
+        if t.started {
+            return Err(StoreError::Invalid);
+        }
+        let Body::Verified(media) = &mut t.body else {
+            return Err(StoreError::Invalid);
+        };
+        t.pending = true;
+        t.started = true;
+        Store::create_from_media(path, candidate, media)
     }
     pub fn resolved(&mut self, transfer_id: &str, outcome: &CommitOutcome) -> Result<(), Error> {
         let t = self.entries.get_mut(transfer_id).ok_or(Error::NotFound)?;

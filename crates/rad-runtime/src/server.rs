@@ -121,14 +121,8 @@ impl Server {
                 .map_err(|_| RuntimeError::Transport)?,
         );
         let transfer_root = data.join("transfers");
-        let transfers = match std::fs::symlink_metadata(&transfer_root) {
-            Ok(_) => crate::transfers::Transfers::recover(&transfer_root, session.get()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                crate::transfers::Transfers::create(&transfer_root, session.get())
-            }
-            Err(_) => return Err(RuntimeError::Storage),
-        }
-        .map_err(|_| RuntimeError::Storage)?;
+        let transfers = crate::transfers::Transfers::open(&transfer_root, session.get())
+            .map_err(|_| RuntimeError::Storage)?;
         let persistence = Persistence::with_transfers(boot.store, transfers, wake.clone())
             .map_err(|_| RuntimeError::Storage)?;
         let brightness = boot

@@ -1,12 +1,14 @@
 //! Startup never substitutes defaults for an existing invalid Store. When the Store
 //! cannot be opened, [`StartupError::diagnosis`] says whether that is a case for recovery
-//! mode (ADR 0011); [`start_again`] is the one way out that does not need a copy.
+//! mode (ADR 0011); [`start_again`] is the way out that does not need a copy, and
+//! [`restored_candidate`] the one that starts from one.
 use rad_api::{RecoveryCause, RecoveryDetailCode};
 use rad_authority::Authority;
 use rad_core::{
-    configuration::{Configuration, Origin},
+    configuration::{Candidate, Configuration, Origin},
     identity::IdentityRegistry,
 };
+use rad_package::VerifiedRestore;
 use rad_store::{PeekedCounters, ReplaceError, Store, StoreError};
 use std::{
     fs, io,
@@ -177,6 +179,16 @@ pub fn start_again(
     now: u64,
     stamp: u64,
 ) -> Result<Bootstrap, ReplaceFailed> {
+    let registry = reserving_registry(peeked)?;
+    let candidate =
+        Configuration::prepare_new_reserving(&registry).map_err(|_| ReplaceFailed::NotApplied)?;
+    replace_and_open(directory, session, now, stamp, |temporary| {
+        Store::create(temporary, &candidate)
+    })
+}
+/// An empty registry of the damaged file's installation (a random one when it is not
+/// known) that does not hand out again the identifiers the damaged file handed out.
+fn reserving_registry(peeked: Option<PeekedCounters>) -> Result<IdentityRegistry, ReplaceFailed> {
     let installation = match peeked.and_then(|peeked| peeked.installation) {
         Some(installation) => installation,
         None => random_id().map_err(|_| ReplaceFailed::NotApplied)?.get(),
@@ -186,11 +198,44 @@ pub fn start_again(
     if let Some(peeked) = peeked {
         registry.reserve_counters(peeked.counters);
     }
-    let candidate =
-        Configuration::prepare_new_reserving(&registry).map_err(|_| ReplaceFailed::NotApplied)?;
-    replace_and_open(directory, session, now, stamp, |temporary| {
-        Store::create(temporary, &candidate)
-    })
+    Ok(registry)
+}
+/// Why a verified copy cannot become the new configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreRefused {
+    /// The copy's contents are not acceptable to this configuration.
+    Copy,
+    /// Not the copy's fault (no entropy); nothing changed.
+    Unavailable,
+}
+/// «Restaurar una copia»: the configuration of the copy over a new base. Identifiers
+/// follow ADR 0003 against that base, whose installation is the damaged file's when
+/// known, never the copy's. A copy of that same installation keeps its identifiers and
+/// both it and the damaged file reserve their counters, so what is created afterwards
+/// collides with neither; any other copy is remapped, or adopted when nothing in the
+/// base was handed out. The copy's token is never adopted.
+pub fn restored_candidate(
+    peeked: Option<PeekedCounters>,
+    verified: VerifiedRestore,
+) -> Result<Candidate, RestoreRefused> {
+    let VerifiedRestore { data, identity } = verified;
+    let mut registry = reserving_registry(peeked).map_err(|_| RestoreRefused::Unavailable)?;
+    if registry.installation() == identity.installation {
+        registry.reserve_counters(identity.counters);
+    }
+    let base =
+        Configuration::prepare_new_reserving(&registry).map_err(|_| RestoreRefused::Unavailable)?;
+    base.configuration()
+        .prepare_portable_restore(
+            base.registry(),
+            Origin::Editor,
+            true,
+            data,
+            identity.installation,
+            identity.counters,
+        )
+        .map(|restored| restored.candidate)
+        .map_err(|_| RestoreRefused::Copy)
 }
 /// Puts the base `create` builds in place of the damaged one and opens it. What differs
 /// between the ways out of recovery is only `create`.
@@ -206,6 +251,15 @@ pub fn replace_and_open(
         ReplaceError::NotApplied(_) => ReplaceFailed::NotApplied,
         ReplaceError::AfterExchange => ReplaceFailed::Unfinished,
     })?;
+    open_replaced(directory, session, now)
+}
+/// Opens the base that [`rad_store::replace_damaged`] put in place.
+pub fn open_replaced(
+    directory: &Path,
+    session: NonZeroU128,
+    now: u64,
+) -> Result<Bootstrap, ReplaceFailed> {
+    let path = directory.join(DATABASE);
     let store = Store::open(&path).map_err(|_| ReplaceFailed::Unfinished)?;
     published(store, &path, session, now).map_err(|_| ReplaceFailed::Unfinished)
 }
