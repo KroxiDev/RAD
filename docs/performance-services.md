@@ -232,8 +232,8 @@ runner temporales; no se borró la evidencia. Después se repitieron ambas suite
 tests de ejemplos: todo aprobado. Logs definitivos `16-*` a `20-*` y summary.json
 en el mismo directorio. Esa revisión independiente aprobó la entrega parcial
 `93bf217`, dejando entonces pendiente la captura principal del kernel. La
-continuación `wk-main2` resuelve ese bloque sin modificar código ejecutable;
-**no cierra la fase 4**, que conserva las fronteras y decisiones pendientes.
+continuación `wk-main2` resolvió ese bloque sin modificar código ejecutable;
+no cerró por sí sola la fase 4, cuyo cierre requería aceptación posterior.
 
 En la retoma se aprobaron los **20 controles del contador antes de ejecutar** y
 los **62 controles Python** después, más diff check. El primer intento de estos
@@ -247,6 +247,7 @@ anterior a una ejecución nueva. La auditoría independiente cotejó también la
 seis ventanas, sus fuentes/ELF y límites, con el raw de `wk-main2`.
 
 **Esta entrega terminó antes de OBS real**, por pedido del usuario. El encargo
-posterior y autorizado está en el [informe de OBS](performance-obs.md). La fase 4
-sigue abierta por las exclusiones/decisiones de cierre del
-[roadmap](roadmap.md#fase-4--medición--en-curso). UX no se inicia automáticamente.
+posterior y autorizado está en el [informe de OBS](performance-obs.md). Después,
+el usuario aprobó los presupuestos y las exclusiones y declaró
+[completada la fase 4](roadmap.md#fase-4-medicion). No se amplía retrospectivamente
+el alcance de esta entrega. **UX permanece pospuesta y no se inicia.**

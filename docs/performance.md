@@ -6,6 +6,11 @@ Primera entrega autónoma de la fase 4. No modifica el comportamiento del produc
 los contratos, los límites ni la UX. No certifica hardware ni el escritorio real.
 La fase UX queda para después por decisión del usuario.
 
+**Estado actual:** el usuario declaró [completada la fase 4](roadmap.md#fase-4-medicion)
+tras las entregas posteriores, aprobando presupuestos y exclusiones. Este informe
+conserva los resultados y pendientes históricos de la primera línea base; UX no
+forma parte del cierre y sigue pospuesta.
+
 La [continuación autónoma](performance-extended.md) amplía esta línea base con
 oficiales sintéticos, atribución de memoria, fallos, medios grandes y builds.
 Las tablas de esta primera entrega permanecen históricas, sin mezclar corridas.
@@ -275,7 +280,7 @@ Los tests temporales y el plan de ejecución se enviaron a la papelera, conserva
 logs y resultados. Ambas suites definitivas se repitieron y pasaron después de
 esa retirada, sin añadir tests permanentes no críticos.
 
-## Pendientes de la fase 4
+## Pendientes al terminar esta entrega (histórico)
 
 - Editor real con foco, sin foco y cerrado: medido después con XL en el escritorio
   real. No mide CPU del compositor ni memoria GPU, ni equivale a todos los drivers.
@@ -297,5 +302,7 @@ esa retirada, sin añadir tests permanentes no críticos.
 - Fijar presupuestos tras discutir la línea base; no aplicar optimizaciones por
   inferencia. M1–M4 son candidatos, no una lista de problemas ya demostrados.
 
-La fase queda **en curso**. Cada nuevo ensayo físico requiere autorización y
+Al terminar esta primera entrega la fase quedó **en curso**. Su
+[cierre posterior aprobado](roadmap.md#fase-4-medicion) no modifica estas cifras
+ni acredita las exclusiones. Cada nuevo ensayo físico requiere autorización y
 control exclusivo; el previo no autoriza otros dispositivos o sensores.

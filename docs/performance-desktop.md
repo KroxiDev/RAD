@@ -295,17 +295,28 @@ GUI necesita Wayland/Hyprland reales; sockets y namespaces de fixtures pueden
 requerir ejecución autorizada fuera del sandbox. No cambiar servicios/configuración
 personal para hacer pasar una prueba.
 
-## Otros presupuestos propuestos, no adoptados
+## Presupuestos aprobados para el cierre
 
-Como punto de discusión **solo para esta máquina y el perfil pequeño actual**:
-runtime conectado sin editor PSS ≤20 MiB; árbol con editor PSS ≤150 MiB;
-navegación IPC caliente p95 ≤5 ms. Son propuestas con margen sobre esta línea base,
-no aceptación aprobada ni garantías para 7.000 identidades, otros drivers o
-latencia contacto/píxeles. No se fija aún presupuesto de CPU/wakeups con ventanas
-tan cortas. Estas propuestas siguen sin aprobarse; son independientes del
-objetivo **30 MiB RSS de Métricas**, aprobado explícitamente por el usuario.
+El usuario aprobó expresamente estos criterios de regresión el 2026-10-23 al
+cerrar la fase 4. Se aplican **solo a esta máquina y al perfil pequeño medido,
+sin plugins demandados**, salvo el objetivo específico de Métricas:
 
-## Estado de cierre
+| Escenario | Objetivo aprobado | Resultado de las capturas existentes |
+|---|---|---|
+| Runtime conectado + helper, sin editor | PSS ≤20 MiB | Pico muestreado 13,782 MiB, incluyendo la fase tras cerrar editor |
+| Runtime + helper + editor | PSS ≤150 MiB | Pico muestreado 109,738 MiB |
+| Navegación IPC caliente | p95 ≤5 ms por repetición | Mayor p95: 0,867 ms; no contacto/píxeles |
+| Plugin Métricas + descendientes con GPU/32 visuales | RSS ≤30 MiB | Pico muestreado 28,855 MiB |
+
+Evaluación de los datos retenidos, **sin nueva captura ni lecturas de sensores**:
+`target/performance/phase4-closure/acceptance.json`. Los objetivos se satisfacen
+en esos escenarios observados; no son límites duros del producto, máximos
+absolutos o garantías para 7.000 identidades, otros equipos/drivers o latencia
+física. RSS no se sustituye por PSS ni los presupuestos se suman a los plugins
+activos para crear un objetivo global distinto. CPU/wakeups quedan como línea
+base **sin nuevos umbrales numéricos**. No se autorizaron optimizaciones nuevas.
+
+## Estado de esta entrega y cierre posterior
 
 Gate completo de AGENTS.md **11/11 PASS** después de medir, en serie y sin GUI/XL:
 fmt/build release offline/locked/tests/clippy `-D warnings` de ambos workspaces y
@@ -322,14 +333,15 @@ Después se repitieron en serie ambas suites (**1.184 + 269**, cero fallos,
 3 + 2 ignorados), los **28 controles Python** y los **2 tests de opt-in**: todos
 aprobados. Logs definitivos `16-*` a `21-*` en el mismo directorio del gate.
 
-Esta entrega completa los bloques autónomos descritos, no todas las verificaciones
-originales de fase 4. El nuevo objetivo de Métricas ya queda aprobado y cumplido
-en el escenario observado. Continúan pendientes: aprobar los demás presupuestos;
+Esta entrega completó los bloques autónomos descritos, no todas las verificaciones
+originales de fase 4. El objetivo de Métricas quedó aprobado y cumplido
+en el escenario observado. Al terminar esta entrega seguían pendientes los otros presupuestos;
 latencia contacto→pantalla con
 instrumentación externa; trazado exacto de wakeups (sin trazador disponible ni IDs
 de tracepoints legibles en la comprobación actual, sin instalar o cambiar kernel);
 audio/multimedia/OBS con servicios reales autorizados; los fallos originales
 todavía no compuestos con Server/GUI y representatividad fuera de estos perfiles.
-No se inducen fallos reales del driver. La fase no se declara cerrada ni se
-empieza UX por inferencia: el usuario decide el cierre con estas exclusiones o
-encarga lo pendiente.
+No se inducen fallos reales del driver. Los informes posteriores amplían las
+mediciones; finalmente el usuario aprobó los presupuestos y aceptó las exclusiones
+para [cerrar la fase 4](roadmap.md#fase-4-medicion). Eso no transforma las
+exclusiones en verificaciones realizadas. **UX sigue pospuesta en otra fase.**

@@ -406,10 +406,11 @@ con lo que diga. E1–E3 son independientes de E4–E5.
 - **Validación focal:** generación e inspección visual de las cuatro capturas
   (1440 × 900), referencias de ambos README y respaldo Git de los archivos retirados.
 
-## Fase UX · En paralelo
+## Fase UX · Pospuesta
 
-Los ítems restantes quedan pospuestos por encargo del usuario (2026-10-23): se
-prioriza ahora la medición de fase 4, sin cambios de UX.
+Los ítems restantes quedan pospuestos por encargo del usuario (2026-10-23).
+La fase 4 se cierra por separado: UX pertenece a una fase posterior y no es
+requisito de ese cierre. No se inicia sin un nuevo encargo explícito.
 
 Norma: [ux.md](ux.md). Sobre la API actual: UX1, UX2 y UX3. Con la fase 2: UX4 y
 UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase 3.5 (E5).
@@ -425,7 +426,53 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
 | UX7 — hecho (E5) | Instalar un plugin exige pegar un enlace, también para los oficiales, y actualizar lo vuelve a pedir | Lista de oficiales y actualización desde el origen registrado |
 | UX8 — hecho (379bee2) | Unos 200 pares de traducción escritos en el código (`crates/rad-editor/src/app.rs:111`) | Catálogos por idioma |
 
-## Fase 4 · Medición — en curso
+<a id="fase-4-medicion"></a>
+<a id="fase-4--medición--en-curso"></a>
+
+## Fase 4 · Medición — hecha (2026-10-23)
+
+**Cierre aprobado expresamente por el usuario**, tras la entrega verificada
+`b6a4b2c`: se acepta la línea base de medición y sus límites, los presupuestos
+siguientes y las exclusiones documentadas. No equivale a certificación universal,
+no cambia límites duros del producto y no autoriza optimizaciones nuevas.
+**UX sigue pospuesta y fuera de esta fase.**
+
+### Criterios de regresión aprobados
+
+Para esta máquina y el perfil pequeño medido, **sin plugins demandados** salvo
+la fila específica de Métricas:
+
+| Escenario | Criterio aprobado | Evidencia observada |
+|---|---|---|
+| Runtime + helper conectado, sin editor | PSS ≤20 MiB | Pico muestreado ≈13,782 MiB |
+| Runtime + helper + editor | PSS ≤150 MiB | Pico muestreado ≈109,738 MiB |
+| Navegación IPC caliente | p95 ≤5 ms por repetición | Mayor p95 observado: 0,867 ms |
+| Plugin Métricas y descendientes, con GPU/32 visuales | RSS ≤30 MiB | Pico muestreado ≈28,855 MiB |
+
+Los criterios quedan satisfechos **en los escenarios observados**, no como
+máximos absolutos ni garantías para configuraciones grandes, otros equipos o
+drivers. La [línea base de escritorio](performance-desktop.md#presupuestos-aprobados-para-el-cierre)
+define su alcance. CPU y wakeups se conservan como línea base, **sin umbrales
+numéricos nuevos**. RSS y PSS no son intercambiables; no se suman estos objetivos
+para inventar un presupuesto global con todos los plugins.
+
+### Exclusiones aceptadas, no verificaciones completadas
+
+- Latencia completa contacto físico→acción/pantalla/píxeles: requiere
+  instrumentación externa; el tramo medido no se renombra como extremo a extremo.
+- CPU del compositor, memoria GPU y representatividad en otras máquinas,
+  drivers, dispositivos y cargas/contenidos.
+- Acciones, transiciones reales y autenticación directa producto→OBS: el perfil
+  real aprobado es de solo lectura mediante relay.
+- Fallos físicos de disco/drivers y toda la composición Server/GUI: las pruebas
+  de fallos realizadas son controladas y conservan su alcance preciso.
+
+Estas exclusiones no bloquean el cierre aceptado ni se convierten en PASS.
+Cualquier ampliación requiere otro encargo; no se inducen fallos reales del
+driver. Las evidencias y los intentos incompletos se mantienen separados y
+no se necesitan nuevas mediciones o cambios de UX para formalizar este cierre.
+
+### Entregas y evidencia conservada
 
 - **Primera entrega autónoma (2026-10-23):** arnés reproducible y línea base
   sintética en [Medición](performance.md). Runtime con helper y 0/1/4 plugins eco,
@@ -475,27 +522,27 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
   resultados. No se ejercitan acciones ni autenticación directa producto→OBS.
   Una carrera procfs del arnés se reprodujo y corrigió sin cambiar RAD u OBS;
   intentos incompletos y sintéticos se conservan separados de la captura válida.
-- **Sin cerrar:** aprobación de los demás presupuestos propuestos;
-  latencia física completa, otros escenarios de hardware y
-  representatividad. El
-  escritorio se usó realmente, pero no se midió CPU del compositor ni memoria GPU.
-  Los fallos nuevos componen Server, no GUI ni fallos físicos de disco/drivers.
-  OBS está verificado únicamente en el alcance filtrado/read-only descrito;
-  no se infiere permiso para acciones personales ni para iniciar UX.
+- **Alcance del cierre:** los presupuestos y las exclusiones anteriores ya están
+  aceptados. Se conserva lo medido sin atribuir cobertura a compositor/GPU,
+  hardware adicional, fallos físicos o acciones de OBS no ejercitadas; no se
+  infiere permiso para acciones personales ni para iniciar UX.
 - **Frontera física:** el ensayo anterior tuvo autorización específica; futuras
   pruebas requieren autorización y control exclusivo, sin inferir permiso para
   sensores, aplicaciones o configuraciones personales.
 - M1–M4 conservan su evidencia histórica de origen; no todos describen el código
   actual ni constituyen por sí mismos cuellos de botella demostrados.
 
-- Primero, un perfil reproducible; los presupuestos se fijan tras la primera
-  medición. Métricas tiene un objetivo aprobado de **30 MiB RSS**, vigente para
-  nuevas evaluaciones reales y sintéticas; no corresponde al runtime ni al editor.
+- El perfil reproducible y los criterios de regresión anteriores quedan
+  aprobados. Métricas conserva **30 MiB RSS** para su proceso y descendientes;
+  no es un presupuesto del runtime ni del editor.
 - Escenarios por separado: runtime con helper y sin editor; editor con foco, sin foco
   y cerrado; 0, 1 o N plugins demandados.
-- Qué medir: RSS junto con PSS o memoria privada; reposo y pico; CPU y despertares por
+- Qué se perfiló, con los límites de cada informe: RSS junto con PSS o memoria
+  privada; reposo y pico; CPU y despertares por
   segundo; descriptores, hilos y procesos; latencia de tecla a acción en frío y en
-  caliente; peor turno del bucle; cambio de carpeta; guardado con 10.000 identidades.
+  caliente; peor turno del bucle; cambio de carpeta; guardado cerca de los límites.
+  El perfil concreto de 10.000 identidades no fue persistible por tamaño y se
+  conservó como no medido, sin alterar el límite ni fabricar resultados.
 - Solo con PID propios y fixtures (downloader retenido, host que no lee, conversor
   bloqueado, worker muerto, escritura incierta), según la sección Seguridad de
   AGENTS.md.

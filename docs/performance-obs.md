@@ -208,6 +208,9 @@ build ni datos de prueba. Después de la limpieza total se repitieron **83 Pytho
 y diff check**, también aprobados (`24-*`, `25-*`). cleanup.json y
 summary-final.json conservan el orden y la incidencia parcial de Gio sin ocultarla.
 
-Esta entrega no cambia contratos, dependencias ni comportamiento del producto,
-no inicia UX y no cierra automáticamente fase 4. Quedan las decisiones de
-presupuestos/exclusiones y representatividad del [roadmap](roadmap.md#fase-4--medición--en-curso).
+Esta entrega no cambió contratos, dependencias ni comportamiento del producto,
+no inició UX y no cerró automáticamente fase 4. Posteriormente el usuario aprobó
+los presupuestos de referencia, aceptó las exclusiones y ordenó
+[marcar completada la fase 4](roadmap.md#fase-4-medicion). Se mantiene el alcance
+read-only mediante relay, sin certificar lo excluido. **UX sigue en una fase
+posterior y no se inicia con este cierre.**

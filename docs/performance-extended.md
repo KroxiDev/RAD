@@ -2,6 +2,9 @@
 
 Continúa la [primera línea base](performance.md), base `806f26a`. UX sigue pospuesta.
 Esta entrega mide; no adopta optimizaciones, modifica límites ni autoriza hardware.
+El [cierre posterior de fase 4](roadmap.md#fase-4-medicion) fue aprobado por el
+usuario con presupuestos y exclusiones explícitos; los alcances y pendientes de
+esta entrega siguen históricos. UX permanece en otra fase, sin iniciar.
 Antes de operar el Stream Deck físico se avisa al usuario y se requiere control
 exclusivo. No se ha usado hardware, ventanas, servicios ni sensores personales.
 El [ensayo físico posterior](performance-physical.md) tiene autorización separada;
@@ -292,8 +295,10 @@ componentes medidos, sin extrapolarlo a toda la GUI o a un driver bloqueado.
 No se cambió comportamiento de producto, contratos, dependencias, límites ni UX;
 la instrumentación de los tres tests existentes solo se activa por flag propio
 bajo `cfg(test)`. No se añadieron pruebas permanentes no críticas. Presupuestos y
-optimizaciones quedan pendientes de decisión: estos datos son su evidencia, no
-una autorización implícita para eliminar garantías o introducir índices.
+optimizaciones quedaron pendientes de decisión al publicar esta entrega: estos
+datos son su evidencia, no una autorización implícita para eliminar garantías o
+introducir índices. El cierre posterior aprueba criterios de referencia, no
+optimizaciones nuevas.
 
 Gate completo de AGENTS.md **11/11 PASS**, ejecutado en serie después de medir:
 fmt, build release offline/locked y clippy `-D warnings` de ambos workspaces;
