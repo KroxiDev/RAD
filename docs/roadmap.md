@@ -408,6 +408,9 @@ con lo que diga. E1–E3 son independientes de E4–E5.
 
 ## Fase UX · En paralelo
 
+Los ítems restantes quedan pospuestos por encargo del usuario (2026-10-23): se
+prioriza ahora la medición de fase 4, sin cambios de UX.
+
 Norma: [ux.md](ux.md). Sobre la API actual: UX1, UX2 y UX3. Con la fase 2: UX4 y
 UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase 3.5 (E5).
 
@@ -422,7 +425,17 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
 | UX7 — hecho (E5) | Instalar un plugin exige pegar un enlace, también para los oficiales, y actualizar lo vuelve a pedir | Lista de oficiales y actualización desde el origen registrado |
 | UX8 — hecho (379bee2) | Unos 200 pares de traducción escritos en el código (`crates/rad-editor/src/app.rs:111`) | Catálogos por idioma |
 
-## Fase 4 · Medición
+## Fase 4 · Medición — en curso
+
+- **Primera entrega autónoma (2026-10-23):** arnés reproducible y línea base
+  sintética en [Medición](performance.md). Runtime con helper y 0/1/4 plugins eco,
+  recursos por PID propio y latencias; dominio/persistencia con 32/7.000 entidades
+  vigentes, y límite explícito para el perfil de 10.000. Sin optimizaciones.
+- **Sin cerrar:** GUI/compositor y hardware reales, plugins oficiales (incluido el
+  objetivo de métricas), despertares exactos, perfil de fallos complejos y catálogo
+  grande de medios. Las regresiones funcionales no sustituyen esas mediciones.
+- M1–M4 conservan su evidencia histórica de origen; no todos describen el código
+  actual ni constituyen por sí mismos cuellos de botella demostrados.
 
 - Primero, un perfil reproducible; los presupuestos se fijan tras la primera
   medición. Se mantiene el objetivo de 20 MiB para métricas.
