@@ -436,12 +436,19 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
   demanda/retirada de los cuatro oficiales por separado con backends falsos;
   medición de los cinco fallos controlados con alcance de componentes; y comparación
   release/strip/thin-LTO sin adoptar flags. Sin cambios de UX ni optimizaciones.
-- **Sin cerrar:** GUI/compositor y hardware reales, lectores/servicios reales de
+- **Ensayo físico controlado (2026-10-23):** [XL real](performance-physical.md),
+  autorizado tras preflight exclusivo, con perfil temporal: reposo conectado,
+  navegación IPC y 12 navegaciones humanas más Sleep/Wake. Cierre limpio, logo
+  confirmado por el usuario y cero holders al terminar. El tiempo disponible es
+  reporte consumido → Desired, no contacto/HID read/USB ACK/píxeles.
+- **Sin cerrar:** GUI/compositor reales, latencia física completa y otros escenarios
+  de hardware, lectores/servicios reales de
   oficiales (incluido el objetivo de métricas con GPU), despertares exactos y
   representatividad adicional. Los fallos medidos por componentes no certifican
   toda la composición Server/GUI ni fallos reales de drivers.
-- **Frontera física:** avisar al usuario antes de operar el Stream Deck; la orden de
-  avisar no autoriza tomarlo ni comprobar exclusividad por inferencia.
+- **Frontera física:** el ensayo anterior tuvo autorización específica; futuras
+  pruebas requieren autorización y control exclusivo, sin inferir permiso para
+  sensores, aplicaciones o configuraciones personales.
 - M1–M4 conservan su evidencia histórica de origen; no todos describen el código
   actual ni constituyen por sí mismos cuellos de botella demostrados.
 

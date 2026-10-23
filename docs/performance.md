@@ -9,6 +9,8 @@ La fase UX queda para después por decisión del usuario.
 La [continuación autónoma](performance-extended.md) amplía esta línea base con
 oficiales sintéticos, atribución de memoria, fallos, medios grandes y builds.
 Las tablas de esta primera entrega permanecen históricas, sin mezclar corridas.
+El [ensayo físico posterior](performance-physical.md) usa un XL real con autorización
+independiente y documenta el límite reporte consumido → proyección, no píxeles.
 
 El arnés usa exclusivamente procesos nuevos propios y datos privados nuevos bajo
 `target/performance/`. No abre el Stream Deck ni ventanas, no usa systemd personal,
@@ -272,7 +274,9 @@ esa retirada, sin añadir tests permanentes no críticos.
 
 - Editor real con foco, sin foco y cerrado, incluidos compositor/GPU; no sustituirlo
   por un render headless y presentarlo como equivalente.
-- Tecla física→acción y navegación con dispositivo real, bajo control exclusivo.
+- Latencia completa de contacto físico→acción/píxeles. El ensayo posterior ya
+  verifica navegación y Sleep/Wake reales bajo control exclusivo, con tiempo de
+  reporte consumido→Desired, sin timestamp HID ni confirmación de píxeles.
 - Coste real de los plugins oficiales y objetivo de 20 MiB de métricas con GPU:
   la continuación mide sus implementaciones con backends falsos, no certifica
   lectores/servicios/driver personales ni el objetivo global.

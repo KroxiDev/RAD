@@ -4,6 +4,8 @@ Continúa la [primera línea base](performance.md), base `806f26a`. UX sigue pos
 Esta entrega mide; no adopta optimizaciones, modifica límites ni autoriza hardware.
 Antes de operar el Stream Deck físico se avisa al usuario y se requiere control
 exclusivo. No se ha usado hardware, ventanas, servicios ni sensores personales.
+El [ensayo físico posterior](performance-physical.md) tiene autorización separada;
+no se mezclan sus resultados con esta entrega sintética.
 
 ## Bloques y método
 
@@ -304,8 +306,9 @@ reales aún no verificados de la fase 4.
 
 ## Límites y frontera de interacción
 
-- Stream Deck físico: sin operar; avisar antes de tomar el dispositivo y coordinar
-  exclusividad respecto de otros programas.
+- Stream Deck físico: no se operó en esta entrega sintética. El ensayo posterior
+  documenta su autorización y control exclusivo; no autoriza otras pruebas o
+  dispositivos por inferencia.
 - GUI/compositor real con foco/sin foco: fuera de esta ejecución autónoma sin ventanas.
 - Despertares exactos: no sustituir por cambios de contexto; no instalar trazadores
   por inferencia.

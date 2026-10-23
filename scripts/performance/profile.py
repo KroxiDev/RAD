@@ -169,7 +169,7 @@ def terminate_owned(pid, start, session):
         os.close(fd)
 
 
-def observe(command, directory, interval, timeout):
+def observe(command, directory, interval, timeout, *, event_callback=None, sample_callback=None):
     """Capture JSONL and samples; clean only identities observed as descendants."""
     directory.mkdir(mode=0o700)
     env = clean_environment(directory/'env')
@@ -201,6 +201,8 @@ def observe(command, directory, interval, timeout):
                         row = dict(elapsed_s=now-epoch, phase=phase, processes=snapshot)
                         rows.append(row)
                         raw.write(json.dumps(row)+'\n')
+                        if sample_callback is not None:
+                            sample_callback(row)
                     next_sample = time.monotonic()+interval
                 readable, _, _ = select.select([process.stdout], [], [],
                     max(0, min(next_sample-time.monotonic(), .2)))
@@ -213,6 +215,8 @@ def observe(command, directory, interval, timeout):
                         event = json.loads(line)
                         events.append(event)
                         output.write(json.dumps(event)+'\n')
+                        if event_callback is not None:
+                            event_callback(event)
                         if event.get('event') == 'phase_begin':
                             phase = event['phase']
                             next_sample = time.monotonic()
