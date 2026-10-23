@@ -93,8 +93,47 @@ pero la autenticación local venció antes de que el helper confirmara ready.
 Quedó **incompleto**, con cero ventanas realizadas, sin counters.json ni eventos
 del helper. EOF/deadline y SIGTERM por pidfd al launcher aún del UID propio
 terminaron la espera (returncode -15). **No significa cero wakeups de RAD**.
-El conteo 0/1/4 runtime/helper/plugins en reposo/carga sigue **NO_VERIFICADO** hasta
-que el usuario pueda atender la autenticación local. No se elude ese requisito.
+Ese intento fallido se conserva separado de la captura válida posterior.
+
+### Captura principal completada
+
+Con autorización del usuario para retomar este punto y autenticación local,
+`wk-main2` completó la calibración **10/10** y las **seis ventanas** sobre base
+`93bf217`, sin cambios de código ejecutable ni nuevas herramientas. Linux
+7.2.8-9-omarchy, x86_64, 16 CPU emisoras. Una ventana nominal de 8 s por fase y N,
+dentro de fases instrumentales de 16 s; **una repetición**, no un estudio estadístico.
+
+| Plugins eco | Fase | Eventos contados | Tasa derivada /s | Runtime / plugins / helper |
+|---:|---|---:|---:|---|
+| 0 | Reposo | 0 | 0,00 | 0 / 0 / 0 |
+| 0 | Carga | 128 052 | 16 006,13 | 128 052 / 0 / 0 |
+| 1 | Reposo | 0 | 0,00 | 0 / 0 / 0 |
+| 1 | Carga | 74 290 | 9 285,89 | 63 683 / 10 607 / 0 |
+| 4 | Reposo | 0 | 0,00 | 0 / 0 / 0 |
+| 4 | Carga | 47 964 | 5 995,27 | 41 112 / 6 852 / 0 |
+
+La última columna reparte **eventos**, no tasas. Son sumas de contadores con sus
+intervalos por CPU, no un corte global simultáneo de exactamente 8 s. Cobertura
+verificada por ventana: 2/3/6 procesos y 8/9/12 TIDs para N=0/1/4. En todos los
+FD, enabled_ns == running_ns > 0, sin escalado; todos los intervalos quedaron
+dentro de sus marcadores de fase. La calibración volvió a excluir diez despertares
+del target negativo y no usa pipe de ACK.
+
+**Interpretación:** no se observaron despertares de los TIDs seleccionados en estas
+ventanas de reposo. No implica cero despertares futuros del producto, del hardware
+o de plugins oficiales. La carga es un bucle instrumental sostenido con cliente
+embebido; sus tasas no representan uso normal. N=0 usa una acción nativa y N>0
+acciones eco, con distinto trabajo por iteración y throughput: la caída de la
+tasa al subir N **no demuestra una mejora de eficiencia**. No se adopta un
+presupuesto de wakeups ni se propone optimizar a partir de esta única captura.
+
+Evidencia: `target/performance/wk-main2/`, con metadata, calibration.json,
+counters.json, helper-events.json, eventos del fixture y summary.json. Fuentes,
+ELF del fixture/helper e intérpretes/pkexec audit-only copiados y cotejados **antes**
+de ejecutar; hashes de fuentes/inputs comprobados después. Batch terminado con
+exit 0, todos los FD cerrados y procesos propios recogidos. Esta captura completa
+el conteo exacto **del perfil definido**, no las exclusiones de representatividad
+ni el resto de la fase 4. No usó editor, XL, servicios personales ni OBS.
 
 ## Audio y multimedia de solo lectura
 
@@ -187,9 +226,21 @@ Se conservaron las regresiones críticas y se retiraron a la papelera el plan y
 runner temporales; no se borró la evidencia. Después se repitieron ambas suites
 (**1.189 + 270**, cero fallos, 3 + 2 ignorados), los **62 Python** y ambos pares de
 tests de ejemplos: todo aprobado. Logs definitivos `16-*` a `20-*` y summary.json
-en el mismo directorio. La revisión independiente separa los resultados cumplidos
-de la captura principal del kernel pendiente; esta entrega **no completa los tres
-bloques ni cierra la fase 4** mientras ese punto siga NO_VERIFICADO.
+en el mismo directorio. Esa revisión independiente aprobó la entrega parcial
+`93bf217`, dejando entonces pendiente la captura principal del kernel. La
+continuación `wk-main2` resuelve ese bloque sin modificar código ejecutable;
+**no cierra la fase 4**, que conserva las fronteras y decisiones pendientes.
+
+En la retoma se aprobaron los **20 controles del contador antes de ejecutar** y
+los **62 controles Python** después, más diff check. El primer intento de estos
+62 dentro del sandbox no pudo verificar el fixture de fuser por bloqueo de
+sockets y falló la espera dry-idle por EOF prematuro; no se diagnosticó por separado
+la causa de ese EOF. Se conservan ambos fallos, no como PASS. La repetición
+autorizada fuera del sandbox pasó completa. Logs en
+`target/performance/wk-retry-validation/`.
+Solo cambian este informe y el roadmap; no se volvió a atribuir el gate Rust
+anterior a una ejecución nueva. La auditoría independiente cotejó también las
+seis ventanas, sus fuentes/ELF y límites, con el raw de `wk-main2`.
 
 **OBS real permanece sin iniciar**, por pedido del usuario. La fase 4 sigue abierta:
 quedan sus pruebas coordinadas y las exclusiones/decisiones de cierre indicadas en

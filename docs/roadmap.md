@@ -461,11 +461,14 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
   disponibilidad current válida muestreada y retirada sin procesos residuales;
   picos RSS del árbol ≤8,148/8,168 MiB en estos perfiles. Sin acciones personales.
 - **Wakeups exactos:** calibración kernel real de diez eventos seleccionados
-  aprobada, sin herramientas instaladas ni cambios persistentes. El intento
-  0/1/4 runtime/helper/plugins no inició captura por vencimiento de autenticación
-  local; permanece **NO_VERIFICADO**, no es un resultado de cero wakeups.
+  y seis ventanas 0/1/4 runtime/helper/plugins completadas en `wk-main2`, tras
+  autenticación local; sin herramientas instaladas ni cambios persistentes.
+  Cero eventos en los TIDs seleccionados durante las tres ventanas de reposo;
+  carga instrumental con 128.052/74.290/47.964 eventos en intervalos por CPU de
+  ≈8 s. Una repetición con ecos y cliente embebido, no presupuesto ni garantía
+  universal. El intento anterior sin autenticación se conserva como incompleto.
 - **Sin cerrar:** aprobación de los demás presupuestos propuestos;
-  latencia física completa, wakeups del perfil runtime, otros escenarios de hardware y
+  latencia física completa, otros escenarios de hardware y
   representatividad y OBS con servicio real. El
   escritorio se usó realmente, pero no se midió CPU del compositor ni memoria GPU.
   Los fallos nuevos componen Server, no GUI ni fallos físicos de disco/drivers.
