@@ -28,3 +28,9 @@ name = "obs-conformance-server"
 path = "examples/conformance-server.rs"
 required-features = ["test-support"]
 test = true
+
+[[example]]
+name = "obs-readonly-relay"
+path = "examples/readonly-relay.rs"
+required-features = ["test-support"]
+test = true

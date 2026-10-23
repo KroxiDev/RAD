@@ -6,12 +6,16 @@ los permisos necesarios, y pidió **detenerse antes de OBS real**. UX sigue
 pospuesta. El objetivo aprobado de Métricas permanece en **≤30 MiB RSS**; esta
 entrega no cambia otros presupuestos ni optimiza el producto.
 
+Esa frontera fue respetada en esta entrega. Tras abrir OBS y confirmar su puerto
+y autenticación, el usuario autorizó la [continuación con OBS real de solo
+lectura](performance-obs.md), documentada por separado.
+
 ## Alcance y seguridad
 
 - Ejecución en serie: primero fixtures propios, luego contadores y finalmente
   servicios de audio/multimedia. Sin editor, XL, sensores, cambios de reproducción,
   volumen, mute, dispositivos predeterminados ni configuración personal.
-- ROOT es el único operador. No se consulta OBS real, sus puertos, configuración
+- ROOT fue el único operador. En esta entrega no se consultó OBS real, sus puertos, configuración
   o credenciales. La conformidad ordinaria de OBS usa únicamente servidores falsos.
 - Fuentes, ejecutables e inputs se cotejan y copian **antes** de ejecutar; se
   comprueban de nuevo al terminar. Los artefactos exactos quedan ignorados bajo
@@ -242,6 +246,7 @@ Solo cambian este informe y el roadmap; no se volvió a atribuir el gate Rust
 anterior a una ejecución nueva. La auditoría independiente cotejó también las
 seis ventanas, sus fuentes/ELF y límites, con el raw de `wk-main2`.
 
-**OBS real permanece sin iniciar**, por pedido del usuario. La fase 4 sigue abierta:
-quedan sus pruebas coordinadas y las exclusiones/decisiones de cierre indicadas en
-el [roadmap](roadmap.md#fase-4--medición--en-curso). UX no se inicia automáticamente.
+**Esta entrega terminó antes de OBS real**, por pedido del usuario. El encargo
+posterior y autorizado está en el [informe de OBS](performance-obs.md). La fase 4
+sigue abierta por las exclusiones/decisiones de cierre del
+[roadmap](roadmap.md#fase-4--medición--en-curso). UX no se inicia automáticamente.

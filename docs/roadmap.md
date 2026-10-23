@@ -467,12 +467,21 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
   carga instrumental con 128.052/74.290/47.964 eventos en intervalos por CPU de
   ≈8 s. Una repetición con ecos y cliente embebido, no presupuesto ni garantía
   universal. El intento anterior sin autenticación se conserva como incompleto.
+- **OBS real de solo lectura:** [informe](performance-obs.md), tres ciclos con
+  plugin de producción y guard de lecturas autorizado; 1/32 visuales de
+  grabación/emisión, 144 observaciones current válidas y retirada sin procesos ni
+  conexiones residuales. Pico muestreado del plugin: 3,480 MiB RSS / 1,748 MiB PSS
+  con 32 visuales. Contraseña real solo en RAM del relay, no en el perfil RAD ni
+  resultados. No se ejercitan acciones ni autenticación directa producto→OBS.
+  Una carrera procfs del arnés se reprodujo y corrigió sin cambiar RAD u OBS;
+  intentos incompletos y sintéticos se conservan separados de la captura válida.
 - **Sin cerrar:** aprobación de los demás presupuestos propuestos;
   latencia física completa, otros escenarios de hardware y
-  representatividad y OBS con servicio real. El
+  representatividad. El
   escritorio se usó realmente, pero no se midió CPU del compositor ni memoria GPU.
   Los fallos nuevos componen Server, no GUI ni fallos físicos de disco/drivers.
-  **OBS real no se preparó ni consultó:** detenerse ahí y coordinar con el usuario.
+  OBS está verificado únicamente en el alcance filtrado/read-only descrito;
+  no se infiere permiso para acciones personales ni para iniciar UX.
 - **Frontera física:** el ensayo anterior tuvo autorización específica; futuras
   pruebas requieren autorización y control exclusivo, sin inferir permiso para
   sensores, aplicaciones o configuraciones personales.

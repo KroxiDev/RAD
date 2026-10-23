@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Observe only newly spawned RAD fixtures. Context switches are NOT wakeups."""
 import argparse
+import errno
 import hashlib
 import json
 import math
@@ -154,6 +155,13 @@ def same_owned_process(pid, start, session):
         return stat['start_ticks'] == start and stat['session'] == session and stat['state'] != 'Z'
     except FileNotFoundError:
         return False
+    except ProcessLookupError as error:
+        # An already-open procfs stat FD can report ESRCH after the child exits,
+        # rather than ENOENT. Only that kernel disappearance means "not live".
+        # Deliberate identity errors (errno=None) and permissions still propagate.
+        if error.errno == errno.ESRCH:
+            return False
+        raise
 
 
 def terminate_owned(pid, start, session):
