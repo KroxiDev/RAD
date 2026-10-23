@@ -1,5 +1,6 @@
 //! Public-API-only phase-4 probes: no devices, services, users or production changes.
-//! Pass one NEW directory below this checkout's target/performance.
+//! Pass one NEW directory below this checkout's target/performance; optionally
+//! add --representative for smaller configurations and compressible media.
 use rad_authority::{Authority, Command, Effect, Outcome};
 use rad_core::{configuration::*, identity::*};
 use rad_media::NormalizedImage;
@@ -22,6 +23,9 @@ struct Scenario {
     media_bytes: usize,
     pictured_buttons: usize,
     document_bytes: usize,
+    media_pattern: &'static str,
+    source_bytes: usize,
+    raw_rgba_bytes: usize,
 }
 impl Scenario {
     fn configuration(&self, detail: &str) {
@@ -30,7 +34,10 @@ impl Scenario {
             json!({"kind":"configuration", "scenario":self.name,
                 "identity_count":self.identity_count,"media_count":self.media_count,
                 "media_bytes":self.media_bytes,"pictured_buttons":self.pictured_buttons,
-                "document_bytes":self.document_bytes,"repetitions":REPETITIONS,"detail":detail})
+                "document_bytes":self.document_bytes,"repetitions":REPETITIONS,"detail":detail,
+                "media_pattern":self.media_pattern,"source_bytes":self.source_bytes,
+                "raw_rgba_bytes":self.raw_rgba_bytes,"source_png_encoding":"stored_deflate",
+                "normalized_bytes_per_rgba_milli":(self.media_bytes * 1000).checked_div(self.raw_rgba_bytes)})
         );
     }
     fn timed<T>(&self, operation: &str, iteration: usize, f: impl FnOnce() -> T) -> T {
@@ -134,20 +141,44 @@ fn chunk(png: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
     let checksum = crc(&png[start..]);
     png.extend_from_slice(&checksum.to_be_bytes());
 }
-// Stored DEFLATE blocks avoid adding encoder dependencies to this example. The
-// real normalizer decodes/re-encodes these high-entropy synthetic RGBA images.
-fn synthetic_png(seed: u32, side: u32) -> Vec<u8> {
+#[derive(Clone, Copy)]
+enum Pattern {
+    Noise,
+    Flat,
+    Bands,
+}
+impl Pattern {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Noise => "noise",
+            Self::Flat => "flat",
+            Self::Bands => "bands",
+        }
+    }
+}
+// Stored DEFLATE avoids encoder dependencies. Only the normalized PNG's
+// compressibility is representative: source decoding still reads stored blocks.
+fn synthetic_png(seed: u32, side: u32, pattern: Pattern) -> Vec<u8> {
     let stride = (side * 4 + 1) as usize;
     let mut pixels = vec![0; side as usize * stride];
     let mut state = seed.wrapping_add(1).wrapping_mul(0x9e37_79b9);
-    for row in pixels.chunks_mut(stride) {
+    for (y, row) in pixels.chunks_mut(stride).enumerate() {
         // Byte zero is PNG filter None; fill the rest with deterministic RGBA.
         for rgba in row[1..].as_chunks_mut::<4>().0 {
-            for channel in &mut rgba[..3] {
-                state ^= state << 13;
-                state ^= state >> 17;
-                state ^= state << 5;
-                *channel = state as u8;
+            for value in &mut rgba[..3] {
+                *value = match pattern {
+                    Pattern::Noise => {
+                        state ^= state << 13;
+                        state ^= state >> 17;
+                        state ^= state << 5;
+                        state as u8
+                    }
+                    Pattern::Flat => seed.wrapping_mul(13) as u8,
+                    Pattern::Bands => {
+                        seed.wrapping_mul(13)
+                            .wrapping_add(((y / 8) % 2) as u32 * 31) as u8
+                    }
+                };
             }
             rgba[3] = 255;
         }
@@ -206,6 +237,9 @@ fn scenario(name: String, candidate: &Candidate, images: &[NormalizedImage]) -> 
             .filter(|b| b.appearance.image.is_some())
             .count(),
         document_bytes: document_size(candidate),
+        media_pattern: "none",
+        source_bytes: 0,
+        raw_rgba_bytes: 0,
     }
 }
 fn changed(candidate: &Candidate, brightness: u8) -> Candidate {
@@ -342,21 +376,41 @@ fn domain(root: &Path, count: usize) {
     );
 }
 
-fn media(root: &Path, image_count: usize, side: u32, shared: bool) {
+fn media(
+    root: &Path,
+    entity_count: usize,
+    image_count: usize,
+    side: u32,
+    shared: bool,
+    pattern: Pattern,
+) {
     let raw: Vec<_> = (0..image_count)
-        .map(|i| synthetic_png(u32::try_from(i).unwrap(), side))
+        .map(|i| synthetic_png(u32::try_from(i).unwrap(), side, pattern))
         .collect();
     let images: Vec<_> = raw
         .iter()
         .map(|b| rad_media::normalize(b).unwrap())
         .collect();
     assert!(images.iter().all(|i| i.dimensions() == (side, side)));
-    let mut candidate = populated(7000, &images, shared);
+    let mut candidate = populated(entity_count, &images, shared);
     let policy = if shared { "shared" } else { "unique" };
-    let meta = scenario(
-        format!("media-{policy}-{image_count}-{side}"),
-        &candidate,
-        &images,
+    let name = if matches!(pattern, Pattern::Noise) {
+        format!("media-{policy}-{image_count}-{side}")
+    } else {
+        format!(
+            "media-{entity_count}-{}-{policy}-{image_count}-{side}",
+            pattern.name()
+        )
+    };
+    let mut meta = scenario(name, &candidate, &images);
+    meta.media_pattern = pattern.name();
+    meta.source_bytes = raw.iter().map(Vec::len).sum();
+    meta.raw_rgba_bytes = image_count * side as usize * side as usize * 4;
+    let unique: std::collections::BTreeSet<_> = images.iter().map(rad_store::media_key).collect();
+    assert_eq!(
+        unique.len(),
+        image_count,
+        "catalogue must not silently deduplicate"
     );
     meta.configuration("existing catalogue vs same catalogue resupplied; shared pictures all buttons, unique pictures exactly one button per image; no cache eviction");
     let keys: Vec<_> = images.iter().map(rad_store::media_key).collect();
@@ -404,16 +458,18 @@ fn media(root: &Path, image_count: usize, side: u32, shared: bool) {
     }
 }
 
-fn output_root() -> PathBuf {
+fn output_root() -> (PathBuf, bool) {
     let mut args = std::env::args_os().skip(1);
     let path = PathBuf::from(
         args.next()
             .expect("one new target/performance directory required"),
     );
-    assert!(
-        args.next().is_none(),
-        "only one directory argument is accepted"
-    );
+    let representative = match args.next() {
+        None => false,
+        Some(flag) if flag == "--representative" => true,
+        Some(_) => panic!("only optional --representative is accepted"),
+    };
+    assert!(args.next().is_none(), "unexpected extra argument");
     let base = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/performance")
         .canonicalize()
@@ -432,21 +488,43 @@ fn output_root() -> PathBuf {
         .mode(0o700)
         .create(&path)
         .unwrap();
-    path
+    (path, representative)
 }
 fn main() {
-    let root = output_root();
-    for count in [32, 1000, 7000] {
+    let (root, representative) = output_root();
+    println!(
+        "{}",
+        json!({"kind":"metadata","suite":if representative {"representative"} else {"historical"},
+        "path":"Authority + real Store public APIs","clock":"Instant wall monotonic",
+        "limits":["synthetic profiles, not a census of user configurations","source PNG uses stored DEFLATE; normalized PNG uses real compression","low pixel entropy does not guarantee small canonical Fast/NoFilter PNG","independent operation samples, not additive percentiles"]})
+    );
+    for count in if representative {
+        [32, 256, 1000]
+    } else {
+        [32, 1000, 7000]
+    } {
         domain(&root, count);
     }
-    for (count, side, shared) in [
-        (1, 256, true),
-        (16, 256, true),
-        (16, 256, false),
-        (128, 64, false),
-        (128, 256, false),
-    ] {
-        media(&root, count, side, shared);
+    if representative {
+        for (entities, count, side, shared, pattern) in [
+            (32, 1, 64, true, Pattern::Flat),
+            (256, 4, 64, true, Pattern::Bands),
+            (256, 4, 64, false, Pattern::Bands),
+            (1000, 16, 128, true, Pattern::Bands),
+            (1000, 16, 128, false, Pattern::Bands),
+        ] {
+            media(&root, entities, count, side, shared, pattern);
+        }
+    } else {
+        for (count, side, shared) in [
+            (1, 256, true),
+            (16, 256, true),
+            (16, 256, false),
+            (128, 64, false),
+            (128, 256, false),
+        ] {
+            media(&root, 7000, count, side, shared, Pattern::Noise);
+        }
     }
     println!("{}", json!({"kind":"complete","durable_reopen":true}));
 }

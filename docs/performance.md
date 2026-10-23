@@ -11,6 +11,8 @@ oficiales sintéticos, atribución de memoria, fallos, medios grandes y builds.
 Las tablas de esta primera entrega permanecen históricas, sin mezclar corridas.
 El [ensayo físico posterior](performance-physical.md) usa un XL real con autorización
 independiente y documenta el límite reporte consumido → proyección, no píxeles.
+La [continuación con escritorio real](performance-desktop.md) mide editor/XL y
+métricas con GPU reales, además de cargas y fallos integrados adicionales.
 
 El arnés usa exclusivamente procesos nuevos propios y datos privados nuevos bajo
 `target/performance/`. No abre el Stream Deck ni ventanas, no usa systemd personal,
@@ -272,14 +274,14 @@ esa retirada, sin añadir tests permanentes no críticos.
 
 ## Pendientes de la fase 4
 
-- Editor real con foco, sin foco y cerrado, incluidos compositor/GPU; no sustituirlo
-  por un render headless y presentarlo como equivalente.
+- Editor real con foco, sin foco y cerrado: medido después con XL en el escritorio
+  real. No mide CPU del compositor ni memoria GPU, ni equivale a todos los drivers.
 - Latencia completa de contacto físico→acción/píxeles. El ensayo posterior ya
   verifica navegación y Sleep/Wake reales bajo control exclusivo, con tiempo de
   reporte consumido→Desired, sin timestamp HID ni confirmación de píxeles.
-- Coste real de los plugins oficiales y objetivo de 20 MiB de métricas con GPU:
-  la continuación mide sus implementaciones con backends falsos, no certifica
-  lectores/servicios/driver personales ni el objetivo global.
+- Coste real de audio/multimedia/OBS: pendiente de servicios autorizados. Métricas
+  con procfs/NVML reales ya se midió después: **supera 20 MiB RSS** en el escenario
+  de 32 visuales, sin declarar certificación universal ni rebajar el objetivo.
 - Despertares exactos y sus causas: no se dispone de un trazador aprobado en este
   entorno; no instalarlo por inferencia.
 - La continuación ya perfila downloader retenido, host que no lee, conversor
@@ -291,5 +293,5 @@ esa retirada, sin añadir tests permanentes no críticos.
 - Fijar presupuestos tras discutir la línea base; no aplicar optimizaciones por
   inferencia. M1–M4 son candidatos, no una lista de problemas ya demostrados.
 
-La fase queda **en curso**. Antes de la prueba con Stream Deck físico se avisa
-al usuario; no se opera el dispositivo sin autorización y control exclusivo.
+La fase queda **en curso**. Cada nuevo ensayo físico requiere autorización y
+control exclusivo; el previo no autoriza otros dispositivos o sensores.

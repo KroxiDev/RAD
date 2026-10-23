@@ -441,11 +441,21 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
   navegación IPC y 12 navegaciones humanas más Sleep/Wake. Cierre limpio, logo
   confirmado por el usuario y cero holders al terminar. El tiempo disponible es
   reporte consumido → Desired, no contacto/HID read/USB ACK/píxeles.
-- **Sin cerrar:** GUI/compositor reales, latencia física completa y otros escenarios
-  de hardware, lectores/servicios reales de
-  oficiales (incluido el objetivo de métricas con GPU), despertares exactos y
-  representatividad adicional. Los fallos medidos por componentes no certifican
-  toda la composición Server/GUI ni fallos reales de drivers.
+- **Escritorio y continuación (2026-10-23):** [informe](performance-desktop.md):
+  tres ciclos reales editor/XL con foco, desfoco, navegación IPC y editor cerrado;
+  perfil privado y cierre/liberación comprobados. 770 muestras adicionales con
+  configuraciones de 32/256/1.000 identidades y medios planos/bandas; cinco fallos
+  Server/cliente/plugin y reader de métricas retenido integrado con backend falso.
+- **Métricas con GPU real:** tres ciclos autorizados de procfs/NVML, disponibilidad
+  CPU/RAM/GPU/VRAM válida. **Objetivo de 20 MiB RSS NO CUMPLIDO:** plugin observado
+  28,496–28,855 MiB con 32 visuales; PSS 23,877–24,236 MiB. El plugin se retira sin
+  demanda. Medirlo no autoriza optimizar ni rebajar el objetivo por inferencia.
+- **Sin cerrar:** tratamiento del objetivo incumplido y aprobación de presupuestos;
+  latencia física completa, wakeups exactos, otros escenarios de hardware y
+  representatividad, audio/multimedia/OBS con servicios reales autorizados. El
+  escritorio se usó realmente, pero no se midió CPU del compositor ni memoria GPU.
+  Downloader/conversor retenidos y Store incierto conservan el alcance anterior;
+  no certifican toda la composición Server/GUI ni fallos reales de drivers.
 - **Frontera física:** el ensayo anterior tuvo autorización específica; futuras
   pruebas requieren autorización y control exclusivo, sin inferir permiso para
   sensores, aplicaciones o configuraciones personales.

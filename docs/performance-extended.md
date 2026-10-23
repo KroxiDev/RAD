@@ -6,6 +6,9 @@ Antes de operar el Stream Deck físico se avisa al usuario y se requiere control
 exclusivo. No se ha usado hardware, ventanas, servicios ni sensores personales.
 El [ensayo físico posterior](performance-physical.md) tiene autorización separada;
 no se mezclan sus resultados con esta entrega sintética.
+La [continuación de escritorio y métricas reales](performance-desktop.md) añade
+escenarios posteriores, incluido el incumplimiento observado del objetivo de
+20 MiB con GPU. Las cifras sintéticas de este documento siguen siendo históricas.
 
 ## Bloques y método
 
@@ -309,7 +312,8 @@ reales aún no verificados de la fase 4.
 - Stream Deck físico: no se operó en esta entrega sintética. El ensayo posterior
   documenta su autorización y control exclusivo; no autoriza otras pruebas o
   dispositivos por inferencia.
-- GUI/compositor real con foco/sin foco: fuera de esta ejecución autónoma sin ventanas.
+- GUI real con foco/sin foco: fuera de esta entrega sin ventanas; medida después
+  con XL. No equivale a medir el coste del propio compositor o memoria GPU.
 - Despertares exactos: no sustituir por cambios de contexto; no instalar trazadores
   por inferencia.
 - Presupuestos y optimizaciones: se pueden proponer con evidencia, no se adoptan

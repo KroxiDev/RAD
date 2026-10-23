@@ -178,3 +178,7 @@ Esta prueba no cierra GUI/compositor, lectores/servicios reales de plugins (incl
 NVML y el objetivo con GPU), trazado exacto de wakeups ni latencia contacto/píxeles.
 Tampoco prueba otros tamaños de configuración, cables, unidades o distribuciones.
 UX permanece pospuesta; no se adoptaron optimizaciones ni presupuestos nuevos.
+
+La [continuación posterior](performance-desktop.md) ya mide el editor real con XL,
+cargas adicionales y métricas con procfs/NVML reales (objetivo de 20 MiB incumplido
+en el perfil observado). No cambia los límites ni las cifras de este primer ensayo.

@@ -14,6 +14,102 @@ use std::{
 const PLUGIN: &str = "org.rad.test.options";
 const REGISTERED_ORIGIN: &str = "https://github.com/owner/repo";
 
+// Measurement-only instrumentation: absent from production and silent unless
+// explicitly requested. Existing assertions remain the acceptance contract.
+#[cfg(test)]
+mod profile {
+    use super::*;
+    use std::{collections::BTreeSet, io::Write, sync::OnceLock};
+
+    fn enabled() -> bool {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED
+            .get_or_init(|| std::env::var_os("RAD_PROFILE_INTEGRATED").is_some_and(|v| v == "1"))
+    }
+    pub fn active(scenario: &str) -> bool {
+        enabled()
+            && matches!(
+                scenario,
+                "slow" | "crash" | "invalid" | "leaves" | "capacity"
+            )
+    }
+    pub fn emit(scenario: &str, kind: &str, mut value: Value) {
+        if !active(scenario) {
+            return;
+        }
+        value["suite"] = json!("integrated_faults");
+        value["scenario"] = json!(scenario);
+        value["kind"] = json!(kind);
+        let mut stdout = std::io::stdout().lock();
+        // libtest may have left its "test name ... " prefix on this line.
+        if kind == "metadata" {
+            writeln!(stdout).unwrap();
+        }
+        writeln!(stdout, "{value}").unwrap();
+        stdout.flush().unwrap();
+    }
+    pub fn sample(scenario: &str, operation: &str, elapsed: Duration) {
+        emit(
+            scenario,
+            "sample",
+            json!({"operation":operation,"ns":elapsed.as_nanos()}),
+        );
+    }
+    pub fn timed<T>(scenario: &str, operation: &str, work: impl FnOnce() -> T) -> T {
+        if !active(scenario) {
+            return work();
+        }
+        let started = Instant::now();
+        let result = work();
+        sample(scenario, operation, started.elapsed());
+        result
+    }
+    pub fn children() -> BTreeSet<u32> {
+        std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .map(|thread| thread.unwrap().path().join("children"))
+            .flat_map(|path| {
+                // An owned thread may finish between readdir and open. Other
+                // errors must not masquerade as proof that a child was reaped.
+                let text = match std::fs::read_to_string(path) {
+                    Ok(text) => text,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+                    Err(error) => panic!("cannot inspect own children: {error}"),
+                };
+                text.split_whitespace()
+                    .map(|pid| pid.parse().unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+    #[derive(Default)]
+    pub struct Turns {
+        count: usize,
+        total: u128,
+        max: u128,
+    }
+    impl Turns {
+        pub fn turn(&mut self, server: &mut Server, scenario: &str) {
+            let started = active(scenario).then(Instant::now);
+            server.turn().unwrap();
+            if let Some(started) = started {
+                let ns = started.elapsed().as_nanos();
+                self.count += 1;
+                self.total += ns;
+                self.max = self.max.max(ns);
+            }
+        }
+        pub fn emit(&self, scenario: &str, phase: &str) {
+            emit(
+                scenario,
+                "turn_summary",
+                json!({"phase":phase,
+                "count":self.count,"total_ns":self.total,"max_ns":self.max}),
+            );
+        }
+    }
+}
+
 struct Directory(PathBuf);
 impl Drop for Directory {
     fn drop(&mut self) {
@@ -88,6 +184,20 @@ fn world(name: &str, scenario: impl FnOnce(PathBuf) + Send + 'static) {
     let _turn = TURN
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let children_before = profile::active(name).then(profile::children);
+    profile::emit(
+        name,
+        "metadata",
+        json!({
+        "scope":"server_client_plugin_fixture",
+        "path":["rad_client","Unix socket Transport","Server::turn","Authority","Host","options fixture process"],
+        "clock":"Instant wall monotonic","pid":std::process::id(),
+        "limits":["owned synthetic plugin and private helper, no hardware or real backends",
+            "client-observed intervals include scheduling and test polling",
+            "serving turn aggregate includes setup and healthy traffic",
+            "shutdown_complete checks helper/plugin reaping; direct own children cross-check",
+            "no integrated Store-write uncertainty, downloader or converter fault measured"]}),
+    );
     let root =
         Directory(std::env::temp_dir().join(format!("rad-opt-{}-{name}", std::process::id())));
     for sub in ["", "runtime", "home", "data", "system", "config", "cache"] {
@@ -150,8 +260,9 @@ fn world(name: &str, scenario: impl FnOnce(PathBuf) + Send + 'static) {
     // Like the product loop: no periodic polling, only readiness and the server's own
     // deadlines (a plugin's options deadline included) wake it. The maximum is a safety net.
     let end = Instant::now() + Duration::from_secs(60);
+    let mut serving_turns = profile::Turns::default();
     while !finished.load(std::sync::atomic::Ordering::Acquire) {
-        server.turn().unwrap();
+        serving_turns.turn(&mut server, name);
         OPEN_REQUESTS.store(
             server.pending_requests(),
             std::sync::atomic::Ordering::Release,
@@ -160,12 +271,31 @@ fn world(name: &str, scenario: impl FnOnce(PathBuf) + Send + 'static) {
         server.wait(Duration::from_secs(5)).unwrap();
     }
     let result = client.join();
+    serving_turns.emit(name, "serving");
+    let stop_started = Instant::now();
     server.request_shutdown();
     let end = Instant::now() + Duration::from_secs(10);
+    let mut shutdown_turns = profile::Turns::default();
     while !server.shutdown_complete() {
-        server.turn().unwrap();
+        shutdown_turns.turn(&mut server, name);
         assert!(Instant::now() < end, "runtime did not stop");
         server.wait(Duration::from_millis(10)).unwrap();
+    }
+    let shutdown_ns = stop_started.elapsed().as_nanos();
+    shutdown_turns.emit(name, "shutdown");
+    if let Some(before) = children_before {
+        let after = profile::children();
+        assert_eq!(
+            after, before,
+            "the integrated fixture must reap all owned children"
+        );
+        profile::emit(
+            name,
+            "complete",
+            json!({"client_ok":result.is_ok(),
+            "shutdown_complete":server.shutdown_complete(),"shutdown_ns":shutdown_ns,
+            "children_reaped":true,"children_before":before,"children_after":after}),
+        );
     }
     result.unwrap();
 }
@@ -539,7 +669,9 @@ fn a_slow_plugin_times_out_near_two_seconds_while_the_runtime_keeps_serving() {
         std::thread::sleep(Duration::from_millis(300));
         // Pending, yet other requests, executions and even other questions are answered.
         let served = Instant::now();
-        call(&mut editor, "status", json!({}));
+        profile::timed("slow", "healthy_status", || {
+            call(&mut editor, "status", json!({}))
+        });
         let run = call(&mut editor, "run", json!({"id":"a1"}));
         assert_eq!(
             finished(&mut editor, &run["execution_id"])["state"],
@@ -558,8 +690,10 @@ fn a_slow_plugin_times_out_near_two_seconds_while_the_runtime_keeps_serving() {
             !waiting.is_finished(),
             "the slow question was not waited for"
         );
+        profile::sample("slow", "healthy_status_run_and_query", served.elapsed());
         let (outcome, elapsed) = waiting.join().unwrap();
         assert_eq!(outcome, "options_timeout");
+        profile::sample("slow", "options_request_to_timeout_observed", elapsed);
         assert!(
             (Duration::from_millis(1900)..Duration::from_millis(3000)).contains(&elapsed),
             "{elapsed:?}"
@@ -605,6 +739,11 @@ fn a_third_question_is_refused_at_once_and_the_slot_returns_with_the_late_reply(
             code(&mut automation, "options", normal_question()),
             "resource_exhausted"
         );
+        profile::sample(
+            "capacity",
+            "third_question_to_refusal_observed",
+            refused.elapsed(),
+        );
         assert!(
             refused.elapsed() < Duration::from_millis(500),
             "{:?}",
@@ -613,6 +752,9 @@ fn a_third_question_is_refused_at_once_and_the_slot_returns_with_the_late_reply(
         for waiting in pending {
             assert_eq!(waiting.join().unwrap().0, "options_timeout");
         }
+        profile::timed("capacity", "healthy_status", || {
+            call(&mut editor, "status", json!({}))
+        });
         // Expired questions hold their slot until the plugin's late reply is drained (3 s).
         let end = started + Duration::from_secs(8);
         loop {
@@ -625,6 +767,11 @@ fn a_third_question_is_refused_at_once_and_the_slot_returns_with_the_late_reply(
             std::thread::sleep(Duration::from_millis(50));
         }
         assert!(started.elapsed() >= Duration::from_millis(2900));
+        profile::sample(
+            "capacity",
+            "two_requests_to_slot_recovered_observed",
+            started.elapsed(),
+        );
     });
 }
 
@@ -637,7 +784,9 @@ fn a_plugin_lost_mid_question_reads_as_unavailable_and_is_not_asked_again() {
                               "context":{"scenario":"crash"}});
         let started = Instant::now();
         let answer = ask(&mut editor, question);
+        let elapsed = started.elapsed();
         assert_eq!(answer["availability"], "unavailable");
+        profile::sample("crash", "options_request_to_unavailable_observed", elapsed);
         assert!(
             started.elapsed() < Duration::from_millis(1500),
             "{:?}",
@@ -648,7 +797,9 @@ fn a_plugin_lost_mid_question_reads_as_unavailable_and_is_not_asked_again() {
             assert!(Instant::now() < end, "a dead plugin was still asked");
             std::thread::sleep(Duration::from_millis(20));
         }
-        call(&mut editor, "status", json!({}));
+        profile::timed("crash", "healthy_status", || {
+            call(&mut editor, "status", json!({}))
+        });
     });
 }
 
@@ -659,10 +810,19 @@ fn a_list_outside_the_contract_never_reaches_the_client() {
         ready(&mut editor);
         let question = json!({"type":format!("{PLUGIN}:pick"),"field":"group","cursor":null,
                               "context":{"scenario":"invalid"}});
+        let started = Instant::now();
         let answer = ask(&mut editor, question);
+        let elapsed = started.elapsed();
         assert_eq!(answer["availability"], "unavailable");
         assert_eq!(listed(&answer), vec![]);
-        call(&mut editor, "status", json!({}));
+        profile::sample(
+            "invalid",
+            "options_request_to_invalid_reply_unavailable_observed",
+            elapsed,
+        );
+        profile::timed("invalid", "healthy_status", || {
+            call(&mut editor, "status", json!({}))
+        });
     });
 }
 
@@ -678,12 +838,14 @@ fn a_client_that_leaves_does_not_stop_the_runtime_or_keep_the_plugins_slot() {
             .request_until("options", slow_question(), short)
             .unwrap_err();
         assert_eq!(failure.code, "deadline_exceeded");
+        let deadline_elapsed = started.elapsed();
         let open = || OPEN_REQUESTS.load(std::sync::atomic::Ordering::Acquire);
         assert_eq!(
             open(),
             1,
             "the abandoned question is still being waited for"
         );
+        let release_started = Instant::now();
         drop(leaving);
         // The runtime notices the closed socket on its next turn and gives the question's
         // transport slot back at once: well before the plugin (3 s) or the deadline (2 s) would.
@@ -693,7 +855,19 @@ fn a_client_that_leaves_does_not_stop_the_runtime_or_keep_the_plugins_slot() {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(started.elapsed() < Duration::from_millis(1800));
-        call(&mut editor, "status", json!({}));
+        profile::sample(
+            "leaves",
+            "setup_to_client_deadline_observed",
+            deadline_elapsed,
+        );
+        profile::sample(
+            "leaves",
+            "drop_to_transport_credit_released_observed",
+            release_started.elapsed(),
+        );
+        profile::timed("leaves", "healthy_status", || {
+            call(&mut editor, "status", json!({}))
+        });
         // The plugin's reply to the abandoned question is dropped, and its slot freed.
         std::thread::sleep(
             (started + Duration::from_millis(3300)).saturating_duration_since(Instant::now()),
@@ -701,6 +875,11 @@ fn a_client_that_leaves_does_not_stop_the_runtime_or_keep_the_plugins_slot() {
         assert_eq!(
             ask(&mut editor, normal_question())["availability"],
             "available"
+        );
+        profile::sample(
+            "leaves",
+            "request_to_late_reply_slot_reusable_observed",
+            started.elapsed(),
         );
     });
 }
