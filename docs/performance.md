@@ -6,6 +6,10 @@ Primera entrega autónoma de la fase 4. No modifica el comportamiento del produc
 los contratos, los límites ni la UX. No certifica hardware ni el escritorio real.
 La fase UX queda para después por decisión del usuario.
 
+La [continuación autónoma](performance-extended.md) amplía esta línea base con
+oficiales sintéticos, atribución de memoria, fallos, medios grandes y builds.
+Las tablas de esta primera entrega permanecen históricas, sin mezclar corridas.
+
 El arnés usa exclusivamente procesos nuevos propios y datos privados nuevos bajo
 `target/performance/`. No abre el Stream Deck ni ventanas, no usa systemd personal,
 no consulta sensores, audio, OBS o buses de sesión reales, ni descarga dependencias.
@@ -269,15 +273,19 @@ esa retirada, sin añadir tests permanentes no críticos.
 - Editor real con foco, sin foco y cerrado, incluidos compositor/GPU; no sustituirlo
   por un render headless y presentarlo como equivalente.
 - Tecla física→acción y navegación con dispositivo real, bajo control exclusivo.
-- Coste de los plugins oficiales y evaluación del objetivo de 20 MiB para métricas;
-  este perfil de ecos no permite dar ese objetivo por cumplido.
+- Coste real de los plugins oficiales y objetivo de 20 MiB de métricas con GPU:
+  la continuación mide sus implementaciones con backends falsos, no certifica
+  lectores/servicios/driver personales ni el objetivo global.
 - Despertares exactos y sus causas: no se dispone de un trazador aprobado en este
   entorno; no instalarlo por inferencia.
-- Perfil de recursos/latencias bajo downloader retenido, host que no lee, conversor
-  bloqueado, worker muerto y escritura incierta. Sus regresiones funcionales
-  existentes no equivalen a una medición de rendimiento de esos fallos.
-- Catálogo de medios grande y cargas representativas de configuraciones personales.
+- La continuación ya perfila downloader retenido, host que no lee, conversor
+  retenido, worker muerto y escritura incierta en componentes controlados. Sigue
+  sin certificar toda la composición Server/GUI ni un cuelgue real de codec/driver.
+- Catálogo grande sintético ya medido hasta 128 PNG y unos 32 MiB; falta validar
+  representatividad en otros contenidos/cargas, sin leer configuraciones personales
+  por inferencia.
 - Fijar presupuestos tras discutir la línea base; no aplicar optimizaciones por
   inferencia. M1–M4 son candidatos, no una lista de problemas ya demostrados.
 
-La fase queda **en curso**, no cerrada por esta primera entrega.
+La fase queda **en curso**. Antes de la prueba con Stream Deck físico se avisa
+al usuario; no se opera el dispositivo sin autorización y control exclusivo.

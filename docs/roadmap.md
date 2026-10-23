@@ -431,9 +431,17 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
   sintética en [Medición](performance.md). Runtime con helper y 0/1/4 plugins eco,
   recursos por PID propio y latencias; dominio/persistencia con 32/7.000 entidades
   vigentes, y límite explícito para el perfil de 10.000. Sin optimizaciones.
-- **Sin cerrar:** GUI/compositor y hardware reales, plugins oficiales (incluido el
-  objetivo de métricas), despertares exactos, perfil de fallos complejos y catálogo
-  grande de medios. Las regresiones funcionales no sustituyen esas mediciones.
+- **Continuación autónoma (2026-10-23):** [perfil extendido](performance-extended.md)
+  de M1/M2 con 770 muestras y catálogos de ≈32 MiB; preparación fuera del PID y
+  demanda/retirada de los cuatro oficiales por separado con backends falsos;
+  medición de los cinco fallos controlados con alcance de componentes; y comparación
+  release/strip/thin-LTO sin adoptar flags. Sin cambios de UX ni optimizaciones.
+- **Sin cerrar:** GUI/compositor y hardware reales, lectores/servicios reales de
+  oficiales (incluido el objetivo de métricas con GPU), despertares exactos y
+  representatividad adicional. Los fallos medidos por componentes no certifican
+  toda la composición Server/GUI ni fallos reales de drivers.
+- **Frontera física:** avisar al usuario antes de operar el Stream Deck; la orden de
+  avisar no autoriza tomarlo ni comprobar exclusividad por inferencia.
 - M1–M4 conservan su evidencia histórica de origen; no todos describen el código
   actual ni constituyen por sí mismos cuellos de botella demostrados.
 

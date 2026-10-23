@@ -928,6 +928,12 @@ mod tests {
 
 #[cfg(all(test, feature = "fixture-tests"))]
 mod lifecycle_tests {
+    mod fault_probe {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../scripts/performance/fault_probe.rs"
+        ));
+    }
     use super::*;
     use rad_authority::{Command, Effect, Outcome};
     use rad_core::{configuration::*, execution::Target, identity::IdentityRegistry};
@@ -1257,7 +1263,14 @@ mod lifecycle_tests {
     #[test]
     fn held_download_of_one_plugin_does_not_delay_cold_start_of_another() {
         use std::sync::atomic::{AtomicBool, Ordering};
-        let root = std::env::temp_dir().join(format!("rad-b6-fetch-{}", std::process::id()));
+        let mut profile =
+            fault_probe::Probe::begin("held_downloader", "fixed_zero_ms_with_1ms_fixture_poll");
+        let root = profile
+            .as_ref()
+            .map(|p| p.root().join("plugins"))
+            .unwrap_or_else(|| {
+                std::env::temp_dir().join(format!("rad-b6-fetch-{}", std::process::id()))
+            });
         assert!(!root.exists());
         let (b_package, a_package) = (package(1), package_for("org.rad.other", 1));
         let release = Arc::new(AtomicBool::new(false));
@@ -1286,6 +1299,9 @@ mod lifecycle_tests {
             .unwrap();
         settle(&mut admin, &mut actor, &mut ports, 0);
         assert_eq!(ports.host.state("org.rad.fixture"), None, "B starts cold");
+        if let Some(p) = &mut profile {
+            p.snapshot("before");
+        }
         // Install A: its download is held by the fake downloader.
         admin
             .submit(Origin::Editor, request("install", Some(2)), &actor)
@@ -1296,7 +1312,11 @@ mod lifecycle_tests {
             assert!(Instant::now() < end, "download of A never started");
             std::thread::sleep(Duration::from_millis(1));
         }
+        if let Some(p) = &mut profile {
+            p.snapshot("during");
+        }
         // First demand for B while A is still downloading.
+        let profile_cold = Instant::now();
         admin.set_extra_demand(["org.rad.fixture".into()].into());
         let cold_start = Instant::now() + Duration::from_secs(3);
         while ports.host.state("org.rad.fixture") != Some(State::Ready) {
@@ -1308,7 +1328,17 @@ mod lifecycle_tests {
             );
             std::thread::sleep(Duration::from_millis(1));
         }
+        if let Some(p) = &mut profile {
+            p.sample("other_plugin_cold_ready", profile_cold.elapsed().as_nanos());
+        }
+        let profile_status = Instant::now();
         let held = admin.status(&ports.host);
+        if let Some(p) = &mut profile {
+            p.sample(
+                "status_while_download_held",
+                profile_status.elapsed().as_nanos(),
+            );
+        }
         assert_eq!(held["state"], "preparing", "A's operation stays visible");
         assert_eq!(
             admin.submit(Origin::Editor, request("install", Some(2)), &actor),
@@ -1316,7 +1346,15 @@ mod lifecycle_tests {
             "one administrative operation at a time"
         );
         release.store(true, Ordering::SeqCst);
+        let profile_release = Instant::now();
         settle(&mut admin, &mut actor, &mut ports, 0);
+        if let Some(p) = &mut profile {
+            p.sample(
+                "release_to_admin_settled",
+                profile_release.elapsed().as_nanos(),
+            );
+            p.snapshot("after");
+        }
         let done = admin.status(&ports.host);
         assert_eq!(done["error"], serde_json::Value::Null);
         assert_eq!(done["items"].as_array().unwrap().len(), 2, "A installed");
@@ -1330,7 +1368,9 @@ mod lifecycle_tests {
             assert!(Instant::now() < end);
             std::thread::sleep(Duration::from_millis(1));
         }
-        std::fs::remove_dir_all(root).unwrap();
+        if profile.is_none() {
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
     #[test]
     fn ordinary_rejections_report_their_own_code_and_leave_admin_usable() {

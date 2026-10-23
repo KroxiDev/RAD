@@ -1,3 +1,9 @@
+mod fault_probe {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../scripts/performance/fault_probe.rs"
+    ));
+}
 mod vfs;
 use super::*;
 use rad_core::configuration::{Edit, Origin};
@@ -65,7 +71,12 @@ fn vfs_observes_real_sync_and_extra_directory_sync_but_not_identical_update() {
 
 #[test]
 fn failed_return_after_real_commit_reconciles_by_new_synced_write_without_rotation() {
-    let path = path();
+    let mut profile =
+        fault_probe::Probe::begin("uncertain_store", "real_sqlite_vfs_injected_return_failure");
+    let path = profile
+        .as_ref()
+        .map(|p| p.root().join("state.sqlite3"))
+        .unwrap_or_else(path);
     let initial = Configuration::prepare_new(&IdentityRegistry::new(9).unwrap()).unwrap();
     drop(Store::create(&path, &initial).unwrap());
     let vfs = vfs::Vfs::new();
@@ -80,15 +91,31 @@ fn failed_return_after_real_commit_reconciles_by_new_synced_write_without_rotati
         fail_return: true,
     };
     let candidate = next(&initial);
+    if let Some(p) = &mut profile {
+        p.snapshot("before");
+    }
+    let profile_commit = std::time::Instant::now();
     assert!(matches!(
         store.commit(&candidate),
         CommitOutcome::Uncertain { revision: 2, .. }
     ));
+    if let Some(p) = &mut profile {
+        p.sample("commit_to_uncertain", profile_commit.elapsed().as_nanos());
+        p.snapshot("during");
+    }
+    let profile_reject = std::time::Instant::now();
     assert_eq!(
         store.commit(&candidate),
         CommitOutcome::NotApplied(StoreError::Uncertain)
     );
+    if let Some(p) = &mut profile {
+        p.sample(
+            "write_rejected_while_uncertain",
+            profile_reject.elapsed().as_nanos(),
+        );
+    }
     let before = vfs.state.count(vfs::Event::Sync);
+    let profile_reconcile = std::time::Instant::now();
     assert_eq!(
         store.reconcile(),
         CommitOutcome::Applied {
@@ -96,6 +123,13 @@ fn failed_return_after_real_commit_reconciles_by_new_synced_write_without_rotati
             changed: true
         }
     );
+    if let Some(p) = &mut profile {
+        p.sample(
+            "reconcile_uncertain",
+            profile_reconcile.elapsed().as_nanos(),
+        );
+        p.snapshot("after");
+    }
     assert!(vfs.state.count(vfs::Event::Sync) > before);
     let previous: i64 = store
         .connection
@@ -105,7 +139,9 @@ fn failed_return_after_real_commit_reconciles_by_new_synced_write_without_rotati
     assert_eq!(store.load().unwrap().registry.records().count(), 2);
     drop(store);
     drop(vfs);
-    std::fs::remove_file(path).unwrap();
+    if profile.is_none() {
+        std::fs::remove_file(path).unwrap();
+    }
 }
 #[test]
 fn vfs_write_and_sync_failures_reconcile_old_or_new_without_partial_ledger() {
