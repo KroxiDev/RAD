@@ -17,6 +17,9 @@ PAGE_SIZE = os.sysconf('SC_PAGE_SIZE')
 CLK_TCK = os.sysconf('SC_CLK_TCK')
 REPO = Path(__file__).resolve().parents[2]
 
+# User-approved on 2026-10-23 after the real GPU baseline; plugin tree RSS only.
+METRICS_RSS_TARGET_BYTES = 30*1024*1024
+
 
 def parse_stat(text):
     fields = text.rsplit(')', 1)[1].split()

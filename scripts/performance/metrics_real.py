@@ -22,7 +22,7 @@ SPEC.loader.exec_module(DESKTOP)
 COMMON, SAMPLER = DESKTOP.COMMON, DESKTOP.SAMPLER
 SOURCES = ('cpu', 'ram', 'gpu', 'vram')
 PHASES = ('installed', 'one', 'many', 'released', 'fresh')
-TARGET = 20*1024*1024
+TARGET = SAMPLER.METRICS_RSS_TARGET_BYTES
 BINARIES = {
     'runtime': 'target/release/rad-runtime',
     'launcher_helper': 'target/release/rad-launcher-helper',

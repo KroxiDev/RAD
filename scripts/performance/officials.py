@@ -498,10 +498,10 @@ def main():
             (out/'resources.json').write_text(json.dumps(summaries,indent=2)+'\n')
     metrics = [s for s in summaries if s['plugin']=='metrics' and s['phase'] in ('one','many')
                and s['group']=='official_plugin']
-    evaluation = dict(kind='synthetic_budget_observation',target_bytes=20*1024*1024,
+    evaluation = dict(kind='synthetic_budget_observation',target_bytes=SAMPLER.METRICS_RSS_TARGET_BYTES,
                       scope='metrics fixture process only; no real NVML/proc reader',
                       metric='rss_bytes_sampled_peak',observations=len(metrics),
-                      all_observed_peaks_within_target=all(s['rss_bytes_sampled_peak']<=20*1024*1024 for s in metrics)
+                      all_observed_peaks_within_target=all(s['rss_bytes_sampled_peak']<=SAMPLER.METRICS_RSS_TARGET_BYTES for s in metrics)
                           if metrics else None,
                       measured_peaks_bytes=[s['rss_bytes_sampled_peak'] for s in metrics],
                       certifies_hardware=False,product_target_certified=False)

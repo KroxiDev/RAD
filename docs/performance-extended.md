@@ -7,8 +7,9 @@ exclusivo. No se ha usado hardware, ventanas, servicios ni sensores personales.
 El [ensayo físico posterior](performance-physical.md) tiene autorización separada;
 no se mezclan sus resultados con esta entrega sintética.
 La [continuación de escritorio y métricas reales](performance-desktop.md) añade
-escenarios posteriores, incluido el incumplimiento observado del objetivo de
-20 MiB con GPU. Las cifras sintéticas de este documento siguen siendo históricas.
+escenarios posteriores, incluido el incumplimiento del objetivo original de
+20 MiB con GPU y la aprobación posterior del usuario de 30 MiB RSS, que el
+escenario real sí cumple. Las cifras y criterios de esta entrega siguen históricos.
 
 ## Bloques y método
 

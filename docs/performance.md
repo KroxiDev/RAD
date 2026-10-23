@@ -280,8 +280,9 @@ esa retirada, sin añadir tests permanentes no críticos.
   verifica navegación y Sleep/Wake reales bajo control exclusivo, con tiempo de
   reporte consumido→Desired, sin timestamp HID ni confirmación de píxeles.
 - Coste real de audio/multimedia/OBS: pendiente de servicios autorizados. Métricas
-  con procfs/NVML reales ya se midió después: **supera 20 MiB RSS** en el escenario
-  de 32 visuales, sin declarar certificación universal ni rebajar el objetivo.
+  con procfs/NVML reales ya se midió después: 28,496–28,855 MiB RSS con 32 visuales.
+  No cumplió los 20 MiB originales; el usuario aprobó después **30 MiB RSS**, que
+  sí cumple ese escenario, sin optimización ni certificación universal.
 - Despertares exactos y sus causas: no se dispone de un trazador aprobado en este
   entorno; no instalarlo por inferencia.
 - La continuación ya perfila downloader retenido, host que no lee, conversor

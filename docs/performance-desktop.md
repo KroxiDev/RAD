@@ -197,7 +197,7 @@ cuando existe, no el controlador:
 | Última demanda retirada | 18,613–18,750 | 10,801–10,926 | Sin proceso | Sin proceso |
 | Reinicio fresco sin demanda | 17,758–17,914 | 9,963–10,021 | Sin proceso | Sin proceso |
 
-**Objetivo de 20 MiB RSS del plugin: NO CUMPLIDO en el escenario real observado.**
+**Resultado histórico frente al objetivo anterior de 20 MiB RSS: NO CUMPLIDO.**
 `metrics-target.json` registra `exceeds_observed_target`, sin afirmar certificación
 universal ni máximo absoluto. Los tres picos RSS fueron 30.257.152 / 29.880.320 /
 29.880.320 B. No es simplemente RSS sumada de muchos procesos: se observó un solo
@@ -208,7 +208,34 @@ de visuales y fuentes. Hace falta un experimento de atribución antes de optimiz
 CPU observada del plugin quedó bajo resolución; el árbol durante los 32 visuales
 dio 0–0,2 % de un núcleo. Eso no prueba CPU cero. El plugin desapareció al retirar
 la demanda, no hubo descendientes no observados y los tres ciclos cerraron limpios.
-No se rebajó el objetivo ni modificó código del plugin para obtener un PASS.
+Durante la captura no se cambió el objetivo ni el código del plugin para obtener
+un PASS. La decisión posterior del usuario se registra aparte, a continuación.
+
+### Objetivo aprobado y proceso de evaluación (2026-10-23)
+
+El usuario fija **≤30 MiB RSS (31.457.280 B)** para el proceso del plugin de
+Métricas y sus descendientes. No es un presupuesto del runtime, del editor ni
+de RAD completo. Con este criterio, los **28,496–28,855 MiB ya observados quedan
+dentro del presupuesto** en las tres repeticiones; no hubo optimización ni nueva
+lectura de sensores. No es certificación universal ni máximo absoluto.
+
+El proceso usa `METRICS_RSS_TARGET_BYTES` en `scripts/performance/profile.py` como
+criterio único de los controladores reales y sintéticos. Para aprobar un escenario
+real siguen siendo obligatorias las comprobaciones de GPU/VRAM válidas y frescas,
+árbol completo y estable, y comparación del pico RSS muestreado; ausencia de
+evidencia sigue siendo `not_verified`, aunque el consumo sea menor que 30 MiB.
+Las pruebas críticas cubren el límite inclusive y el rechazo un byte por encima.
+
+Las capturas y `m-real1/metrics-target.json` originales conservan el criterio de
+20 MiB usado entonces. Una reevaluación de los mismos datos, sin reescribirlos,
+queda en `target/performance/budget30-validation/reevaluation.json`, con hashes de
+entradas y del código evaluador y resultado `within_observed_target` a 30 MiB.
+
+Validación del cambio de criterio: límite de 30 MiB y un byte por encima
+comprobados rojo→verde; gate completo 11/11, 1.184 + 269 tests Rust, los 28 controles
+Python y los 2 tests de opt-in aprobados (3 + 2 ignorados ordinarios).
+Logs en `target/performance/budget30-validation/`. Sin nuevas lecturas de sensores,
+ventanas ni operaciones del XL.
 
 ## Procedencia, validación y pendientes
 
@@ -264,15 +291,15 @@ GUI necesita Wayland/Hyprland reales; sockets y namespaces de fixtures pueden
 requerir ejecución autorizada fuera del sandbox. No cambiar servicios/configuración
 personal para hacer pasar una prueba.
 
-## Presupuestos propuestos, no adoptados
+## Otros presupuestos propuestos, no adoptados
 
 Como punto de discusión **solo para esta máquina y el perfil pequeño actual**:
 runtime conectado sin editor PSS ≤20 MiB; árbol con editor PSS ≤150 MiB;
 navegación IPC caliente p95 ≤5 ms. Son propuestas con margen sobre esta línea base,
 no aceptación aprobada ni garantías para 7.000 identidades, otros drivers o
 latencia contacto/píxeles. No se fija aún presupuesto de CPU/wakeups con ventanas
-tan cortas. El objetivo existente de métricas **20 MiB RSS se mantiene pendiente**,
-no se reemplaza por el consumo medido.
+tan cortas. Estas propuestas siguen sin aprobarse; son independientes del
+objetivo **30 MiB RSS de Métricas**, aprobado explícitamente por el usuario.
 
 ## Estado de cierre
 
@@ -284,15 +311,17 @@ Python** (7 físicos + 11 escritorio + 10 métricas) y los **2 tests críticos d
 opt-in del seed** aprobados. Logs: `target/performance/finish-gate/`.
 
 La revisión independiente verifica aislamiento, cifras, procedencia y límites;
-separa método correcto del **objetivo RSS de métricas incumplido**. Retirada de
+separa método correcto del **objetivo anterior de 20 MiB incumplido**; la posterior
+aceptación de 30 MiB está documentada sin alterar esa evidencia. Retirada de
 exploratorias a la papelera completada, conservando evidencia y tests críticos.
 Después se repitieron en serie ambas suites (**1.184 + 269**, cero fallos,
 3 + 2 ignorados), los **28 controles Python** y los **2 tests de opt-in**: todos
 aprobados. Logs definitivos `16-*` a `21-*` en el mismo directorio del gate.
 
 Esta entrega completa los bloques autónomos descritos, no todas las verificaciones
-originales de fase 4. Continúan pendientes: decidir tratamiento del objetivo de
-métricas incumplido y aprobar presupuestos; latencia contacto→pantalla con
+originales de fase 4. El nuevo objetivo de Métricas ya queda aprobado y cumplido
+en el escenario observado. Continúan pendientes: aprobar los demás presupuestos;
+latencia contacto→pantalla con
 instrumentación externa; trazado exacto de wakeups (sin trazador disponible ni IDs
 de tracepoints legibles en la comprobación actual, sin instalar o cambiar kernel);
 audio/multimedia/OBS con servicios reales autorizados; los fallos originales

@@ -447,10 +447,14 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
   configuraciones de 32/256/1.000 identidades y medios planos/bandas; cinco fallos
   Server/cliente/plugin y reader de métricas retenido integrado con backend falso.
 - **Métricas con GPU real:** tres ciclos autorizados de procfs/NVML, disponibilidad
-  CPU/RAM/GPU/VRAM válida. **Objetivo de 20 MiB RSS NO CUMPLIDO:** plugin observado
+  CPU/RAM/GPU/VRAM válida. Plugin observado
   28,496–28,855 MiB con 32 visuales; PSS 23,877–24,236 MiB. El plugin se retira sin
-  demanda. Medirlo no autoriza optimizar ni rebajar el objetivo por inferencia.
-- **Sin cerrar:** tratamiento del objetivo incumplido y aprobación de presupuestos;
+  demanda. No cumplió el objetivo anterior de 20 MiB RSS. **Decisión del usuario
+  (2026-10-23): nuevo objetivo ≤30 MiB RSS del proceso del plugin y descendientes**;
+  el escenario ya medido queda dentro del presupuesto aprobado, sin optimización
+  ni nueva captura. El proceso de medición usa ese criterio compartido y conserva
+  resultados históricos; no certifica máximos absolutos ni otras GPU/drivers.
+- **Sin cerrar:** aprobación de los demás presupuestos propuestos;
   latencia física completa, wakeups exactos, otros escenarios de hardware y
   representatividad, audio/multimedia/OBS con servicios reales autorizados. El
   escritorio se usó realmente, pero no se midió CPU del compositor ni memoria GPU.
@@ -463,7 +467,8 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
   actual ni constituyen por sí mismos cuellos de botella demostrados.
 
 - Primero, un perfil reproducible; los presupuestos se fijan tras la primera
-  medición. Se mantiene el objetivo de 20 MiB para métricas.
+  medición. Métricas tiene un objetivo aprobado de **30 MiB RSS**, vigente para
+  nuevas evaluaciones reales y sintéticas; no corresponde al runtime ni al editor.
 - Escenarios por separado: runtime con helper y sin editor; editor con foco, sin foco
   y cerrado; 0, 1 o N plugins demandados.
 - Qué medir: RSS junto con PSS o memoria privada; reposo y pico; CPU y despertares por
