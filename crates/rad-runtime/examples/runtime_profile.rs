@@ -342,6 +342,24 @@ fn drain(socket: &mut UnixStream) {
     }
 }
 
+fn monotonic_ns() -> u64 {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime writes one valid timespec; CLOCK_MONOTONIC is fixed.
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) },
+        0
+    );
+    u64::try_from(time.tv_sec)
+        .unwrap()
+        .checked_mul(1_000_000_000)
+        .unwrap()
+        .checked_add(u64::try_from(time.tv_nsec).unwrap())
+        .unwrap()
+}
+
 fn main() {
     let invocation = std::env::args().next().unwrap();
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -429,11 +447,15 @@ fn main() {
                     turns = Turns::default();
                     phase_started = Instant::now();
                     phase = Some(name);
-                    emit(json!({"event":"phase_begin","phase":name}));
+                    emit(
+                        json!({"event":"phase_begin","phase":name,"at_monotonic_ns":monotonic_ns()}),
+                    );
                 }
                 Transition::End => {
                     let name = phase.take().expect("an active measurement phase");
-                    emit(json!({"event":"phase_end","phase":name}));
+                    emit(
+                        json!({"event":"phase_end","phase":name,"at_monotonic_ns":monotonic_ns()}),
+                    );
                     emit(
                         json!({"event":"turn_summary","phase":name,"count":turns.count,
                         "total_ns":turns.total,"max_ns":turns.maximum,

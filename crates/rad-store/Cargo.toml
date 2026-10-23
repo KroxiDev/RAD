@@ -14,3 +14,6 @@ libc = "=0.2.190"
 
 [dev-dependencies]
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
+
+[features]
+fixture-tests = []

@@ -72,6 +72,88 @@ pub struct StorageWorker {
     thread: JoinHandle<()>,
 }
 struct WakeOnExit(Arc<mio::Waker>);
+
+/// Explicit per-test ownership; never selected from an inherited environment.
+#[cfg(all(test, feature = "fixture-tests"))]
+pub(crate) mod fixture {
+    use super::*;
+    use std::{
+        cell::RefCell,
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
+
+    #[derive(Clone, Copy)]
+    pub(crate) enum Fault {
+        UncertainReturn,
+        LostAfterCommit,
+    }
+    pub(crate) struct Hook {
+        pub fault: Fault,
+        pub commits: Arc<AtomicUsize>,
+        pub entered: SyncSender<CommitOutcome>,
+        pub release: Receiver<()>,
+        pub ended: SyncSender<()>,
+        pub used: bool,
+    }
+    thread_local! { static NEXT: RefCell<Option<Hook>> = const { RefCell::new(None) }; }
+    pub(crate) struct Control {
+        pub entered: Receiver<CommitOutcome>,
+        pub ended: Receiver<()>,
+        pub commits: Arc<AtomicUsize>,
+        release: Option<SyncSender<()>>,
+    }
+    impl Control {
+        pub fn install(fault: Fault) -> Self {
+            let (entered, received) = mpsc::sync_channel(1);
+            let (release, permit) = mpsc::sync_channel(1);
+            let (ended, stopped) = mpsc::sync_channel(1);
+            let commits = Arc::new(AtomicUsize::new(0));
+            NEXT.with(|next| {
+                assert!(
+                    next.borrow().is_none(),
+                    "one explicit worker fixture per spawn"
+                );
+                *next.borrow_mut() = Some(Hook {
+                    fault,
+                    commits: commits.clone(),
+                    entered,
+                    release: permit,
+                    ended,
+                    used: false,
+                });
+            });
+            Self {
+                entered: received,
+                ended: stopped,
+                commits,
+                release: Some(release),
+            }
+        }
+        pub fn release(&mut self) {
+            if let Some(release) = self.release.take() {
+                let _ = release.try_send(());
+            }
+        }
+        pub fn count(&self) -> usize {
+            self.commits.load(Ordering::Acquire)
+        }
+        pub fn resources_dropped(&self) {
+            self.ended.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+    }
+    impl Drop for Control {
+        fn drop(&mut self) {
+            self.release();
+            NEXT.with(|next| {
+                next.borrow_mut().take();
+            });
+        }
+    }
+    pub(crate) fn take() -> Option<Hook> {
+        NEXT.with(|next| next.borrow_mut().take())
+    }
+}
 impl Drop for WakeOnExit {
     fn drop(&mut self) {
         let _ = self.0.wake();
@@ -100,6 +182,8 @@ impl StorageWorker {
         mut transfers: Option<Transfers>,
         wake: Arc<mio::Waker>,
     ) -> Result<Self, WorkerError> {
+        #[cfg(all(test, feature = "fixture-tests"))]
+        let mut fixture = fixture::take();
         let metadata = transfers.as_ref().map(Transfers::metadata);
         let (sender, commands) = mpsc::sync_channel::<(JobId, Job)>(1);
         let (completed, receiver) = mpsc::sync_channel(1);
@@ -110,6 +194,19 @@ impl StorageWorker {
                 let mut uncertain_media: Option<String> = None;
                 let mut uncertain_collection = false;
                 while let Ok((id, job)) = commands.recv() {
+                    #[cfg(all(test, feature = "fixture-tests"))]
+                    let is_commit = matches!(&job, Job::Commit(_));
+                    #[cfg(all(test, feature = "fixture-tests"))]
+                    if is_commit
+                        && fixture.as_ref().is_some_and(|hook| {
+                            !hook.used && matches!(hook.fault, fixture::Fault::UncertainReturn)
+                        })
+                    {
+                        store
+                            .as_mut()
+                            .expect("Store fixture requires its real Store owner")
+                            .fixture_fail_next_commit_return();
+                    }
                     let result = match job {
                         Job::Commit(candidate) => ResultValue::Commit(match store.as_mut() {
                             Some(store) => store.commit(&candidate),
@@ -249,6 +346,27 @@ impl StorageWorker {
                             result
                         }
                     };
+                    #[cfg(all(test, feature = "fixture-tests"))]
+                    if let Some(fixture) = &mut fixture
+                        && is_commit
+                    {
+                        fixture
+                            .commits
+                            .fetch_add(1, std::sync::atomic::Ordering::Release);
+                        if !fixture.used {
+                            fixture.used = true;
+                            if let ResultValue::Commit(outcome) = &result {
+                                let _ = fixture.entered.try_send(*outcome);
+                            }
+                            // A panic/drop of the controller also releases this wait.
+                            let _ = fixture
+                                .release
+                                .recv_timeout(std::time::Duration::from_secs(5));
+                            if matches!(fixture.fault, fixture::Fault::LostAfterCommit) {
+                                break;
+                            }
+                        }
+                    }
                     let metadata = transfers.as_ref().map(Transfers::metadata);
                     let released = transfers
                         .as_mut()
@@ -266,6 +384,12 @@ impl StorageWorker {
                         break;
                     }
                     let _ = wake.wake();
+                }
+                #[cfg(all(test, feature = "fixture-tests"))]
+                if let Some(fixture) = fixture {
+                    drop(store);
+                    drop(transfers);
+                    let _ = fixture.ended.try_send(());
                 }
             })
             .map_err(|_| WorkerError::Unavailable)?;

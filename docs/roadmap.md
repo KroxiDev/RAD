@@ -454,12 +454,22 @@ UX8. Con la fase 3: UX5. UX7 y la barra de plugins de UX6 se hicieron en la fase
   el escenario ya medido queda dentro del presupuesto aprobado, sin optimización
   ni nueva captura. El proceso de medición usa ese criterio compartido y conserva
   resultados históricos; no certifica máximos absolutos ni otras GPU/drivers.
+- **Fallos y servicios (2026-10-23):** [informe](performance-services.md): 3×5 fallos
+  compuestos Server/Transport/cliente tipado aprobados, con downloader retenido,
+  Host sin lectura, conversor oficial retenido, Store incierto y worker perdido.
+  Audio y multimedia reales solo lectura: tres ciclos por plugin, 1/32 visuales,
+  disponibilidad current válida muestreada y retirada sin procesos residuales;
+  picos RSS del árbol ≤8,148/8,168 MiB en estos perfiles. Sin acciones personales.
+- **Wakeups exactos:** calibración kernel real de diez eventos seleccionados
+  aprobada, sin herramientas instaladas ni cambios persistentes. El intento
+  0/1/4 runtime/helper/plugins no inició captura por vencimiento de autenticación
+  local; permanece **NO_VERIFICADO**, no es un resultado de cero wakeups.
 - **Sin cerrar:** aprobación de los demás presupuestos propuestos;
-  latencia física completa, wakeups exactos, otros escenarios de hardware y
-  representatividad, audio/multimedia/OBS con servicios reales autorizados. El
+  latencia física completa, wakeups del perfil runtime, otros escenarios de hardware y
+  representatividad y OBS con servicio real. El
   escritorio se usó realmente, pero no se midió CPU del compositor ni memoria GPU.
-  Downloader/conversor retenidos y Store incierto conservan el alcance anterior;
-  no certifican toda la composición Server/GUI ni fallos reales de drivers.
+  Los fallos nuevos componen Server, no GUI ni fallos físicos de disco/drivers.
+  **OBS real no se preparó ni consultó:** detenerse ahí y coordinar con el usuario.
 - **Frontera física:** el ensayo anterior tuvo autorización específica; futuras
   pruebas requieren autorización y control exclusivo, sin inferir permiso para
   sensores, aplicaciones o configuraciones personales.

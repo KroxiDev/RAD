@@ -6,6 +6,10 @@ expresamente consultas temporales de CPU/RAM/GPU mediante procfs/NVML, solo lect
 UX permanece pospuesta. Esta entrega mide: no cambia contratos, límites,
 dependencias, comportamiento de producto ni diseño de interfaz.
 
+La [continuación posterior](performance-services.md) registra los fallos compuestos
+restantes, contadores del kernel y lecturas de audio/multimedia reales. El estado
+de cierre al final de este informe es histórico de esta entrega, no de la posterior.
+
 ## Aislamiento y método
 
 - ROOT es el único operador del XL y escritorio. Preflight inmediato por apertura,

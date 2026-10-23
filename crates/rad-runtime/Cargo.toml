@@ -28,7 +28,7 @@ rad-package = { path = "../rad-package" }
 [dev-dependencies]
 rad-client = { path = "../rad-client" }
 [features]
-fixture-tests = ["rad-plugin-host/fixture-tests", "rad-plugin-manager/fixture-tests"]
+fixture-tests = ["rad-plugin-host/fixture-tests", "rad-plugin-manager/fixture-tests", "rad-store/fixture-tests"]
 [[test]]
 name = "native"
 path = "tests/native.rs"

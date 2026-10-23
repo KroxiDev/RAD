@@ -72,7 +72,7 @@ pub struct Store {
     connection: Connection,
     uncertain: bool,
     pending: Option<Pending>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "fixture-tests"))]
     fail_return: bool,
 }
 
@@ -80,6 +80,12 @@ pub(crate) fn digest(bytes: &[u8]) -> Vec<u8> {
     Sha256::digest(bytes).to_vec()
 }
 impl Store {
+    /// Test fixture only: lose the return classification after one real changed commit.
+    #[cfg(feature = "fixture-tests")]
+    #[doc(hidden)]
+    pub fn fixture_fail_next_commit_return(&mut self) {
+        self.fail_return = true;
+    }
     pub fn create(path: &Path, initial: &Candidate) -> Result<Self, StoreError> {
         Self::create_with_media(path, initial, &[])
     }
@@ -148,7 +154,7 @@ impl Store {
             connection,
             uncertain: false,
             pending: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "fixture-tests"))]
             fail_return: false,
         })
     }
@@ -172,7 +178,7 @@ impl Store {
             connection,
             uncertain: false,
             pending: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "fixture-tests"))]
             fail_return: false,
         };
         store.load()?;
@@ -236,7 +242,7 @@ impl Store {
             Err(error) => return CommitOutcome::NotApplied(error),
         };
         let result = commit::apply(&mut self.connection, candidate, source);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "fixture-tests"))]
         let result =
             if self.fail_return && matches!(result, CommitOutcome::Applied { changed: true, .. }) {
                 self.fail_return = false;

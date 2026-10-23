@@ -414,8 +414,6 @@ mod launcher_loss_tests {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
-    /// The launcher adapter admits one live helper per process, and tests share a process.
-    static ONE_HELPER: std::sync::Mutex<()> = std::sync::Mutex::new(());
     struct Fixture {
         _helper: std::sync::MutexGuard<'static, ()>,
         _directory: Directory,
@@ -427,7 +425,7 @@ mod launcher_loss_tests {
     /// A real helper under a private environment, attached to `transport`; `other` is a
     /// second transport the helper's descriptor is not registered with.
     fn fixture(name: &str) -> Fixture {
-        let helper = ONE_HELPER
+        let helper = crate::server::FIXTURE_RUNTIME
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let directory = Directory(

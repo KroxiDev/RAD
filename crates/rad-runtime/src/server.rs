@@ -5,6 +5,13 @@ mod contained_tests;
 mod credentials;
 #[cfg(test)]
 mod events_tests;
+#[cfg(all(test, feature = "fixture-tests"))]
+mod fault_tests;
+// Launcher fixtures share one process-wide owner; keep the seam available to all
+// unit tests even when optional fixture modules are not compiled.
+#[cfg(test)]
+#[cfg_attr(not(feature = "fixture-tests"), allow(dead_code))]
+pub(crate) static FIXTURE_RUNTIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]
 mod machine_tests;
 mod options;
@@ -638,6 +645,27 @@ impl Server {
         &mut self,
         launcher: rad_launcher::Launcher,
     ) -> Result<(), RuntimeError> {
+        self.attach_launcher_with_download(launcher, |source, cancel, progress| {
+            let source = rad_plugin_manager::GithubSource::parse(source)?;
+            rad_plugin_manager::Downloader::new().download(
+                &source,
+                rad_plugin_host::TARGET,
+                cancel.clone(),
+                progress.clone(),
+            )
+        })
+    }
+    fn attach_launcher_with_download(
+        &mut self,
+        launcher: rad_launcher::Launcher,
+        download: impl Fn(
+            &str,
+            &rad_plugin_manager::Cancellation,
+            &rad_plugin_manager::Progress,
+        ) -> Result<Vec<u8>, rad_plugin_manager::Error>
+        + Send
+        + 'static,
+    ) -> Result<(), RuntimeError> {
         if self.native.is_some() {
             return Err(RuntimeError::Protocol);
         }
@@ -652,15 +680,7 @@ impl Server {
         self.plugin_admin = Some(crate::plugin_admin::Admin::new(
             self.plugin_root.clone(),
             notify.clone(),
-            Box::new(|source, cancel, progress| {
-                let source = rad_plugin_manager::GithubSource::parse(source)?;
-                rad_plugin_manager::Downloader::new().download(
-                    &source,
-                    rad_plugin_host::TARGET,
-                    cancel.clone(),
-                    progress.clone(),
-                )
-            }),
+            Box::new(download),
         ));
         self.plugin_visuals = Some(crate::plugin_visuals::Visuals::new(notify));
         self.protocol = Protocol::with_capabilities(
@@ -1348,8 +1368,7 @@ mod turn_invariant_tests {
         std::thread::JoinHandle<()>,
     ) {
         // One launcher helper may live per process: worlds take turns.
-        static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let turn = TURN
+        let turn = FIXTURE_RUNTIME
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let root =

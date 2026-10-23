@@ -13,6 +13,9 @@ El [ensayo físico posterior](performance-physical.md) usa un XL real con autori
 independiente y documenta el límite reporte consumido → proyección, no píxeles.
 La [continuación con escritorio real](performance-desktop.md) mide editor/XL y
 métricas con GPU reales, además de cargas y fallos integrados adicionales.
+La [siguiente continuación](performance-services.md) amplía los fallos compuestos
+y documenta contadores del kernel y audio/multimedia de solo lectura, con parada
+explícita antes de OBS real. Cada informe mantiene sus límites y resultados propios.
 
 El arnés usa exclusivamente procesos nuevos propios y datos privados nuevos bajo
 `target/performance/`. No abre el Stream Deck ni ventanas, no usa systemd personal,
