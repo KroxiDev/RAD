@@ -154,8 +154,8 @@ Pruebas de referencia:
 
 Son tres distinciones que evitan inferir efectos a partir de lo mostrado:
 
-- **Reposo no es apagado de RAD.** La acción nativa `Sleep` («Suspender Stream
-  Deck» en la interfaz) activa el mismo reposo que la inactividad, incluso con
+- **Reposo no es apagado de RAD.** La acción nativa `Sleep` («Suspender» en la
+  interfaz) activa el mismo reposo que la inactividad, incluso con
   reposo automático desactivado. Conserva carpeta y brillo configurado; no
   suspende el equipo ni cancela los pasos restantes de su plan.
   La presión que despierta se consume hasta soltar, sin ejecutar su botón.

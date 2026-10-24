@@ -212,7 +212,7 @@ impl Panel {
             return;
         }
         self.clear();
-        let Some((plugin, _)) = type_key.split_once([':', '#']) else {
+        let Some(plugin) = crate::plugins::plugin_id(type_key) else {
             return;
         };
         if slots.len() > 32 || self.generation == u64::MAX {

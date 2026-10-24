@@ -10,12 +10,10 @@ const ROW_HEIGHT: f32 = 30.;
 const HEADER_HEIGHT: f32 = 24.;
 
 /// A group of actions in the list.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Category {
-    Navigation,
-    Timing,
-    Device,
-    Plugins,
+    Native,
+    Plugin(String),
     Applications,
 }
 
@@ -27,14 +25,24 @@ enum Badge {
 }
 
 /// Category title with a chevron: pointing down while its rows show, right while folded.
-fn header(ui: &mut egui::Ui, look: &Look, title: &str, open: bool) -> egui::Response {
+fn header(
+    ui: &mut egui::Ui,
+    look: &Look,
+    title: &str,
+    open: bool,
+    foldable: bool,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), HEADER_HEIGHT),
-        egui::Sense::click(),
+        if foldable {
+            egui::Sense::click()
+        } else {
+            egui::Sense::hover()
+        },
     );
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        if ui.is_enabled() && response.hovered() {
+        if foldable && ui.is_enabled() && response.hovered() {
             painter.rect_filled(rect, CornerRadius::same(RADIUS), look.hover);
         }
         painter.text(
@@ -106,22 +114,45 @@ fn row(ui: &mut egui::Ui, look: &Look, badge: Badge, name: &str, drag: Drag) -> 
 }
 
 impl App {
+    fn matches_query(&self, label: &str) -> bool {
+        label
+            .to_lowercase()
+            .contains(&self.catalog.query.trim().to_lowercase())
+    }
+    fn native_matches(&self, label: &str) -> bool {
+        self.matches_query(label) || self.matches_query(tr(self.es, "RAD"))
+    }
+    fn action_matches(&self, action: &NewAction) -> bool {
+        let label = self.action_name(action);
+        match action {
+            NewAction::Plugin(entry) => {
+                self.matches_query(&label)
+                    || crate::plugins::plugin_id(&entry.type_key)
+                        .is_some_and(|id| self.matches_query(&self.plugin_group_name(id)))
+            }
+            NewAction::Launcher(_) => self.matches_query(&label),
+            _ => self.native_matches(&label),
+        }
+    }
     /// Draws a category title and folds or unfolds it on click. Returns whether it is open.
     fn category(&mut self, ui: &mut egui::Ui, look: &Look, category: Category) -> bool {
-        let title = match category {
-            Category::Navigation => tr(self.es, "Navigation"),
-            Category::Timing => tr(self.es, "Timing"),
-            Category::Device => tr(self.es, "Stream Deck"),
-            Category::Plugins => tr(self.es, "Plugins"),
-            Category::Applications => tr(self.es, "Applications"),
+        let title = match &category {
+            Category::Native => tr(self.es, "RAD").to_owned(),
+            Category::Plugin(id) => self.plugin_group_name(id),
+            Category::Applications => tr(self.es, "Applications").to_owned(),
         };
-        let open = !self.folded.contains(&category);
-        let hint = if open {
-            tr(self.es, "Hide")
-        } else {
-            tr(self.es, "Show")
-        };
-        if header(ui, look, title, open).on_hover_text(hint).clicked() {
+        let searching = !self.catalog.query.trim().is_empty();
+        let open = !self.folded.contains(&category) || searching;
+        let response = header(ui, look, &title, open, !searching);
+        if !searching
+            && response
+                .on_hover_text(if open {
+                    tr(self.es, "Hide")
+                } else {
+                    tr(self.es, "Show")
+                })
+                .clicked()
+        {
             if open {
                 self.folded.insert(category);
             } else {
@@ -132,7 +163,7 @@ impl App {
     }
     pub(super) fn actions(&mut self, ui: &mut egui::Ui, look: &Look) {
         ui.label(egui::RichText::new(tr(self.es, "Actions")).heading());
-        let hint = tr(self.es, "Search applications");
+        let hint = tr(self.es, "Search actions");
         let search = ui.add(
             look.field(&mut self.catalog.query, hint)
                 .margin(egui::Margin {
@@ -150,6 +181,9 @@ impl App {
             look.muted,
         );
         if search.changed() {
+            self.catalog.entries.clear();
+            self.catalog.next = None;
+            self.catalog_more = false;
             self.catalog_due = Some(self.now_ms() + SEARCH_DEBOUNCE_MS);
             if let Some(wake) = &self.search_wake {
                 wake.schedule(std::time::Duration::from_millis(SEARCH_DEBOUNCE_MS));
@@ -160,16 +194,29 @@ impl App {
             .auto_shrink(false)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 2.;
-                if self.category(ui, look, Category::Navigation) {
-                    self.navigation_rows(ui, look);
-                }
-                ui.add_space(6.);
-                if self.category(ui, look, Category::Timing) {
-                    self.list_action(ui, look, Badge::Glyph("⏱"), NewAction::Wait);
-                }
-                ui.add_space(6.);
-                if self.category(ui, look, Category::Device) {
-                    self.list_action(ui, look, Badge::Icon(Icon::Moon), NewAction::Sleep);
+                // None is the folder row; all other native entries become plan actions.
+                let natives: Vec<_> = [
+                    (Badge::Glyph("🗀"), None),
+                    (Badge::Glyph("⏱"), Some(NewAction::Wait)),
+                    (Badge::Icon(Icon::Moon), Some(NewAction::Sleep)),
+                    (Badge::Icon(Icon::Apps), Some(NewAction::OpenApp)),
+                ]
+                .into_iter()
+                .filter(|(_, action)| {
+                    let label = action
+                        .as_ref()
+                        .map(|action| self.action_name(action))
+                        .unwrap_or_else(|| tr(self.es, "Folder").to_owned());
+                    self.native_matches(&label)
+                })
+                .collect();
+                if !natives.is_empty() && self.category(ui, look, Category::Native) {
+                    for (badge, action) in natives {
+                        match action {
+                            Some(action) => self.list_action(ui, look, badge, action),
+                            None => self.navigation_rows(ui, look, badge),
+                        }
+                    }
                 }
                 self.plugin_rows(ui, look);
                 ui.add_space(6.);
@@ -178,58 +225,77 @@ impl App {
                 }
             });
     }
-    /// The actions installed plugins bring, under a category of their own that only shows
-    /// when there is something in it.
-    fn plugin_rows(&mut self, ui: &mut egui::Ui, look: &Look) {
-        let entries: Vec<_> = self
-            .plugins
-            .catalog
-            .iter()
-            .filter(|e| !e.visual && e.ready)
+    fn plugin_group_name(&self, id: &str) -> String {
+        let item = self.plugins.status["items"]
+            .as_array()
+            .and_then(|items| items.iter().find(|item| item["id"] == id))
             .cloned()
-            .collect();
-        if entries.is_empty() || !self.connected {
+            .unwrap_or_else(|| serde_json::json!({"id": id}));
+        super::plugins::plugin_name(&item, self.es)
+    }
+    /// Each installed plugin owns a separately collapsible group.
+    fn plugin_rows(&mut self, ui: &mut egui::Ui, look: &Look) {
+        if !self.connected {
             return;
         }
-        ui.add_space(6.);
-        if !self.category(ui, look, Category::Plugins) {
-            return;
+        let mut groups = std::collections::BTreeMap::<String, Vec<_>>::new();
+        for entry in self.plugins.catalog.iter().filter(|entry| {
+            entry.ready && self.action_matches(&NewAction::Plugin((*entry).clone()))
+        }) {
+            if let Some(id) = crate::plugins::plugin_id(&entry.type_key) {
+                groups.entry(id.to_owned()).or_default().push(entry.clone());
+            }
         }
         // While a plugin form is being opened or saved, another one cannot start.
         let usable = !self.plugins.form_pending && !self.plugins.form_loading;
-        ui.add_enabled_ui(usable, |ui| {
-            for entry in entries {
-                self.list_action(ui, look, Badge::Icon(Icon::Plug), NewAction::Plugin(entry));
+        for (id, entries) in groups {
+            ui.add_space(6.);
+            if self.category(ui, look, Category::Plugin(id)) {
+                ui.add_enabled_ui(usable, |ui| {
+                    for entry in entries {
+                        self.list_action(
+                            ui,
+                            look,
+                            Badge::Icon(Icon::Plug),
+                            NewAction::Plugin(entry),
+                        );
+                    }
+                });
             }
-        });
+        }
     }
     /// A row that puts `action` on a key: dragged there, or double-clicked with one selected.
     fn list_action(&mut self, ui: &mut egui::Ui, look: &Look, badge: Badge, action: NewAction) {
+        if !self.action_matches(&action) {
+            return;
+        }
         let label = self.action_name(&action);
         let drag = Drag::Add {
             action: action.clone(),
             label: label.clone(),
         };
-        let response = row(ui, look, badge, &label, drag);
+        let hint = if matches!(&action, NewAction::Plugin(entry) if entry.visual) {
+            tr(
+                self.es,
+                "Visual — drag onto a key or double-click to change its appearance, not its actions",
+            )
+        } else {
+            tr(
+                self.es,
+                "Drag it onto a key, or double-click to add it to the selected key",
+            )
+        };
+        let response = row(ui, look, badge, &label, drag).on_hover_text(hint);
         if response.double_clicked()
             && let Some(position) = self.selected_slot
         {
             self.place_action(position, &action);
         } else if response.clicked() {
-            self.say(tr(
-                self.es,
-                "Drag it onto a key, or double-click to add it to the selected key",
-            ));
+            self.say(hint);
         }
     }
-    fn navigation_rows(&mut self, ui: &mut egui::Ui, look: &Look) {
-        let folder = row(
-            ui,
-            look,
-            Badge::Glyph("🗀"),
-            tr(self.es, "Folder"),
-            Drag::Folder,
-        );
+    fn navigation_rows(&mut self, ui: &mut egui::Ui, look: &Look, badge: Badge) {
+        let folder = row(ui, look, badge, tr(self.es, "Folder"), Drag::Folder);
         if folder.double_clicked()
             && let (Some(position), None) = (self.selected_slot, self.selected())
         {
@@ -242,7 +308,10 @@ impl App {
         }
     }
     fn application_rows(&mut self, ui: &mut egui::Ui, look: &Look) {
-        if self.catalog.entries.is_empty() {
+        let loading = self.application_catalog_loading(super::launcher::CatalogTarget::Actions);
+        if loading {
+            ui.spinner();
+        } else if self.catalog.entries.is_empty() {
             ui.add_space(4.);
             ui.label(look.muted_text(tr(self.es, "No applications found")));
         }
@@ -254,10 +323,11 @@ impl App {
                 NewAction::Launcher(entry),
             );
         }
-        if self.catalog.next.is_some() {
+        if self.catalog.next.is_some() && !loading {
             ui.add_space(6.);
             if ui.button(tr(self.es, "More…")).clicked() {
-                self.send(self.catalog.request(true));
+                self.catalog_more = true;
+                self.catalog_due = Some(0);
             }
         }
     }

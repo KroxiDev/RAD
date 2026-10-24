@@ -16,7 +16,7 @@ combina acciones. El runtime sigue funcionando al cerrar el editor.
 
 - Distribución de 32 teclas, carpetas, edición por arrastre y deshacer/rehacer.
 - Hasta 20 acciones por botón, ejecución secuencial o paralela y acciones nativas
-  Esperar y Suspender Stream Deck.
+  Esperar y Suspender.
 - Apertura de aplicaciones desde el catálogo del escritorio.
 - Texto propio e imágenes PNG/JPEG estáticas.
 - Interfaz en inglés y español; ajustes de brillo, reposo y umbral de pulsación.

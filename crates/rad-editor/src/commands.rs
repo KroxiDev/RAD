@@ -14,6 +14,8 @@ pub struct KeySave<'a> {
     pub order: &'a [usize],
     /// Wait actions of the key, by identifier, with their durations in milliseconds.
     pub waits: &'a [(String, u64)],
+    /// Launcher actions and the applications selected for them.
+    pub launchers: &'a [(String, String)],
 }
 pub fn save_button(save: &KeySave) -> Request {
     use rad_api::{Appearance, Change, FieldEdit, Gesture, Mode, TextPosition};
@@ -56,6 +58,11 @@ pub fn save_button(save: &KeySave) -> Request {
             }),
         ),
     ];
+    changes.extend(
+        save.launchers
+            .iter()
+            .map(|(action, entry)| set(action, FieldEdit::DesktopEntry(entry.clone()))),
+    );
     changes.extend(
         save.waits
             .iter()

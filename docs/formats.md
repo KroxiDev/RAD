@@ -76,7 +76,7 @@ compacto; el lector no exige el orden de sus propiedades ni ausencia de espacios
 | Acción externa | `{"external":{"type_key":{"plugin":"id","name":"tipo"},"parameters":"00ff"}}` |
 | Entrar en carpeta | `{"enter_folder":{"installation":"77","serial":"2"}}` |
 | Volver | `"return"` |
-| Suspender Stream Deck | `"sleep"`; activa el reposo existente, sin parámetros ni ajustes nuevos. |
+| Suspender | `"sleep"`; activa el reposo existente, sin parámetros ni ajustes nuevos. |
 | Esperar | `{"wait":"1000"}`; milisegundos de 0 a 600000. |
 
 Los decimales en cadenas son ASCII, sin signo, espacios ni ceros iniciales salvo

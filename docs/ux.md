@@ -77,8 +77,18 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
 - **Plugins.** Los oficiales se instalan desde una lista, con un botón; uno de
   terceros, pegando su enlace de GitHub. Actualizar usa el origen registrado. Mientras
   un plugin funcione, no se muestran mensajes.
-- **Suspender Stream Deck.** Acción nativa con media luna en la categoría Stream
-  Deck. Activa inmediatamente el mismo reposo configurado por inactividad, incluso
+- **Paleta de acciones.** Las nativas se reúnen en «RAD»: Carpeta, Esperar,
+  Suspender y Abrir aplicación. «Aplicaciones» conserva los accesos directos y
+  empieza colapsado. Cada plugin tiene su propio grupo con sus acciones y visuales;
+  arrastrar un visual configura la apariencia, no agrega un paso al plan. La
+  búsqueda general dice «Buscar acciones» y filtra la paleta. Abrir aplicación
+  ofrece un desplegable con buscador en el inspector de la tecla; solo se guarda
+  la acción al elegir la aplicación, sin elegir ninguna por defecto. En una
+  posición vacía, la tecla se crea recién al elegir, con el nombre de la aplicación y
+  su ícono cuando está disponible; cancelar no deja una tecla vacía. Los cambios de aplicación de un
+  lanzador existente se guardan con «Guardar», también desde «Avanzado».
+- **Suspender.** Acción nativa con media luna en el grupo RAD. Activa
+  inmediatamente el mismo reposo configurado por inactividad, incluso
   cuando el reposo automático está desactivado. Cualquier tecla despierta sin
   ejecutar su acción; conserva carpeta y brillo. La luna predeterminada no
   reemplaza una imagen propia ni un visual de plugin.

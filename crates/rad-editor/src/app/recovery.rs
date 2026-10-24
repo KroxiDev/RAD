@@ -28,6 +28,8 @@ impl App {
         self.result_due = false;
         self.inspect_needed = false;
         self.catalog_due = None;
+        self.catalog_read = None;
+        self.app_picker = Default::default();
         self.machine_due = false;
         self.navigation.discard();
         self.say("");

@@ -338,7 +338,10 @@ fn version(v: &Value) -> String {
 }
 /// What the list and the detail call a plugin: an official one by its name, any other by
 /// the name it declares or the last part of its ID.
-fn plugin_name(item: &Value, es: impl Into<crate::preferences::Language> + Copy) -> String {
+pub(super) fn plugin_name(
+    item: &Value,
+    es: impl Into<crate::preferences::Language> + Copy,
+) -> String {
     let id = item["id"].as_str().unwrap_or("");
     if let Some(official) = crate::official::find(id) {
         return tr(es, official.name).to_owned();

@@ -12,6 +12,7 @@ fn save_is_one_atomic_edit_with_current_action_order_and_wait_durations() {
         gesture: "long_press",
         order: &[1, 0],
         waits: &[("a9".into(), 1500)],
+        launchers: &[("a8".into(), "browser.desktop".into())],
     });
     assert_eq!(request.operation().as_str(), "edit");
     assert_eq!(
@@ -21,6 +22,7 @@ fn save_is_one_atomic_edit_with_current_action_order_and_wait_durations() {
             {"kind":"set","id":"b7","field":"appearance","value":{"text":"Go","image":null}},
             {"kind":"set","id":"b7","field":"mode","value":"parallel"},
             {"kind":"set","id":"b7","field":"gesture","value":"long_press"},
+            {"kind":"set","id":"a8","field":"desktop_entry","value":"browser.desktop"},
             {"kind":"set","id":"a9","field":"milliseconds","value":1500},
             {"kind":"order","id":"b7","indices":[1,0]}
         ]})
@@ -39,6 +41,7 @@ fn save_names_the_text_position_only_when_one_was_chosen() {
             gesture: "press",
             order: &[],
             waits: &[],
+            launchers: &[],
         })
         .arguments()["changes"][1]["value"]
             .clone()

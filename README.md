@@ -16,7 +16,7 @@ The runtime keeps working when the editor is closed.
 
 - A 32-key layout, folders, drag-and-drop editing and undo/redo.
 - Up to 20 actions per button, sequential or parallel execution, and built-in Wait
-  and Stream Deck Sleep actions.
+  and Sleep actions.
 - Application launching from your desktop's application catalog.
 - Custom labels and static PNG/JPEG images.
 - English and Spanish UI; brightness, idle and press-threshold settings.

@@ -94,7 +94,7 @@ _No confundir con_: acción, pulsación.
 
 **Reposo del deck**:
 Estado del Stream Deck con las pantallas apagadas que conserva la configuración y
-la carpeta activa. La acción nativa que lo activa se llama «Suspender Stream Deck»
+la carpeta activa. La acción nativa que lo activa se llama «Suspender»
 en la interfaz.
 _No confundir con_: suspensión del equipo, cierre de RAD.
 

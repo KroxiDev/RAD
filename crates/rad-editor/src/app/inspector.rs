@@ -40,6 +40,9 @@ impl App {
         }
     }
     fn empty_key(&mut self, ui: &mut egui::Ui, look: &Look, position: usize) {
+        if self.pending_application_row(ui, look) {
+            return;
+        }
         ui.label(
             egui::RichText::new(format!("{} {}", tr(self.es, "Empty key"), position + 1)).heading(),
         );
@@ -74,6 +77,7 @@ impl App {
                 || published.gesture != draft.gesture
                 || published.order != draft.order
                 || published.waits != draft.waits
+                || published.entries != draft.entries
         })
     }
     fn save(&mut self) {
@@ -100,6 +104,14 @@ impl App {
         let text_position = (published_position.as_deref()
             != Some(self.draft.text_position.as_str()))
         .then_some(self.draft.text_position.as_str());
+        let launchers: Vec<_> = self
+            .inspection
+            .iter()
+            .flat_map(|i| &i.actions)
+            .zip(&self.draft.entries)
+            .filter(|(action, _)| action["fields"]["type"] == "launcher")
+            .map(|(action, entry)| (string(&action["id"]), entry.clone()))
+            .collect();
         let request = commands::save_button(&commands::KeySave {
             id: &self.draft.id,
             name: &self.draft.name,
@@ -110,6 +122,7 @@ impl App {
             gesture: &self.draft.gesture,
             order: &self.draft.order,
             waits: &waits,
+            launchers: &launchers,
         });
         self.send(request);
     }
@@ -199,7 +212,7 @@ impl App {
         }
         ui.add_space(6.);
         ui.label(look.section(tr(self.es, "Actions")));
-        if actions.is_empty() {
+        if actions.is_empty() && !self.app_picker.adds_to(id) {
             ui.label(look.muted_text(tr(
                 self.es,
                 "Nothing yet — drag an action onto this key from the right",
@@ -210,6 +223,7 @@ impl App {
             let index = self.draft.order[display_index];
             self.action_row(ui, look, &actions[index], display_index);
         }
+        self.pending_application_row(ui, look);
         ui.spacing_mut().item_spacing.y = 8.;
         ui.add_space(6.);
         egui::CollapsingHeader::new(look.muted_text(tr(self.es, "Advanced")))
@@ -451,15 +465,14 @@ impl App {
     ) {
         match kind {
             "launcher" => {
-                let entry = string(&action["fields"]["parameters"]["desktop_entry"]);
-                let name = self
-                    .catalog
-                    .entries
-                    .iter()
-                    .find(|e| e.desktop_entry == entry)
-                    .map(|e| e.name.clone())
-                    .unwrap_or_else(|| entry.trim_end_matches(".desktop").to_owned());
-                ui.label(format!("{} {name}", tr(self.es, "Open")));
+                ui.label(tr(self.es, "Open App"));
+                let index = self.draft.order[display_index];
+                let entry = self.draft.entries[index].clone();
+                if let Some(chosen) =
+                    self.application_choice(ui, look, &string(&action["id"]), &entry)
+                {
+                    self.draft.entries[index] = chosen.desktop_entry;
+                }
             }
             "enter_folder" => {
                 ui.label(tr(self.es, "Open this folder"));
@@ -470,7 +483,7 @@ impl App {
             "sleep" => {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(22., 22.), egui::Sense::hover());
                 paint_icon(ui.painter(), rect.center(), Icon::Moon, look.muted);
-                ui.label(tr(self.es, "Sleep Stream Deck")).on_hover_text(tr(
+                ui.label(tr(self.es, "Sleep")).on_hover_text(tr(
                     self.es,
                     "Any key wakes the deck without running its action",
                 ));
@@ -605,16 +618,6 @@ impl App {
                                         .desired_width(180.)
                                         .margin(egui::vec2(6., 3.)),
                                 );
-                                if ui.small_button(tr(self.es, "Apply entry")).clicked() {
-                                    self.send(crate::Request::Edit {
-                                        changes: vec![rad_api::Change::Set {
-                                            id: string(&action["id"]),
-                                            edit: rad_api::FieldEdit::DesktopEntry(
-                                                self.draft.entries[index].clone(),
-                                            ),
-                                        }],
-                                    });
-                                }
                             }
                         });
                         if permission_ui(

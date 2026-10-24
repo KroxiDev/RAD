@@ -17,6 +17,7 @@ mod bar;
 mod credentials;
 mod deck;
 mod inspector;
+mod launcher;
 mod look;
 mod machine;
 mod options;
@@ -39,6 +40,7 @@ const DEFAULT_WAIT_MS: u64 = 1000;
 /// Something from the list that becomes an action on a key.
 #[derive(Clone)]
 enum NewAction {
+    OpenApp,
     Launcher(Entry),
     Wait,
     Sleep,
@@ -177,6 +179,12 @@ pub struct App {
     catalog: crate::catalog::Catalog,
     /// When the application list must be asked again, in milliseconds since start.
     catalog_due: Option<u64>,
+    /// The next palette read advances its current application page.
+    catalog_more: bool,
+    /// Destination and query of the single application-catalog read in flight.
+    catalog_read: Option<launcher::CatalogRead>,
+    /// Application choices, remembered display names and the uncommitted placement.
+    app_picker: launcher::ApplicationPicker,
     /// Action dropped on an empty key: added once the new key is published.
     pending_action: Option<(usize, NewAction)>,
     /// Key that was just sent an application, and that application's desktop entry: the
@@ -295,10 +303,13 @@ impl App {
             global_permissions: Value::Null,
             catalog: Default::default(),
             catalog_due: None,
+            catalog_more: false,
+            catalog_read: None,
+            app_picker: Default::default(),
             pending_action: None,
             icon_candidate: None,
             icon_asked: false,
-            folded: Default::default(),
+            folded: [actions::Category::Applications].into(),
             textures: Default::default(),
             image_attempts: Default::default(),
             plugins: Default::default(),
@@ -391,6 +402,8 @@ impl App {
         self.attempted = true;
         self.transfer_active = false;
         self.pending_action = None;
+        self.catalog_read = None;
+        self.app_picker = Default::default();
         self.icon_candidate = None;
         self.icon_asked = false;
         self.plugins.abandon_pending();
@@ -437,6 +450,7 @@ impl App {
             .map(str::to_owned)
     }
     fn select(&mut self, position: usize, id: Option<String>) {
+        self.app_picker.cancel();
         self.credentials.clear();
         self.plugins.dependency_credentials = None;
         self.plugins.clear_form();
@@ -456,6 +470,7 @@ impl App {
                 if position.is_some() {
                     self.selected_slot = position;
                 } else {
+                    self.app_picker.cancel();
                     self.plugins.clear_form();
                     self.control.select(None);
                     self.inspection = None;
@@ -504,50 +519,72 @@ impl App {
         self.new_name.clear();
     }
     fn add_action(&mut self, button: &str, action: &NewAction) {
-        if let NewAction::Plugin(entry) = action {
-            self.open_plugin_form(
+        match action {
+            NewAction::Launcher(entry) => {
+                self.add_application(button, entry);
+            }
+            NewAction::OpenApp => {
+                if let Some(position) = (0..self.board.as_ref().map_or(0, |b| b.grid.key_count()))
+                    .find(|&p| self.slot_id(p).as_deref() == Some(button))
+                {
+                    self.begin_application_choice(position);
+                }
+            }
+            NewAction::Plugin(entry) => self.open_plugin_form(
                 &entry.type_key,
                 None,
-                crate::plugins::FormTarget::AddAction(button.into()),
-            );
-            return;
-        }
-        let (kind, parameters) = match action {
-            NewAction::Launcher(entry) => {
-                ("launcher", json!({"desktop_entry":entry.desktop_entry}))
+                if entry.visual {
+                    crate::plugins::FormTarget::Visual(button.into())
+                } else {
+                    crate::plugins::FormTarget::AddAction(button.into())
+                },
+            ),
+            NewAction::Wait => self.send(crate::commands::add_action(
+                button,
+                "wait",
+                json!({"milliseconds":DEFAULT_WAIT_MS}),
+            )),
+            NewAction::Sleep => {
+                self.send(crate::commands::add_action(button, "sleep", Value::Null))
             }
-            NewAction::Wait => ("wait", json!({"milliseconds":DEFAULT_WAIT_MS})),
-            NewAction::Sleep => ("sleep", Value::Null),
-            NewAction::Plugin(_) => unreachable!(),
-        };
-        let sent = self.command(Job::Request(crate::commands::add_action(
-            button, kind, parameters,
-        )));
-        if sent && let NewAction::Launcher(entry) = action {
-            self.icon_candidate = Some((button.to_owned(), entry.desktop_entry.clone()));
         }
     }
     /// What the list calls `action`; also the name of a key created just for it.
     fn action_name(&self, action: &NewAction) -> String {
         match action {
+            NewAction::OpenApp => tr(self.es, "Open App").into(),
             NewAction::Launcher(entry) => entry.name.clone(),
             NewAction::Wait => tr(self.es, "Wait").into(),
-            NewAction::Sleep => tr(self.es, "Sleep Stream Deck").into(),
+            NewAction::Sleep => tr(self.es, "Sleep").into(),
             NewAction::Plugin(entry) => entry.label.clone(),
         }
     }
     /// An action lands on a key: added to an existing one, or a key is created for it.
     fn place_action(&mut self, position: usize, action: &NewAction) {
-        if let Some(id) = self.slot_id(position) {
+        if matches!(action, NewAction::OpenApp) {
+            self.begin_application_choice(position);
+        } else if let Some(id) = self.slot_id(position) {
             self.add_action(&id, action);
         } else if let Some(folder) = self.folder() {
-            self.send(Request::CreateButton {
-                folder_id: folder,
-                position,
-                name: self.action_name(action),
-            });
+            self.create_action_button(folder, position, action);
+        }
+    }
+    /// Reused by direct application drops and by a completed Open App choice.
+    fn create_action_button(
+        &mut self,
+        folder: String,
+        position: usize,
+        action: &NewAction,
+    ) -> bool {
+        let sent = self.command(Job::Request(Request::CreateButton {
+            folder_id: folder,
+            position,
+            name: self.action_name(action),
+        }));
+        if sent {
             self.pending_action = Some((position, action.clone()));
         }
+        sent
     }
     fn pump(&mut self, ctx: &egui::Context) {
         if let Some(notices) = &self.notices {
@@ -594,6 +631,7 @@ impl App {
             Polled::Ready(_) | Polled::Pending => {}
         }
         if let Polled::Ready(event) = polled {
+            self.finish_application_catalog(&event.result);
             // Some handlers finish this turn early; keep newly invalidated work runnable.
             ctx.request_repaint();
             self.palette = event.palette;
@@ -801,6 +839,7 @@ impl App {
                         }
                         self.board = Some(board);
                         if changed_folder {
+                            self.app_picker.cancel();
                             self.plugins.clear_form();
                             self.control.select(None);
                             self.selected_slot = None;
@@ -832,14 +871,7 @@ impl App {
                         self.inspection = Some(v);
                     }
                 }
-                Ok(Reply::Response {
-                    operation,
-                    response: r,
-                }) if operation == "launcher_catalog" => {
-                    if let Err(e) = self.catalog.accept(&r.data) {
-                        self.warn(crate::status::describe_failure(&e, self.es));
-                    }
-                }
+                Ok(Reply::Response { operation, .. }) if operation == "launcher_catalog" => {} // Handled by finish_application_catalog.
                 Ok(Reply::Response {
                     operation,
                     response: r,
@@ -1030,6 +1062,7 @@ impl App {
                 normal && next_image.is_some(),
                 normal && self.machine_due,
                 self.recovery_due,
+                normal && self.app_picker.is_due(now),
             ]) {
                 Some(0) => {
                     let force = std::mem::take(&mut self.force);
@@ -1058,9 +1091,7 @@ impl App {
                 }
                 Some(4) => {
                     self.catalog_due = None;
-                    let _ = self
-                        .worker
-                        .submit(Job::Request(self.catalog.request(false)));
+                    self.request_application_catalog(launcher::CatalogTarget::Actions);
                 }
                 Some(5) => {
                     self.poll_plugins();
@@ -1084,6 +1115,9 @@ impl App {
                     self.recovery_due = false;
                     let _ = self.worker.submit(Job::Request(Request::Recovery {}));
                 }
+                Some(9) => {
+                    self.request_application_catalog(launcher::CatalogTarget::Picker);
+                }
                 _ => {}
             }
         }
@@ -1100,6 +1134,7 @@ impl App {
             || self.transfer_active
             || self.plugins.has_work()
             || self.catalog_due.is_some_and(|due| self.now_ms() >= due)
+            || self.app_picker.is_due(self.now_ms())
             || (self.result_due && self.control.result_request().is_some())
     }
     /// Results of the credential and option-list workers; a dead one is replaced, within

@@ -185,6 +185,10 @@ pub struct CatalogEntry {
     pub ready: bool,
     pub gestures: Vec<rad_api::Gesture>,
 }
+/// Owner of an action (`:`) or visual (`#`) type key; native types have no owner.
+pub(crate) fn plugin_id(type_key: &str) -> Option<&str> {
+    type_key.split_once([':', '#']).map(|(id, _)| id)
+}
 /// Physical gestures supported by every action in a button's current plan.
 pub fn plan_gestures(actions: &[Value], catalog: &[CatalogEntry]) -> Vec<rad_api::Gesture> {
     use rad_api::Gesture;
