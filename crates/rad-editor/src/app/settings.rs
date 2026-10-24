@@ -146,7 +146,7 @@ impl App {
                 Section::Automation => {
                     ui.label(look.muted_text(tr(
                         self.es,
-                        "What rad-cli and scripts may do, unless a folder or key says otherwise.",
+                        "What rad-cli and scripts may do, unless a key or action says otherwise.",
                     )));
                     ui.add_space(4.);
                     if permission_ui(ui, &mut self.global_permissions, self.es, false) {

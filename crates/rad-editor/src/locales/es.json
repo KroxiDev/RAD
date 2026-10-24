@@ -302,7 +302,7 @@
   "Waiting for real termination": "Esperando terminación real",
   "What draws this key: you, or a plugin": "Quién dibuja esta tecla: tú o un plugin",
   "What rad-cli and scripts may do with this key": "Qué pueden hacer rad-cli y los scripts con esta tecla",
-  "What rad-cli and scripts may do, unless a folder or key says otherwise.": "Qué pueden hacer rad-cli y los scripts, salvo que una carpeta o tecla diga otra cosa.",
+  "What rad-cli and scripts may do, unless a key or action says otherwise.": "Qué pueden hacer rad-cli y los scripts, salvo que una tecla o una acción diga otra cosa.",
   "Where the text goes on the key": "Dónde va el texto en la tecla",
   "Window": "Ventana",
   "Working…": "Trabajando…",

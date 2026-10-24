@@ -302,7 +302,7 @@
   "Waiting for real termination": "Waiting for real termination",
   "What draws this key: you, or a plugin": "What draws this key: you, or a plugin",
   "What rad-cli and scripts may do with this key": "What rad-cli and scripts may do with this key",
-  "What rad-cli and scripts may do, unless a folder or key says otherwise.": "What rad-cli and scripts may do, unless a folder or key says otherwise.",
+  "What rad-cli and scripts may do, unless a key or action says otherwise.": "What rad-cli and scripts may do, unless a key or action says otherwise.",
   "Where the text goes on the key": "Where the text goes on the key",
   "Window": "Window",
   "Working…": "Working…",
