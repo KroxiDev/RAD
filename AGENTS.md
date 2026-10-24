@@ -9,25 +9,30 @@ del socket local; cada plugin activo tiene su propio proceso.
 
 Entrypoints: `crates/rad-runtime/src/bin/rad-runtime.rs`,
 `crates/rad-editor/src/main.rs` y `crates/rad-client/src/bin/rad-cli.rs`.
-El código y los tests son la fuente de verdad. La historia inicial está en
-[KroxiDev/RAD-Fase-Inicial](https://github.com/KroxiDev/RAD-Fase-Inicial).
+El código y los tests son la fuente de verdad del comportamiento actual.
 
-La arquitectura objetivo está aprobada en [docs/architecture.md](docs/architecture.md),
-con sus decisiones en `docs/adr/` y el trabajo pendiente en
-[docs/roadmap.md](docs/roadmap.md). Están autorizadas sus fases, cada una por
-encargo del usuario, y las mejoras del editor: simple, oscuro y profesional,
-cercano a Elgato sin clonar su identidad; cada control visible solo cuando se pueda
-usar. Lo que exceda esa arquitectura requiere pedido del usuario. Prioridades:
-estabilidad, respuesta percibida, UX y después ahorro marginal de recursos. Simple
-de cara al usuario; por dentro, robusto, con dueños y contratos claros.
+La arquitectura aprobada está en [docs/architecture.md](docs/architecture.md),
+con sus decisiones en `docs/adr/` y los pendientes en
+[docs/roadmap.md](docs/roadmap.md). Cada ítem requiere encargo del usuario; figurar
+como pendiente no autoriza su ejecución. El editor debe ser simple, oscuro y
+profesional, cercano a Elgato sin clonar su identidad; cada control visible solo
+cuando se pueda usar. Lo que exceda esa arquitectura requiere pedido del usuario.
+Prioridades: estabilidad, respuesta percibida, UX y después ahorro marginal de
+recursos. Simple de cara al usuario; por dentro, robusto, con dueños y contratos
+claros.
 
 ## Procedimientos
 
 - Antes de planificar o editar: leer `.agentic/golden-rules.md`.
+- Para incorporarse al desarrollo o encontrar documentación: `CONTRIBUTING.md` y
+  `docs/README.md`.
+- Antes de nombrar o cambiar conceptos del dominio: `CONTEXT.md`; para relaciones,
+  invariantes y trazabilidad al código, `docs/domain.md`.
+- Antes de crear, actualizar o reorganizar documentación: `docs/documentation.md`.
 - Antes de diseñar o cambiar la base estable (dominio, autoridad, runtime,
   persistencia, contratos o alojamiento de plugins): leer `docs/architecture.md` y
   los ADR afectados. Un cambio que los contradiga lleva un ADR nuevo.
-- Antes de trabajar en una fase o un ítem del plan: `docs/roadmap.md`.
+- Antes de trabajar en un pendiente: `docs/roadmap.md`.
 - Para pantallas o textos del editor: `docs/ux.md`.
 - Para comportamiento ejecutable: aplicar `.agentic/skills/tdd.md`.
 - Para revisar estándares y requisitos: `.agentic/skills/code-review.md`.
@@ -41,58 +46,14 @@ de cara al usuario; por dentro, robusto, con dueños y contratos claros.
 
 ## Validación completa
 
-Ejecutar en serie desde la raíz, sin hardware ni ventanas. Reutilizar la caché;
-no descargar dependencias ni instalar herramientas por inferencia. El target debe
-quedar en el disco del repo: los builds en tmpfs agotaron su cuota.
-
-```bash
-export CARGO_HOME="$PWD/target/cargo-home"
-export CARGO_TARGET_DIR="$PWD/target"
-export CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
-cargo fmt --all -- --check
-cargo build --offline --locked --release --workspace --all-features --bins --examples
-export RAD_TEST_LAUNCHER_HELPER="$CARGO_TARGET_DIR/release/rad-launcher-helper"
-export RAD_TEST_LAUNCHER_FIXTURE="$CARGO_TARGET_DIR/release/rad-launcher-fixture"
-cargo test --offline --locked --release --workspace --all-features
-cargo clippy --offline --locked --release --workspace --all-features --all-targets -- -D warnings
-(
-  export CARGO_TARGET_DIR="$PWD/target/plugins"
-  cargo fmt --manifest-path plugins/Cargo.toml --all -- --check
-  cargo build --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --bins --examples
-  cargo test --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features
-  cargo clippy --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --all-targets -- -D warnings
-)
-bash scripts/conformance/audio-media/run.sh
-bash scripts/conformance/obs/run.sh
-bash scripts/conformance/metrics/run.sh
-```
-
-Los ejemplos/helpers deben compilarse antes de tests focalizados. Una comprobación
-focal crítica es `cargo test --offline --locked --release -p rad-core --test permissions`.
-Las conformidades usan fixtures de ambos workspaces y guardan salidas ignoradas
-en `target/conformance/`.
-
-Requisitos de tests: `bwrap`, `pactl`, `dbus-daemon` y namespaces Linux disponibles.
-Audio usa un `pactl` falso salvo la prueba de producción sin servidor, que ejecuta
-el real dentro de `bwrap`, sin acceso al audio personal. Multimedia usa un bus
-D-Bus privado y reproductores falsos; OBS, servidores loopback efímeros; métricas,
-archivos y NVML falsos. Si el sandbox no permite ejecutarlos, informar lo no
-verificado: una suite verde no certifica hardware real ni todas las distribuciones.
+Antes de compilar, probar o cerrar una entrega: aplicar
+[docs/testing.md](docs/testing.md). Es la fuente única del gate en serie de ambos
+workspaces, variables de helpers, conformidades, requisitos y límites de evidencia.
 
 ## Ciclo de vida de los tests
 
-Tests nativos de Rust; contratos públicos críticos en `crates/<paquete>/tests/`.
-Controlar reloj, identidades e I/O en el dominio puro.
-
-- Conservar sin preguntar las pruebas de comportamiento crítico. Cualquier otra
-  prueba permanente requiere pedido explícito.
-- Durante desarrollo se permiten tests temporales, identificados como tales.
-  Al cerrar, conservar solo los críticos quitando su marca; retirar los demás,
-  salvo pedido explícito de conservarlos.
-- Ejecutar y conservar los tests existentes. La limpieza afecta únicamente a
-  temporales de la tarea, salvo autorización específica.
-- Un temporal visto fallar por el comportamiento y luego pasar aporta evidencia;
-  no dejarlo permanente no incumple por sí solo la regla 3.5 de las golden rules.
+Antes de añadir o retirar tests: aplicar la
+[política de conservación](docs/testing.md#ciclo-de-vida-de-los-tests).
 
 ## Git y GitHub
 

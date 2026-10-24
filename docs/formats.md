@@ -35,9 +35,10 @@ las referencias, las identidades y los valores. Los campos desconocidos se recha
 - `settings`: brillo, reposo y umbral de pulsación. No contiene idioma ni opciones
   propias de la máquina.
 - `plugin_settings`: mapa por ID de plugin con valores no secretos opacos,
-  codificados en hexadecimal, como los parámetros de acciones. Es el espacio
-  reservado para el contrato de ajustes de plugins de la fase 2; no habilita todavía
-  campos nuevos del manifest.
+  codificados en hexadecimal, como los parámetros de acciones. El contrato de
+  plugins define su esquema `settings`; la [API de ajustes](client-api.md#ajustes-y-contrato-publicado-de-plugins)
+  valida los cambios explícitos contra ese esquema. El documento conserva los
+  bytes guardados aunque el plugin falte o su esquema sea incompatible.
 - `plugin_dependencies`: mapa por ID con `version` (`{"major":1,"minor":2,"patch":3}`
   o `null`) y `origin` (cadena o `null`). Conserva la información conocida para
   ofrecer la instalación después de restaurar, incluso si el plugin falta

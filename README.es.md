@@ -15,7 +15,8 @@ combina acciones. El runtime sigue funcionando al cerrar el editor.
 ## Funciones
 
 - Distribución de 32 teclas, carpetas, edición por arrastre y deshacer/rehacer.
-- Hasta 20 acciones por botón, ejecución secuencial o paralela y acción Esperar integrada.
+- Hasta 20 acciones por botón, ejecución secuencial o paralela y acciones nativas
+  Esperar y Suspender Stream Deck.
 - Apertura de aplicaciones desde el catálogo del escritorio.
 - Texto propio e imágenes PNG/JPEG estáticas.
 - Interfaz en inglés y español; ajustes de brillo, reposo y umbral de pulsación.
@@ -68,7 +69,9 @@ otras aplicaciones. Cerrar el editor deja el runtime activo; «Salir de RAD» en
 Los datos viven en `$XDG_DATA_HOME/rad` o `~/.local/share/rad`; los sockets locales,
 bajo `$XDG_RUNTIME_DIR/rad`.
 
-Los datos v1 se migran a v2 conservando el original con sufijo `.v1-backup`.
+El documento actual del deck es v4; el Store SQLite y el contenedor de copias
+siguen en v2. Los datos anteriores migran hacia adelante conservando el original;
+un Store v1 conserva un `.v1-backup`.
 Las copias son portables entre instalaciones; las preferencias del editor quedan
 en `$XDG_CONFIG_HOME/rad/editor.json` (o `~/.config/rad/editor.json`). Consulta los
 [formatos de datos](docs/formats.md) para conocer la compatibilidad y los límites.
@@ -128,19 +131,15 @@ Cada plugin activo tiene su propio proceso, aislado del espacio de memoria del r
 
 ## Desarrollo
 
-La aplicación y los plugins son workspaces Cargo separados:
+Empieza por [CONTRIBUTING.md](CONTRIBUTING.md) y el
+[índice de documentación técnica](docs/README.md), cuyo idioma canónico es el
+español. Conectan glosario, arquitectura, contratos y recorrido de contribución.
 
-```bash
-cargo test --release --workspace --all-features
-cargo test --manifest-path plugins/Cargo.toml --release --workspace --all-features
-```
-
-Compila primero los binarios/ejemplos de fixtures. La [puerta completa de AGENTS.md](AGENTS.md#validación-completa)
-incluye ejecución offline, variables de helpers, formato, clippy y scripts de
-conformidad. Los tests usan servicios privados y lectores sintéticos, no el deck físico.
-
-La arquitectura objetivo, sus decisiones y el plan por fases están en
-[docs/architecture.md](docs/architecture.md).
+La aplicación y los plugins son workspaces Cargo separados. La
+[guía de validación](docs/testing.md) es la fuente única del gate completo offline,
+builds de helpers, aislamiento de tests, formato, clippy y conformidades.
+Los agentes también deben seguir [AGENTS.md](AGENTS.md). Compilar no requiere
+abrir el editor ni tomar el dispositivo.
 
 ## Estado
 
@@ -150,4 +149,4 @@ distribuciones Linux no están validados.
 ## Licencia
 
 [MIT](LICENSE), copyright KroxiDev. Las dependencias conservan sus licencias;
-consulta los [avisos de terceros](plugins/notices/README.md) de los plugins.
+consulta las [licencias de terceros](plugins/notices/README.md) de los plugins.

@@ -1,9 +1,11 @@
 # Arquitectura de RAD
 
-Norma de la arquitectura objetivo. Los motivos de cada decisión están en los
-[ADR](adr/); lo que falta implementar, en el [plan por fases](roadmap.md); cómo se
+Norma de la arquitectura aprobada. Los motivos de cada decisión están en los
+[ADR](adr/); lo que falta implementar, en el [registro de pendientes](roadmap.md); cómo se
 comporta y habla la interfaz, en [ux.md](ux.md). Un cambio que contradiga este
-documento o un ADR necesita un ADR nuevo.
+documento o un ADR necesita un ADR nuevo. El [glosario](../CONTEXT.md) fija los
+nombres del dominio y el [modelo](domain.md) conecta sus relaciones con el código.
+El [índice técnico](README.md) conecta normas, contratos, guías y evidencia de rendimiento.
 
 «Base estable» es todo lo que no es presentación: dominio, autoridad, runtime,
 persistencia, transporte, contratos, alojamiento de plugins y adapters esenciales.
@@ -28,7 +30,7 @@ flowchart LR
     Loop --> Storage[Worker Store y transferencias]
     Loop --> Vault[Worker de credenciales]
     Loop --> Admin[Administración y demanda de plugins]
-    Loop --> Deck[Worker del dispositivo: modelo descrito por el adapter]
+    Loop --> Deck[Worker del Stream Deck: modelo descrito por el adapter]
     Loop --> Host[Host: procesos, pipes, correlaciones, stderr acotado]
   end
   Storage --> DB[(SQLite: documentos, identidades, medios)]
@@ -42,7 +44,7 @@ flowchart LR
 ```
 
 - **rad-runtime:** proceso sin GUI y única autoridad de configuración, ejecución,
-  navegación y dispositivo; único dueño de hidraw ([ADR 0001](adr/0001-runtime-unico-y-procesos.md)).
+  navegación y Stream Deck; único dueño de hidraw ([ADR 0001](adr/0001-runtime-unico-y-procesos.md)).
   Corre como servicio systemd de usuario que gestiona el editor
   ([ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md)). Si no puede abrir la
   configuración, entra en modo recuperación ([ADR 0011](adr/0011-salidas-y-modo-recuperacion.md)).
@@ -82,7 +84,7 @@ Una propuesta que viole uno necesita una decisión registrada.
 
 ### Eficiencia
 
-- **EF1 · Eventos en vez de sondeos,** como preferencia: UI y frescura de visuales.
+- **EF1 · Eventos en vez de sondeos,** como preferencia: UI y vigencia de visuales.
   Excepción registrada: con el deck ausente se sigue sondeando cada 500 ms, porque
   hacerlo por eventos complica más de lo que ahorra.
 - **EF2 · El coste crece con el cambio, no con la historia.**
@@ -125,7 +127,7 @@ El usuario ve el funcionamiento, no el mecanismo: principios S1–S5 en [ux.md](
 | 3 | `rad-plugin-manager` | Preparación, descarga, selector durable y journal | plugin-contract, plugin-package |
 | 3 | `rad-plugin-host` | Procesos, handshake, pipes, generaciones y residuales | plugin-contract |
 | 3 | `rad-transport` | Sockets, origen confiable, crédito y readiness | wire, api |
-| 3 | `rad-deck` | Dueño del dispositivo, descriptor de modelo, entrada y salida | media |
+| 3 | `rad-deck` | Dueño del Stream Deck, descriptor de modelo, entrada y salida | media |
 | 3 | `rad-launcher` | Adapter y helper de aplicaciones de escritorio | core, media |
 | 4 · Traducción y composición | `rad-protocol` | API de clientes ↔ interface de aplicación | plugin-contract, authority, core, wire, api |
 | 4 | `rad-runtime` | Composición, event loop, efectos y ajustes de la máquina; único que compone adapters | todas las anteriores |
@@ -170,7 +172,7 @@ causa y `NotApplied` sin una segunda tabla de mutaciones.
 | Preferencia del editor | Editor | Fuera de `rad-core` y de las copias |
 | Ajuste de la máquina | Runtime local | Fuera de la configuración del deck y de las copias |
 | Ajuste de un plugin | Esquema `settings` del manifest; valores en la configuración del deck | Viaja en las copias; los secretos, en credenciales |
-| Modelo de dispositivo nuevo | `rad-deck` | Descriptor de modelo; el dominio cambia solo si hay controles nuevos |
+| Modelo nuevo de Stream Deck | `rad-deck` | Descriptor de modelo; el dominio cambia solo si hay controles nuevos |
 | Cambio de formato | Store, codec o package | Atomicidad, migración hacia adelante, evidencia preservada e importador con golden real |
 | Bug o refactor interno | Módulo dueño | Conserva la interface observable o declara el cambio; prueba la composición entre dueños |
 | Sandbox, firma u otras plataformas | Ampliación de alcance | Pedido explícito del usuario |
@@ -193,6 +195,9 @@ Estas piezas parecen simplificables y no lo son:
   transporte retirado con el último consumidor y sin replay al reconectar.
 - **Deck.** Un hilo propietario y la bandera LIVE evitan reemplazos crecientes;
   O_NONBLOCK, O_NOFOLLOW y comprobaciones de char-device, ioctl y lock.
+  Con varios XL se elige el de menor número de serie válido, sin depender del
+  puerto; si no hay una elección única, falla con `DeckError::Identity`
+  ([`locate`](../crates/rad-deck/src/hidraw.rs)).
 - **Launcher.** Helper propio que lanza archivos `.desktop`; las órdenes por IPC
   nunca son un shell.
 

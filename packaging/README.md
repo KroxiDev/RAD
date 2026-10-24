@@ -1,14 +1,20 @@
-# Desktop assets
+# Recursos de escritorio
 
-`rad.png` is the only artwork source for RAD's window, application menu and tray.
-It is the author's provisional GitHub K; replace this file with the definitive PNG
-and rebuild, without editing Rust code or the desktop entry.
+Referencia para mantener la integración de RAD con el escritorio. El
+[índice técnico](../docs/README.md) describe el resto del proyecto.
 
-The stable application ID is `io.github.KroxiDev.RAD`. The editor installs the
-`.desktop` template and a 256 px icon under that name in `$XDG_DATA_HOME` (or
-`~/.local/share`), rewriting them only when they change and pointing `Exec=` at the
-editor in use.
+`rad.png` es la única fuente gráfica de la ventana, el menú de aplicaciones y la
+bandeja de RAD. Es la K provisional del GitHub del autor; para sustituirla por la
+imagen definitiva, reemplazar este archivo por el PNG y recompilar, sin editar
+Rust ni la entrada de escritorio.
 
-Build `rad-editor`, `rad-runtime` and `rad-tray` together for tray support. The editor
-installs both user units only when their contents change; a partial build without
-`rad-tray` still runs the authority. No separate tray autostart is needed (ADR 0016).
+El ID estable de aplicación es `io.github.KroxiDev.RAD`. El editor instala la
+plantilla `.desktop` y un ícono de 256 px con ese nombre en `$XDG_DATA_HOME` (o
+`~/.local/share`), los reescribe solo cuando cambian y hace que `Exec=` apunte al
+editor en uso.
+
+Compilar `rad-editor`, `rad-runtime` y `rad-tray` juntos para disponer de la bandeja.
+El editor instala ambas unidades de usuario solo cuando cambia su contenido; una
+compilación parcial sin `rad-tray` sigue ejecutando la autoridad. No hace falta un
+autoinicio independiente de la bandeja. Decisión y límites:
+[ADR 0016](../docs/adr/0016-presencia-de-escritorio.md).

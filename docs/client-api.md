@@ -1,6 +1,9 @@
 # API local de clientes · versión 1
 
-La definición estructural vive en `rad-api`: `Request`, `Operation`, las vistas,
+Referencia del contrato local para desarrolladores de clientes y agentes.
+El [índice técnico](README.md) conecta dominio, arquitectura y formatos.
+
+La definición estructural vive en [`rad-api`](../crates/rad-api/src/lib.rs): `Request`, `Operation`, las vistas,
 `Response`, `ResponseData`, `Notice`, `NoticeKind`, `ErrorCode` y los códigos de salida. Es una capa pura:
 no abre sockets ni depende del dominio. `rad-protocol` traduce hacia Authority;
 el runtime compone los adapters. Nunca se aceptan identidades de origen del JSON.
@@ -77,7 +80,7 @@ la respuesta correlacionada y después frames de aviso independientes:
 ```
 
 `kind` es `board`, `inspector`, `overview`, `catalog`, `dependencies`, `execution`
-o `plugins`. Board incluye cambios de visuales/frescura; execution invalida el
+o `plugins`. Board incluye cambios de visuales/vigencia; execution invalida el
 resultado de ejecución observado; plugins invalida el estado administrativo.
 Se emite un aviso inicial por tipo para cerrar la carrera suscribir/leer.
 `revision` del aviso es una época de invalidación, no una revisión durable ni un
@@ -206,15 +209,17 @@ son intencionales para automatización.
 hardware real ni compatibilidad con todas las distribuciones por pasar tests
 sintéticos.
 
-## Migración en curso
+## Definición única del contrato
 
-La fase 2 no se considera terminada hasta que las respuestas históricas y todos
-los consumidores utilicen la definición única de `rad-api`; los parsers legacy
-restantes de `rad-protocol` no son una segunda especificación aceptada.
-Los parsers estructurales de peticiones de `rad-protocol` se retiraron: su dispatch
-recibe variantes `Request`. `rad-wire` conserva framing y límites de JSON, no
-respuestas de aplicación. El cliente decodifica `ResponseData` según la operación
-correlacionada; nunca infiere una clase de página por una lista vacía.
+`rad-api` es la única definición del contrato de clientes.
+[`rad-protocol`](../crates/rad-protocol/src/lib.rs) convierte la
+petición validada a `rad_api::Request` y despacha sus variantes. `rad-wire`
+conserva framing y límites de JSON, no respuestas de aplicación.
+[`rad-client`](../crates/rad-client/src/connection.rs) usa
+[`Response::decode_value`](../crates/rad-api/src/response.rs), que decodifica
+[`ResponseData`](../crates/rad-api/src/response_data.rs) según la operación
+correlacionada; una lista vacía no determina el tipo de página.
+
 `PluginRetry` y `PluginLog` se anuncian solo en el endpoint del editor; sus
 handlers no reinstalan ni ejecutan acciones. Véanse las precondiciones abajo.
 
@@ -224,15 +229,18 @@ Operaciones exclusivas del editor:
 
 - `plugin_manifest {plugin_id}` devuelve `plugin_id` y `document`: el manifiesto
   completo del contrato de plugins separado, incluyendo capacidades, recursos,
-  gestos y esquema de ajustes. `rad-api` no duplica ese manifiesto.
+  gestos y esquema de ajustes. Los consumidores usan
+  `rad_plugin_contract::Manifest`; `rad-api` no duplica ese manifiesto.
 - `plugin_settings {plugin_id}` devuelve `plugin_id`, `encoding: "hex"` y `hex`
   (cadena o null). La lectura preserva bytes opacos incluso sin paquete instalado
   o con un esquema incompatible; no devuelve credenciales.
 - `set_plugin_settings {plugin_id, parameters}` guarda parámetros tipados
   `{schema_version, values}` o retira el valor si `parameters` es null. La
   autoridad revalida el esquema publicado en su turno antes de persistir; el
-  dominio conserva bytes opacos y el historial normal. No se sobrescriben datos
-  incompatibles al abrir un formulario.
+  dominio conserva bytes opacos, historial, deshacer y copias. No se sobrescriben datos
+  incompatibles al abrir un formulario. Los campos de ajustes con opciones
+  dinámicas no soportadas quedan en solo lectura: no se inventa una consulta de
+  opciones de acción para resolverlos.
 
 `FieldEdit::Gesture` selecciona `press`, `hold` o `long_press` para un botón.
 Las vistas del botón llevan `gesture`; el catálogo de acciones lleva `gestures`.
@@ -290,86 +298,88 @@ El cliente muestra ambos orígenes y, si el usuario confirma, repite la petició
 Tras aplicarse, el nuevo origen queda registrado. Un plugin sin origen registrado
 no pide confirmación y registra el nuevo.
 
-### Editor plugin settings, repair and recent log
+### Reintento y diagnóstico de plugins
 
-`plugin_manifest {plugin_id}` returns the opaque manifest document; consumers use
-`rad-plugin-contract::Manifest`, not a second schema. `plugin_settings {plugin_id}`
-returns optional hex-encoded saved bytes even when the plugin is missing.
-`set_plugin_settings {plugin_id, parameters}` is a normal configuration edit (history,
-undo and backup included); `null` removes the setting. Unknown or incompatible
-saved values remain untouched until an explicit valid edit. Settings fields with
-unsupported dynamic options remain read-only; no action-option query is fabricated.
+`plugin_retry {plugin_id}` es exclusivo del editor y explícito. `can_retry` solo
+lo habilita para la misma selección fallida, después de recoger el proceso
+(reap) y sin trabajo administrativo o residual pendiente. Limpia la marca de
+arranque ya intentado de esa selección y retira su registro terminal del Host.
+La demanda normal puede entonces lanzarla de nuevo; no descarga ni reinstala
+paquetes, no repite acciones y conserva configuración y credenciales. Un reintento
+no disponible se rechaza, no se sustituye por una consulta. `has_settings` indica
+que un manifest registrado ofrece ajustes.
 
-`plugin_retry {plugin_id}` is editor-only and explicit. It is available through the
-`can_retry` status flag only for the same failed selection after reap and with no
-outstanding administrative/residual work. It clears that selection's attempted-start
-latch and removes its reaped Host tombstone. Normal demand may then launch it again;
-no package is downloaded/reinstalled, no action is replayed, and configuration and
-credentials stay intact. An unavailable retry is rejected, not replaced by a query.
-`has_settings` indicates that a registered manifest exposes settings.
+`plugin_log {plugin_id}` es una lectura exclusiva del editor. Devuelve
+`{plugin_id, lines}` desde la captura de stderr del Host, ya saneada y acotada.
+No inicia el plugin ni cambia el registro; la respuesta queda por debajo de
+48 KiB, incluidos escapes JSON y envelope. El editor la expone en
+Ajustes → Avanzado → Registro.
 
-`plugin_log {plugin_id}` is an editor-only read returning `{plugin_id, lines}` from
-the Host's already sanitized, bounded stderr capture. It neither starts the plugin
-nor changes logging; the response stays under 48 KiB including JSON escaping and
-envelope overhead. The editor exposes it under Settings → Advanced → Log.
+Los detalles cargan `PluginManifest` solo por demanda explícita. Las declaraciones
+opcionales de recursos se muestran desde el enum canónico, como máximo cinco,
+con un aviso de que son informativas y no se imponen; no conceden permisos. El
+editor conserva esa metadata por plugin y versión seleccionada y la invalida
+ante avisos de plugins o reconexión, sin sondeo.
 
-`runtime_log {}` is an editor-only read of the runtime's own recent events (ADR 0011),
-for Advanced → Log. It returns `{entries:[{seq, at_unix_ms, code, subject?}], dropped}`,
-oldest first, with every integer a decimal string. It is not a mutation and consumes
-nothing: asking again returns the same entries plus whatever happened since. Automation
-gets `permission_denied`.
+## Registro reciente del runtime
 
-- The runtime keeps the last 128 events of this process; older ones are discarded and
-  counted in `dropped`. `seq` grows by one per event and is never reused, so a gap
-  between two reads means entries were dropped. A restart starts a new ring (what ended
-  the previous run is `previous_exit`).
-- `code` is a closed set of stable `snake_case` names, never prose; the editor words them.
-  `subject`, when present, is an identifier of at most 128 bytes (a plugin id, an exit
-  reason) and never data from a failure.
-- Events are state changes and contained failures, not traffic: none per request or per
-  key. Each one also leaves one line on stderr (journald), `rad-runtime: <code>[ <subject>]`.
-- At most 128 entries fit well inside 48 KiB.
+`runtime_log {}` es una lectura exclusiva del editor de los eventos recientes
+del runtime ([ADR 0011](adr/0011-salidas-y-modo-recuperacion.md)), para
+Avanzado → Registro. Devuelve
+`{entries:[{seq, at_unix_ms, code, subject?}], dropped}`, del más antiguo al más
+nuevo, con todos los enteros como cadenas decimales. No es una mutación ni
+consume entradas: consultar de nuevo devuelve las mismas más las posteriores
+que sigan retenidas. Automation recibe `permission_denied`.
 
-| Code | Subject | Meaning |
+- El runtime conserva los últimos 128 eventos del proceso; descarta los anteriores
+  y los cuenta en `dropped`. `seq` aumenta uno por evento y no se reutiliza, así
+  que un hueco entre lecturas indica entradas descartadas. Un reinicio comienza
+  un registro nuevo; `previous_exit` informa sobre el proceso anterior.
+- `code` es un conjunto cerrado de nombres estables `snake_case`, nunca prosa;
+  el editor redacta los textos. `subject`, cuando existe, es un identificador de
+  hasta 128 bytes (ID de plugin o motivo de salida), nunca datos de un fallo.
+- Los eventos son cambios de estado y fallos contenidos, no tráfico: no hay uno
+  por petición ni tecla. Cada evento deja también una línea en stderr (journald):
+  `rad-runtime: <code>[ <subject>]`.
+- Las 128 entradas caben dentro de 48 KiB.
+
+| Código | `subject` | Significado |
 |---|---|---|
-| `started` | | The runtime started serving. |
-| `previous_exit` | reason | The last run ended unexpectedly (`startup`, `storage`, `transport`, `clock`, `protocol`, `panic`). |
-| `shutdown_requested` | | A clean stop was asked for (SIGTERM or SIGINT). |
-| `deck_connected`, `deck_disconnected` | | The deck appeared or went away. |
-| `deck_inaccessible` | | The deck is present but cannot be used. |
-| `deck_spawn_failed` | | The deck could not be started; the runtime serves without it. |
-| `plugin_failed` | plugin id | A plugin ended without being asked to. |
-| `plugin_io_unregistrable` | plugin id | A plugin's pipes could not be watched; it was stopped. |
-| `launcher_lost` | | The launcher helper ended or could not be watched. |
-| `storage_uncertain`, `storage_recovery_required`, `storage_ready` | | The storage state changed. |
-| `display_clock_overflow` | | The deck's idle clock overflowed; it simply does not sleep by itself. |
-| `response_refused`, `response_unknown_request`, `response_dropped` | | An answer was too large or empty, its request was gone, or even the generic error could not be sent. |
-| `response_unbuildable` | | The answer to a resolved request could not be built; the client got a generic error, never "not applied" for a change. |
-| `plugin_response_invalid`, `catalog_response_invalid` | | A plugin or the launcher answered something that does not decode; that request got an error. |
-| `notice_dropped` | | A notice could not be queued; the next one recovers it. |
-| `connection_failed` | count | Connections that could not be taken in (closed, or left queued while the process is out of descriptors), reported at most once a minute with how many since the previous report. |
-| `machine_settings_unreadable` | | `machine.json` could not be read; defaults are in use and the file is left untouched. |
-| `export_failed` | | An export's snapshot could not be made; that export got an error and its lease went back. |
-| `recovery_mode` | cause | The runtime could not open the configuration and entered recovery mode (`unreadable`, `newer_version`, `unsafe_folder`). |
-| `recovery_reset` | | «Empezar de nuevo» finished; the runtime went on in normal mode. |
-| `recovery_restored` | | «Restaurar una copia» finished; the runtime went on in normal mode with the copy. |
+| `started` | | El runtime comenzó a atender. |
+| `previous_exit` | motivo | El proceso anterior terminó inesperadamente (`startup`, `storage`, `transport`, `clock`, `protocol`, `panic`). |
+| `shutdown_requested` | | Se pidió una parada limpia (SIGTERM o SIGINT). |
+| `deck_connected`, `deck_disconnected` | | El deck apareció o se desconectó. |
+| `deck_inaccessible` | | El deck está presente, pero no se puede usar. |
+| `deck_spawn_failed` | | No se pudo iniciar el deck; el runtime atiende sin él. |
+| `plugin_failed` | ID de plugin | Un plugin terminó sin que se le pidiera. |
+| `plugin_io_unregistrable` | ID de plugin | No se pudieron observar los pipes del plugin y se lo detuvo. |
+| `launcher_lost` | | El helper del lanzador terminó o no se pudo observar. |
+| `storage_uncertain`, `storage_recovery_required`, `storage_ready` | | Cambió el estado de almacenamiento. |
+| `display_clock_overflow` | | Se desbordó el reloj de inactividad del deck; deja de entrar en reposo automático. |
+| `response_refused`, `response_unknown_request`, `response_dropped` | | Una respuesta era demasiado grande o vacía, su petición ya no existía o ni siquiera se pudo enviar el error genérico. |
+| `response_unbuildable` | | No se pudo construir la respuesta de una petición resuelta; el cliente recibió un error genérico, nunca «no aplicado» para un cambio. |
+| `plugin_response_invalid`, `catalog_response_invalid` | | Un plugin o el lanzador respondió algo que no se puede decodificar; esa petición recibió un error. |
+| `notice_dropped` | | No se pudo encolar un aviso; el siguiente permite recuperarlo. |
+| `connection_failed` | cantidad | Conexiones no aceptadas (cerradas, o pendientes mientras faltan descriptores), informadas como máximo una vez por minuto con el total desde el informe anterior. |
+| `machine_settings_unreadable` | | No se pudo leer `machine.json`; se usan defaults y el archivo queda intacto. |
+| `export_failed` | | No se pudo preparar el snapshot de exportación; la petición recibió un error y se devolvió su lease. |
+| `recovery_mode` | causa | El runtime no pudo abrir la configuración y entró en recuperación (`unreadable`, `newer_version`, `unsafe_folder`). |
+| `recovery_reset` | | Terminó «Empezar de nuevo» y el runtime pasó a modo normal. |
+| `recovery_restored` | | Terminó «Restaurar una copia» y el runtime pasó a modo normal con ella. |
 
-`machine_settings {}` is an editor-only read of the machine's own options (ADR 0005,
-0006): `{use_stream_deck, start_with_session}`, both booleans. They never travel in
-copies of the configuration. `set_machine_settings {use_stream_deck?, start_with_session?}`
-changes them and answers `ok` (not `applied`: it is no configuration revision) with the
-resulting view; no field at all is `invalid_request`, and a value equal to the current
-one writes nothing. The change is stored first: if that fails the answer is
-`storage_error` with `outcome: not_applied` and nothing changes. `use_stream_deck` then
-takes or lets go of the deck without restarting the runtime; `start_with_session` is only
-stored, the editor applies it. Automation gets `permission_denied` on both.
+## Ajustes de la máquina
 
-Board and Overview notices invalidate independent views. The editor fetches only the
-invalidated view, while Board and Inspector still require matching revisions before
-being presented together.
+`machine_settings {}` es una lectura exclusiva del editor de opciones de la
+máquina (ADR 0005 y 0006): `{use_stream_deck, start_with_session}`, ambos booleanos.
+Nunca viajan en las copias de configuración.
+`set_machine_settings {use_stream_deck?, start_with_session?}` los cambia y
+responde `ok` (no `applied`: no es una revisión de configuración) con la vista
+resultante. Sin campos devuelve `invalid_request`; un valor igual al actual no
+escribe nada. Primero guarda: si falla, responde `storage_error` con
+`outcome: not_applied` y nada cambia. Después `use_stream_deck` toma o libera el
+deck sin reiniciar el runtime; `start_with_session` solo se guarda, el editor lo
+aplica. Automation recibe `permission_denied` en ambas operaciones.
 
-Plugin details load the existing `PluginManifest` only on explicit demand. The
-optional resource declarations are rendered from the canonical enum, at most five,
-with an informational/not-enforced notice; they do not grant permissions. The
-editor caches this metadata by plugin and selected version, invalidating it on
-plugin notices and reconnect, without polling.
+Los avisos Board y Overview invalidan vistas independientes. El editor pide solo
+la invalidada; Board e Inspector siguen requiriendo revisiones coincidentes para
+presentarse juntos.

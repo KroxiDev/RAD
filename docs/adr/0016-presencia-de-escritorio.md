@@ -1,6 +1,7 @@
 # 0016 · Presencia de escritorio sin editor residente
 
-**Estado:** aceptada, 2026-10-21 (E1, E2 y E3 de la fase 3.5).
+**Estado:** aceptada, 2026-10-21 (entregas E1, E2 y E3 de la fase 3.5 del
+[plan original](https://github.com/KroxiDev/RAD/blob/30eb0e831c5873df944a6cf1ec7ea37a5fd39191/docs/roadmap.md)).
 
 RAD necesita identidad de aplicación y una bandeja mientras el runtime funciona,
 incluso tras cerrar el editor o después del autoinicio. El runtime sigue siendo

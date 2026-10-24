@@ -1,20 +1,33 @@
-# rad-plugin-fixture — standalone protocol fixture
+# rad-plugin-fixture · fixture independiente de protocolo
 
-No dependency on RAD crates: uses the public v1 JSON/u32-BE protocol directly.
-Two native binaries: stable plugin ID `org.rad.fixture`, versions 1.0.0 and 2.0.0.
-Same stable ID intentionally supports update/rollback; binary versions differ.
+Instrumento de inyección de fallos para los tests del host. No depende de crates
+de RAD: usa directamente el protocolo público v1 de JSON/u32-BE. Incluye dos
+binarios nativos con el ID estable `org.rad.fixture`, versiones 1.0.0 y 2.0.0.
+Mantener el mismo ID permite probar actualización y rollback deliberadamente;
+las versiones de los binarios difieren.
 
-`run` action accepts required `mode`: echo / fail / slow / crash / late / flood.
-Echo reports success without effects; fail reports unavailable; slow sleeps 250ms;
-crash exits23; late sends a wrong prior request before its proper reply; flood sends
-1000 duplicate replies. `status` source returns v1/v2 text for TTL testing.
-When subscribed, slow emits `running` before sleeping, proving actual action entry
-in timeout/reap tests rather than merely timing out an unsent request.
-No apps, sensors, hardware, network, personal data or filesystem writes.
-stdout protocol only; all stdin frames capped at64KiB. This is intentionally a
-fault-injection fixture, not a production integration or security sandbox.
+La acción `run` recibe `mode` obligatorio: echo / fail / slow / crash / late / flood.
+Echo informa éxito sin efectos; fail informa unavailable; slow espera 250 ms;
+crash sale con código 23; late envía primero una respuesta con la petición anterior
+incorrecta y después la correcta; flood envía 1000 respuestas duplicadas. La fuente
+`status` devuelve texto v1/v2 para probar TTL.
+Con una suscripción activa, slow emite `running` antes de esperar: demuestra la
+entrada efectiva en la acción durante los tests de timeout/reap, en vez de limitarse
+a vencer el plazo de una petición no enviada.
 
-Standalone build after coordinator review (existing cache, no downloads):
-`cargo build --offline --release --manifest-path Cargo.toml --bins`.
-In RAD, bins/tests are gated behind rad-plugin-host/fixture-tests. Shared source
-paths avoid copying RAD implementation into the public fixture.
+No usa aplicaciones, sensores, hardware, red ni datos personales, y no escribe en
+el sistema de archivos. stdout contiene solo protocolo; todos los frames de stdin
+se limitan a 64 KiB. Es deliberadamente un fixture de inyección de fallos, no una
+integración de producción ni un sandbox de seguridad.
+
+Compilación independiente desde este directorio, tras la revisión del coordinador,
+con caché existente y sin descargas:
+
+```sh
+cargo build --offline --release --manifest-path Cargo.toml --bins
+```
+
+En RAD, los binarios y tests se habilitan con `rad-plugin-host/fixture-tests`. Las
+rutas de fuentes compartidas evitan copiar implementación de RAD al fixture
+público. Para el gate del repositorio y los helpers que requiere, seguir
+[Pruebas y validación](../../../docs/testing.md).

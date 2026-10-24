@@ -41,10 +41,10 @@ no cero. stderr contiene la advertencia de confianza; no imprimir credenciales.
   arrancarlos desde el orquestador y pasar sólo las rutas/endpoints fixture.
 - `timeout_ms`: 100–10000; cada respuesta debe tener éxito y ser observable.
   Opciones `unavailable` no demuestran que el vector ejerció la consulta.
-- `freshness_ms`: 1100–65000; debe superar la validez del **primer** estado observado.
+- `freshness_ms`: 1100–65000; debe superar el plazo de vigencia del **primer** estado observado.
   El visual debe mantenerse Current y emitir al menos una renovación sin carga.
   Otro proceso comprueba que, tras la baja y el plazo de respuesta, no llegue
-  ningún estado ni renovación durante ese mismo intervalo de frescura.
+  ningún estado ni renovación durante ese mismo intervalo.
 - `pressure`: índice cero basado de `actions`, `options` o `visuals`, con `kind`
   singular `action`, `options` o `visual`. Repite **únicamente** ese vector y exige
   consentimiento `safe_to_repeat: true`; jamás seleccionar una acción con efectos

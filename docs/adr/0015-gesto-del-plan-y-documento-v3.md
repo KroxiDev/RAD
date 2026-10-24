@@ -23,7 +23,7 @@ del host dentro de los parámetros opacos de un plugin.
   ajustes, credenciales, selección y generación originales. Nunca vuelve a resolver
   la tecla contra la carpeta actual.
 - Navegación, cambio de asignación, reposo y desconexión terminan el mantener
-  original. Los eventos consumidos para despertar y las reglas D9 no crean inicios.
+  original. Los eventos consumidos para despertar no crean inicios.
 - CLI y «Probar» conservan su ejecución ordinaria; no simulan un gesto físico ni
   esperan el umbral largo.
 

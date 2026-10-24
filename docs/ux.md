@@ -3,7 +3,9 @@
 Norma de cómo se comporta y cómo habla el editor. El estilo visual (simple, oscuro
 y profesional, cercano a Elgato sin clonar su identidad) está en
 [AGENTS.md](../AGENTS.md); la arquitectura que lo sostiene, en
-[architecture.md](architecture.md).
+[architecture.md](architecture.md). Es una norma de diseño para quienes mantienen
+la interfaz, no un manual de usuario ni una afirmación de que todo esté terminado.
+Los pendientes y su aplazamiento están en el [roadmap](roadmap.md#ux-pendiente).
 
 ## Principio
 
@@ -39,8 +41,12 @@ detalle.
 
 Referencia en español; el catálogo inglés usa sus equivalentes.
 
-- **Copia:** lo que el usuario exporta y restaura. Lleva todo, salvo las contraseñas
-  y lo propio del equipo.
+- **Copia:** usar este término del [glosario](../CONTEXT.md) para exportar y
+  restaurar; el contenido portable y sus exclusiones están en [formatos](formats.md#copias-radpkg).
+- **Tecla:** en la interfaz nombra tanto la tecla física como el botón que la
+  ocupa; el usuario no necesita distinguirlos. El código y la documentación
+  técnica usan los términos del glosario.
+- **Contraseña:** nombre visible de una credencial.
 - **Acciones:** Reintentar · Instalar · Actualizar · Escribir la contraseña ·
   Restaurar una copia · Empezar de nuevo · Deshacer · Ver detalles.
 - **Estados de un plugin,** solo cuatro: listo · necesita la contraseña · necesita
@@ -70,7 +76,7 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
 - **Restaurar** es una sola acción, sin preguntas sobre IDs, y se puede deshacer.
 - **Plugins.** Los oficiales se instalan desde una lista, con un botón; uno de
   terceros, pegando su enlace de GitHub. Actualizar usa el origen registrado. Mientras
-  un plugin funcione, no hay avisos.
+  un plugin funcione, no se muestran mensajes.
 - **Suspender Stream Deck.** Acción nativa con media luna en la categoría Stream
   Deck. Activa inmediatamente el mismo reposo configurado por inactividad, incluso
   cuando el reposo automático está desactivado. Cualquier tecla despierta sin

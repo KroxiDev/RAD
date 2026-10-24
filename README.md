@@ -15,7 +15,8 @@ The runtime keeps working when the editor is closed.
 ## Features
 
 - A 32-key layout, folders, drag-and-drop editing and undo/redo.
-- Up to 20 actions per button, sequential or parallel execution, and a built-in Wait action.
+- Up to 20 actions per button, sequential or parallel execution, and built-in Wait
+  and Stream Deck Sleep actions.
 - Application launching from your desktop's application catalog.
 - Custom labels and static PNG/JPEG images.
 - English and Spanish UI; brightness, idle and press-threshold settings.
@@ -66,7 +67,9 @@ icon closes the editor and stops the runtime.
 Data lives in `$XDG_DATA_HOME/rad` or `~/.local/share/rad`; local sockets live
 under `$XDG_RUNTIME_DIR/rad`.
 
-Existing v1 data migrates to v2 while keeping the original as `.v1-backup`.
+The current deck document is v4; the SQLite store and backup container remain v2.
+Older data migrates forward while preserving the original; a v1 store keeps a
+`.v1-backup`.
 Backups are portable between installations; editor preferences stay local in
 `$XDG_CONFIG_HOME/rad/editor.json` (or `~/.config/rad/editor.json`). See the
 [data formats](docs/formats.md) reference for compatibility and limits.
@@ -125,19 +128,15 @@ Each active plugin has its own process, isolated from the runtime's address spac
 
 ## Development
 
-The application and plugins are separate Cargo workspaces:
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[technical documentation index](docs/README.md) (canonical language: Spanish).
+They connect the domain glossary, architecture, contracts and contributor workflow.
 
-```bash
-cargo test --release --workspace --all-features
-cargo test --manifest-path plugins/Cargo.toml --release --workspace --all-features
-```
-
-Build the fixture binaries/examples first. See [AGENTS.md](AGENTS.md#validación-completa)
-for the complete offline gate, helper variables, formatting, clippy and conformance
-scripts. Tests use private services and synthetic readers, not the physical deck.
-
-The target architecture, its decisions and the phased plan are documented in
-[docs/architecture.md](docs/architecture.md) (in Spanish).
+The application and plugins are separate Cargo workspaces. The
+[validation guide](docs/testing.md) is the single source for the complete offline
+gate, helper builds, test isolation, formatting, clippy and conformance scripts.
+Agents must also follow [AGENTS.md](AGENTS.md). Building does not require opening
+the editor or taking control of a device.
 
 ## Status
 
