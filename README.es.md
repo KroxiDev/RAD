@@ -51,6 +51,26 @@ Las capturas usan una configuración demo.
 
 ## Compilar y ejecutar
 
+Con GNU Make, desde la raíz del repositorio:
+
+```bash
+make up       # Compilar la aplicación en release, sin abrirla
+make up-full  # Compilar y abrir el editor solo si la compilación termina bien
+```
+
+Estos atajos compilan la aplicación, no los plugins, en modo offline y con el
+lockfile existente. Por defecto usan la caché `target/cargo-home` y dejan los
+binarios en `target/release`; puedes redefinir `CARGO_HOME` y `CARGO_TARGET_DIR`.
+El límite de compilaciones simultáneas se ajusta a las CPU disponibles, con un
+máximo de 8; puedes sobrescribirlo con `make up CARGO_BUILD_JOBS=4`.
+Si faltan dependencias en esa caché, descárgalas primero con
+`CARGO_HOME="$PWD/target/cargo-home" cargo fetch --locked` (requiere red).
+Si RAD ya está abierto, usa «Salir de RAD» en la bandeja antes de recompilar para
+que el próximo arranque use los binarios nuevos. `make up-full` abre la sesión
+normal de RAD, con sus datos y servicios; no es una prueba aislada.
+
+Sin Make, también puedes compilar y abrirlo directamente:
+
 ```bash
 cargo build --release
 target/release/rad-editor

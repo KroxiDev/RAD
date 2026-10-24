@@ -49,6 +49,26 @@ Screenshots use a demo configuration.
 
 ## Build and run
 
+With GNU Make, from the repository root:
+
+```bash
+make up       # Build the application in release mode without opening it
+make up-full  # Build and open the editor only if the build succeeds
+```
+
+These shortcuts build the application, not plugins, offline with the existing
+lockfile. By default they use the `target/cargo-home` cache and put binaries in
+`target/release`; you can override `CARGO_HOME` and `CARGO_TARGET_DIR`.
+The parallel build limit follows the available CPUs, up to 8; override it with
+`make up CARGO_BUILD_JOBS=4`.
+If dependencies are missing from that cache, download them first with
+`CARGO_HOME="$PWD/target/cargo-home" cargo fetch --locked` (requires network access).
+If RAD is already open, choose "Quit RAD" in the tray before rebuilding so the
+next launch uses the new binaries. `make up-full` opens your normal RAD session,
+with its data and services; it is not an isolated test.
+
+Without Make, you can also build and open it directly:
+
 ```bash
 cargo build --release
 target/release/rad-editor
