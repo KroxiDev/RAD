@@ -1,5 +1,16 @@
 fn main() -> Result<(), eframe::Error> {
     use std::{path::PathBuf, sync::Arc};
+    let _update_guard = match rad_update::gate::startup_guard() {
+        Ok(Some(guard)) => guard,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            eprintln!("RAD startup update gate: {error}");
+            return Ok(());
+        }
+    };
+    let open_updates = std::env::args()
+        .skip(1)
+        .any(|argument| argument == "--updates");
     let activation = Arc::new(rad_editor::activation::WindowActivation::default());
     let (notify, quit) = (activation.clone(), activation.clone());
     let _instance = match rad_editor::activation::Instance::claim(
@@ -47,7 +58,11 @@ fn main() -> Result<(), eframe::Error> {
         options,
         Box::new(move |creation| {
             activation.bind(&creation.egui_ctx);
-            Ok(Box::new(rad_editor::app::App::new(runtime, theme)))
+            let mut app = rad_editor::app::App::new(runtime, theme);
+            if open_updates {
+                app.open_update_result();
+            }
+            Ok(Box::new(app))
         }),
     )
 }

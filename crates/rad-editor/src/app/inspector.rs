@@ -65,7 +65,7 @@ impl App {
         });
     }
     /// The draft differs from what the runtime last published for this key.
-    fn unsaved(&self) -> bool {
+    pub(super) fn unsaved(&self) -> bool {
         self.inspection.as_ref().is_some_and(|published| {
             let published = Draft::load(published);
             let draft = &self.draft;

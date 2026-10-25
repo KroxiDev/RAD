@@ -44,6 +44,11 @@ fn run() -> Result<(), Exit> {
             "directorio de runtime inseguro o inaccesible; se requiere un directorio privado sin symlinks",
         )
     })?;
+    // Preserve the runtime's specific environment/path diagnostics, while acquiring
+    // the lifetime lease before any Store, worker, socket authority or device use.
+    let _update_guard = rad_update::gate::startup_guard()
+        .map_err(|_| Exit::Blocking("no se pudo comprobar la actualización de RAD"))?
+        .ok_or(Exit::Blocking("RAD se está actualizando"))?;
     // This must precede Server/worker creation: worker threads inherit the blocked mask.
     let signals = ShutdownSignals::install()
         .map_err(|_| Exit::Unexpected(Reason::Startup, "no se pudo instalar signalfd"))?;

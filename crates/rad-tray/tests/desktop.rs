@@ -38,6 +38,8 @@ impl Bus {
         let runtime = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
             .join(format!("tray-bus-{}", std::process::id()));
         std::fs::create_dir_all(&runtime).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut child = Command::new("dbus-daemon")
             .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
             .arg(format!(

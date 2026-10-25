@@ -10,6 +10,7 @@ pub enum Section {
     Backup,
     Plugins,
     Automation,
+    Updates,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

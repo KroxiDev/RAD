@@ -24,16 +24,26 @@ impl App {
     /// Shows a section of the settings; coming from the keys, the drafts start from what the
     /// runtime last published.
     pub(super) fn open_settings(&mut self, section: Section) {
+        if self.navigation.screen() == Screen::Settings(Section::Updates)
+            && section != Section::Updates
+            && !self.updates.leave()
+        {
+            return;
+        }
         if self.navigation.screen() == Screen::Keys {
             self.settings = self.status["settings"].clone();
             self.global_permissions = json!({"own":self.status["global_permissions"]});
         }
+        if section == Section::Updates
+            && self.navigation.screen() != Screen::Settings(Section::Updates)
+        {
+            self.updates.enter();
+            self.update_outcome_asked = false;
+        }
         self.navigation.open(section);
     }
     fn general_unapplied(&self) -> bool {
-        self.connected
-            && !self.status["settings"].is_null()
-            && self.settings != self.status["settings"]
+        !self.status["settings"].is_null() && self.settings != self.status["settings"]
     }
     /// What leaving the settings would lose: the General draft, a plugin's settings or a
     /// password being typed.
@@ -50,6 +60,15 @@ impl App {
     }
     /// Back or Esc: to the keys, unless something unapplied makes the screen ask first.
     pub(super) fn leave_settings(&mut self) {
+        if self.navigation.screen() == Screen::Settings(Section::Updates) {
+            if self.updates.relaying() {
+                return;
+            }
+            if self.updates.installation() == &crate::updates::Installation::Confirming {
+                self.updates.cancel_confirmation();
+                return;
+            }
+        }
         let unapplied = self.settings_unapplied();
         if self.navigation.back(unapplied) {
             self.settings_closed();
@@ -61,6 +80,8 @@ impl App {
     }
     /// Nothing of the settings outlives their screen.
     fn settings_closed(&mut self) {
+        self.updates.leave();
+        self.update_outcome_asked = false;
         self.settings = self.status["settings"].clone();
         if matches!(self.plugins.form, Some((FormTarget::Settings(_), _))) {
             self.plugins.clear_form();
@@ -90,12 +111,13 @@ impl App {
                         (Section::Backup, "Backup"),
                         (Section::Plugins, "Plugins"),
                         (Section::Automation, "Automation"),
+                        (Section::Updates, "Updates"),
                     ] {
                         if ui
                             .selectable_label(section == choice, tr(self.es, en))
                             .clicked()
                         {
-                            self.navigation.open(choice);
+                            self.open_settings(choice);
                         }
                     }
                 });
@@ -132,17 +154,23 @@ impl App {
             });
         // Plugin status is asked for only while its section is in view.
         self.plugins.section_open = section == Section::Plugins;
-        if section != Section::Plugins && self.plugins.dependency_credentials.take().is_some() {
+        if !matches!(section, Section::Plugins | Section::Updates)
+            && self.plugins.dependency_credentials.take().is_some()
+        {
             self.credentials.clear();
         }
     }
     fn settings_section(&mut self, ui: &mut egui::Ui, look: &Look, section: Section) {
+        if section == Section::Updates {
+            return self.updates_view(ui, look);
+        }
         ui.add_enabled_ui(
             self.connected || section == Section::General,
             |ui| match section {
                 Section::General => self.device(ui, look),
                 Section::Backup => self.backup(ui, look),
                 Section::Plugins => {}
+                Section::Updates => self.updates_view(ui, look),
                 Section::Automation => {
                     ui.label(look.muted_text(tr(
                         self.es,
@@ -336,9 +364,47 @@ impl App {
             });
         }
     }
+    fn export_backup(&mut self) {
+        if !self.connected
+            || !self.recovery.is_normal()
+            || self.transfer_active
+            || self.updates.busy()
+        {
+            return;
+        }
+        if self.update_drafts() {
+            self.warn(tr(
+                self.es,
+                "Save pending changes before exporting a backup.",
+            ));
+            return;
+        }
+        if self.command(Job::ExportBackup) {
+            self.transfer_active = true;
+        }
+    }
     fn backup(&mut self, ui: &mut egui::Ui, look: &Look) {
         ui.label(look.muted_text(tr(self.es, "Saves your keys, folders and images to one file. Credentials and plugin programs are not included.")));
         ui.add_space(4.);
+        if self.connected
+            && self.recovery.is_normal()
+            && !self.transfer_active
+            && !self.updates.busy()
+        {
+            if self.update_drafts() {
+                ui.label(tr(
+                    self.es,
+                    "Save pending changes before exporting a backup.",
+                ));
+            } else if ui.add(look.primary(tr(self.es, "Export Backup"))).clicked() {
+                self.export_backup();
+            }
+        }
+        ui.label(look.muted_text(tr(
+            self.es,
+            "One-click backups are saved in RAD Backups in your home folder.",
+        )));
+        ui.add_space(8.);
         ui.add(
             look.field(&mut self.backup_path, tr(self.es, "/path/to/backup.rad"))
                 .desired_width(f32::INFINITY),
@@ -386,5 +452,120 @@ impl App {
                 }
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+    // Rendering Updates must never read or maintain the real session's updater state.
+    struct InMemoryUpdates;
+    impl crate::updates::Backend for InMemoryUpdates {
+        fn check(&self, _: &rad_update::Cancellation) -> Result<rad_update::CheckResult, String> {
+            panic!("checking was not requested")
+        }
+        fn prepare(
+            &self,
+            _: &rad_update::Candidate,
+            _: &rad_update::Cancellation,
+            _: &rad_update::Progress,
+        ) -> Result<rad_update::Prepared, String> {
+            panic!("preparation was not requested")
+        }
+        fn handoff(&self, _: &rad_update::Prepared) -> Result<(), String> {
+            panic!("handoff was not requested")
+        }
+        fn discard(&self, _: &rad_update::Prepared) {
+            panic!("no prepared update exists")
+        }
+    }
+    fn app() -> App {
+        let root = std::env::temp_dir().join(format!("rad-backup-ui-{}", std::process::id()));
+        let mut app = App::with_preferences_path(root.clone(), root.join("theme"), None);
+        app.connected = true;
+        app.es = crate::preferences::Language::En;
+        app.updates = crate::updates::Controller::new(std::sync::Arc::new(InMemoryUpdates));
+        app
+    }
+    fn texts(app: &mut App, section: Section) -> Vec<String> {
+        app.open_settings(section);
+        let ctx = egui::Context::default();
+        ctx.run_ui(Default::default(), |ui| {
+            app.settings_screen(ui, &Look::new(&Default::default()))
+        })
+        .shapes
+        .iter()
+        .filter_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                Some(text.galley.job.text.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
+    }
+    #[test]
+    fn one_click_export_is_explicit_and_blocks_duplicates_and_unsaved_drafts() {
+        let mut app = app();
+        let (sent, received) = std::sync::mpsc::channel();
+        app.worker = crate::worker::Worker::spawn(move |job| {
+            sent.send(format!("{job:?}")).unwrap();
+            crate::native::Event {
+                plugin_apply: false,
+                plugin_admin: false,
+                plugin_manifest: false,
+                plugin_dependencies: false,
+                plugin_form: false,
+                plugin_visual: false,
+                connected: true,
+                transfer_job: true,
+                result: Ok(crate::native::Reply::TransferProgress(0)),
+                palette: Default::default(),
+            }
+        });
+        let _ = texts(&mut app, Section::Backup);
+        assert!(
+            received.try_recv().is_err(),
+            "entry must not start a backup"
+        );
+        app.export_backup();
+        assert!(
+            app.transfer_active,
+            "the explicit click must reserve its transfer"
+        );
+        assert_eq!(
+            received
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap(),
+            "ExportBackup"
+        );
+        app.export_backup();
+        assert!(
+            received.try_recv().is_err(),
+            "a second click must not export twice"
+        );
+        app.transfer_active = false;
+        app.status = serde_json::json!({"settings":{"brightness_percent":10}});
+        app.settings = serde_json::json!({"brightness_percent":20});
+        app.export_backup();
+        assert!(
+            !app.transfer_active,
+            "unpublished drafts must be resolved first"
+        );
+        assert!(received.try_recv().is_err());
+    }
+    #[test]
+    fn one_click_export_belongs_to_backup_settings_not_updates() {
+        let mut app = app();
+        assert!(
+            texts(&mut app, Section::Backup)
+                .iter()
+                .any(|text| text == "Export Backup")
+        );
+        assert!(
+            !texts(&mut app, Section::Updates)
+                .iter()
+                .any(|text| text == "Export Backup")
+        );
     }
 }

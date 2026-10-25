@@ -31,7 +31,11 @@ impl App {
         self.catalog_read = None;
         self.app_picker = Default::default();
         self.machine_due = false;
-        self.navigation.discard();
+        if self.navigation.screen()
+            != crate::screens::Screen::Settings(crate::screens::Section::Updates)
+        {
+            self.navigation.discard();
+        }
         self.say("");
     }
     /// The runtime works normally again, on this same connection: read everything anew, as
@@ -82,7 +86,12 @@ impl App {
         egui::Panel::top("bar")
             .frame(look.panel(look.surface, 10))
             .show(ui, |ui| {
-                ui.label(egui::RichText::new(tr(self.es, "RAD")).heading());
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(tr(self.es, "RAD")).heading());
+                    if ui.button(tr(self.es, "Updates")).clicked() {
+                        self.open_settings(crate::screens::Section::Updates);
+                    }
+                });
             });
         egui::Panel::bottom("status")
             .frame(

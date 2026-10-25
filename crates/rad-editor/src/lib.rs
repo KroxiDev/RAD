@@ -67,3 +67,7 @@ pub mod service;
 pub mod texts;
 
 pub mod activation;
+
+pub mod updates;
+
+pub mod backups;

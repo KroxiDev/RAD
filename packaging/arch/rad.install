@@ -1,0 +1,9 @@
+post_install() {
+  printf '%s\n' 'RAD: after quitting an older checkout, run /usr/bin/rad-editor once as your normal user to reconcile the menu and services.'
+}
+post_upgrade() {
+  post_install
+}
+pre_remove() {
+  printf '%s\n' 'RAD: quit RAD from its tray before removal. User data and autostart preferences are preserved.'
+}

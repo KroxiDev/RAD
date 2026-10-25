@@ -1,0 +1,18 @@
+# Generated from packaging/release.json by packaging/release.py; local binary bundle.
+pkgname=@PACKAGE@
+pkgver=@VERSION@
+pkgrel=@PKGREL@
+pkgdesc='Rust Action Deck: local Stream Deck runtime and native editor'
+arch=('x86_64')
+url='https://github.com/KroxiDev/RAD'
+license=('MIT')
+depends=('glibc>=@GLIBC_MIN@' 'gcc-libs' 'glib2' 'libxkbcommon' 'wayland'
+         'libglvnd' 'systemd>=254' 'polkit' 'pacman' 'curl>=8.4.0')
+options=('!strip' '!debug')
+install=rad.install
+source=('rad-@VERSION@-@PKGREL@.tar.zst')
+sha256sums=('@BUNDLE_SHA256@')
+
+package() {
+  cp -a "$srcdir/rad/usr" "$pkgdir/"
+}

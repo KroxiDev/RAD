@@ -38,7 +38,8 @@ Screenshots use a demo configuration.
 
 ## Requirements
 
-- Linux with Wayland, an OpenGL-capable driver and a recent Rust toolchain supporting edition 2024.
+- Linux with Wayland and an OpenGL-capable driver. A recent Rust toolchain
+  supporting edition 2024 is needed only for source builds.
 - Read/write access to the Stream Deck's `hidraw` node. Distributions with the
   systemd audiovisual-controller hwdb and udev rules can grant active-session
   access through `uaccess`; check your distribution's device permissions.
@@ -46,6 +47,25 @@ Screenshots use a demo configuration.
 - GPU/VRAM metrics: the NVIDIA driver with NVML. CPU/RAM do not require NVIDIA.
 - OBS: local OBS Studio with its WebSocket server enabled.
 - Tests: `bwrap`, `pactl`, `dbus-daemon` and Linux namespace support.
+
+## Binary packages and updates
+
+Arch binary-package tooling targets **Omarchy 4.0.6 x86-64** as `rust-action-deck`.
+A published, verified stable release is not implied by the presence of that tooling;
+see the [distribution status and procedure](packaging/README.md).
+The package includes the editor, runtime, tray, launcher helper, CLI and updater;
+Rust is required to build it, not to use a precompiled package.
+
+Updates are checked only when you click **Check for updates** in **Settings → Updates**.
+Only stable official `KroxiDev/RAD` releases are eligible. A supported package
+installation offers **Update RAD** for a newer version; it downloads and verifies
+before stopping RAD, asks for system authorization and reopens the editor.
+There are no startup checks, tray notifications or automatic installations.
+Development checkouts cannot replace the system installation through this flow.
+The trust model is the official GitHub origin over HTTPS, **not an independent
+package signature**; pacman's configured signature checks are never disabled.
+Keep a private backup before testing installation/removal; portable RAD exports
+exclude credentials. See [installation and recovery](packaging/README.md#retirar-reinstalar-y-recuperar).
 
 ## Build and run
 
@@ -90,6 +110,11 @@ under `$XDG_RUNTIME_DIR/rad`.
 The current deck document is v4; the SQLite store and backup container remain v2.
 Older data migrates forward while preserving the original; a v1 store keeps a
 `.v1-backup`.
+In **Settings → Backup**, **Export Backup** saves a new copy to `~/RAD Backups`
+without entering a path or overwriting earlier copies. Save pending edits first;
+the completed file's location is available under **View details**. Copies exclude
+credentials and plugin programs, so they are not a full installation backup.
+
 Backups are portable between installations; editor preferences stay local in
 `$XDG_CONFIG_HOME/rad/editor.json` (or `~/.config/rad/editor.json`). See the
 [data formats](docs/formats.md) reference for compatibility and limits.

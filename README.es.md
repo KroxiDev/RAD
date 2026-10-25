@@ -39,7 +39,8 @@ Las capturas usan una configuración demo.
 
 ## Requisitos
 
-- Linux con Wayland, un driver compatible con OpenGL y un Rust reciente que soporte la edición 2024.
+- Linux con Wayland y un driver compatible con OpenGL. Un Rust reciente que
+  soporte la edición 2024 se necesita solo para compilar desde el código fuente.
 - Acceso de lectura/escritura al nodo `hidraw` del Stream Deck. Las distribuciones
   con el hwdb de controladores audiovisuales de systemd y sus reglas udev pueden
   conceder acceso a la sesión activa mediante `uaccess`; comprueba los permisos
@@ -48,6 +49,25 @@ Las capturas usan una configuración demo.
 - Métricas GPU/VRAM: driver NVIDIA con NVML. CPU/RAM no requieren NVIDIA.
 - OBS: OBS Studio local con su servidor WebSocket habilitado.
 - Tests: `bwrap`, `pactl`, `dbus-daemon` y soporte de namespaces Linux.
+
+## Paquetes binarios y actualizaciones
+
+La receta Arch apunta a **Omarchy 4.0.6 x86-64** con el nombre `rust-action-deck`.
+Que exista la herramienta no significa que haya una release estable publicada y
+verificada; consulta el [estado y procedimiento de distribución](packaging/README.md).
+El paquete incluye editor, runtime, bandeja, helper de aplicaciones, CLI y actualizador;
+Rust se necesita para construirlo, no para usar un paquete precompilado.
+
+Solo se consulta al pulsar **Verificar actualizaciones** en **Ajustes → Actualizaciones**.
+Son elegibles únicamente releases estables oficiales de `KroxiDev/RAD`. Una
+instalación de paquete soportada ofrece **Actualizar RAD** ante una versión
+superior: descarga y verifica antes de parar RAD, pide autorización del sistema y
+reabre el editor. No hay consultas al inicio, avisos de bandeja ni instalaciones
+automáticas. Un checkout de desarrollo no puede sustituir la instalación del
+sistema por esta vía. Se confía en el origen oficial GitHub por HTTPS, **no en una
+firma independiente del paquete**; no se desactivan los controles de firma de pacman.
+Antes de probar instalación o retirada, conservar un respaldo privado; las copias
+portables RAD no incluyen credenciales. Consulta [instalación y recuperación](packaging/README.md#retirar-reinstalar-y-recuperar).
 
 ## Compilar y ejecutar
 
@@ -92,6 +112,12 @@ bajo `$XDG_RUNTIME_DIR/rad`.
 El documento actual del deck es v4; el Store SQLite y el contenedor de copias
 siguen en v2. Los datos anteriores migran hacia adelante conservando el original;
 un Store v1 conserva un `.v1-backup`.
+En **Ajustes → Copias**, **Exportar copia** guarda una copia nueva en `~/RAD Backups`
+sin escribir una ruta ni sobrescribir copias anteriores. Guarda primero los cambios
+pendientes; la ubicación del archivo terminado aparece bajo **Ver detalles**.
+Las copias no incluyen contraseñas ni ejecutables de plugins y no equivalen a un
+respaldo completo de la instalación.
+
 Las copias son portables entre instalaciones; las preferencias del editor quedan
 en `$XDG_CONFIG_HOME/rad/editor.json` (o `~/.config/rad/editor.json`). Consulta los
 [formatos de datos](docs/formats.md) para conocer la compatibilidad y los límites.

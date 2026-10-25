@@ -23,3 +23,19 @@ Fuentes de la situación actual:
 el manejo de `Reply::TransferProgress` en [`App`](../crates/rad-editor/src/app.rs).
 El diseño se contrasta con el [checklist de UX](ux.md#checklist-para-cambios-en-la-interfaz)
 y se verifica con la [política de pruebas](testing.md).
+
+## Distribución y actualizaciones
+
+Código y receta preparados según [ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md)
+y [procedimiento de empaquetado](../packaging/README.md). Pendiente de cierre:
+
+- Verificación del artefacto final y del flujo con systemd/polkit/pacman reales;
+  los dobles no certifican integración ni compatibilidad de Omarchy.
+- Primera release estable utilizable y actualización desde una versión anterior;
+  publicación, tags y acceso remoto de escritura requieren encargo separado.
+- Confirmar disponibilidad del nombre del paquete antes de su primera publicación.
+- Congelar y validar un snapshot de construcción Omarchy 4.0.6; el número de
+  distribución no congela sus bibliotecas rolling.
+
+No se presenta una release como disponible por existir la receta. No introducir
+CI, AUR, canales beta, actualización de plugins o rollback automático por inferencia.

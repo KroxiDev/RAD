@@ -25,6 +25,7 @@ mod plugins;
 mod recovery;
 mod service;
 mod settings;
+mod updates;
 
 use look::Look;
 
@@ -164,6 +165,9 @@ pub struct App {
     styled: Option<Palette>,
     /// Keys or settings: the screen that fills the window.
     navigation: crate::screens::Navigation,
+    updates: crate::updates::Controller,
+    update_outcome_asked: bool,
+    update_reopen_ack: bool,
     /// Back from a plugin form in the key panel.
     form_leave: crate::screens::Leave,
     settings: Value,
@@ -290,6 +294,9 @@ impl App {
             palette: Palette::default(),
             styled: None,
             navigation: Default::default(),
+            updates: Default::default(),
+            update_outcome_asked: false,
+            update_reopen_ack: false,
             form_leave: Default::default(),
             settings: Value::Null,
             new_name: String::new(),
@@ -998,7 +1005,7 @@ impl App {
                     self.transfer_active = true;
                     self.say(format!("{} {n}", tr(self.es, "Transferred bytes:")));
                 }
-                Ok(Reply::TransferFinished { kind, data }) => {
+                Ok(Reply::TransferFinished { kind, data, path }) => {
                     self.transfer_active = false;
                     match kind {
                         TransferKind::Image => {
@@ -1024,10 +1031,24 @@ impl App {
                                 .into(),
                             };
                         }
-                        TransferKind::Export => self.say(tr(self.es, "Export finished")),
+                        TransferKind::Export => {
+                            self.say(tr(self.es, "Export finished"));
+                            if let Some(path) = path {
+                                self.backup_path = path.display().to_string();
+                                self.message_code = self.backup_path.clone();
+                            }
+                        }
                     }
                 }
             }
+        }
+        if matches!(
+            self.updates.installation(),
+            crate::updates::Installation::Ready
+                | crate::updates::Installation::HandingOff
+                | crate::updates::Installation::Relayed
+        ) {
+            return;
         }
         if self.reconnect_needed && !self.worker.busy() {
             self.reconnect_needed = false;
@@ -1269,20 +1290,45 @@ impl eframe::App for App {
             self.search_wake = Some(crate::worker::WakeTimer::new(move || {
                 wake.request_repaint()
             }));
+            let wake = ctx.clone();
+            self.updates.set_waker(move || wake.request_repaint());
             self.wake_registered = true;
         }
-        self.pump(&ctx);
-        self.pump_auxiliary(&ctx);
+        self.updates.poll();
+        if self.updates.installation() == &crate::updates::Installation::Ready
+            && !self.update_drafts()
+            && !self.update_pending()
+        {
+            self.updates.handoff();
+        }
+        if self.updates.installation() == &crate::updates::Installation::Relayed {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if !self.updates.relaying() {
+            self.pump(&ctx);
+            self.pump_auxiliary(&ctx);
+        }
         if self.credential_selection != self.selected() {
             self.credentials.clear();
             self.credential_selection = self.selected();
         }
-        self.shortcuts(&ctx);
+        if !matches!(
+            self.updates.installation(),
+            crate::updates::Installation::Preparing
+                | crate::updates::Installation::Ready
+                | crate::updates::Installation::HandingOff
+                | crate::updates::Installation::Relayed
+        ) {
+            self.shortcuts(&ctx);
+        }
         let look = Look::new(&self.palette);
         // Background polling must not gate the controls: disabling them every poll made
         // the panels blink and took keyboard focus away from their text fields.
         let editable = self.connected && !self.transfer_active;
-        if !self.recovery.is_normal() {
+        if !self.recovery.is_normal()
+            && self.navigation.screen()
+                != crate::screens::Screen::Settings(crate::screens::Section::Updates)
+        {
             self.recovery_view(ui, &look);
             return;
         }
@@ -1291,6 +1337,18 @@ impl eframe::App for App {
             self.keys_screen(ui, &look, editable);
         } else {
             self.settings_screen(ui, &look);
+        }
+        if self.updates.installation() == &crate::updates::Installation::Ready {
+            ctx.request_repaint();
+        }
+        if self.update_reopen_ack
+            && self.navigation.screen()
+                == crate::screens::Screen::Settings(crate::screens::Section::Updates)
+        {
+            self.update_reopen_ack = false;
+            if let Err(error) = rad_update::coordinator::acknowledge_reopen() {
+                eprintln!("RAD update reopen acknowledgement: {error}");
+            }
         }
         // A password is typed only next to the form or the plugin that asks for it.
         if self.plugins.form.is_none() && self.plugins.dependency_credentials.is_none() {

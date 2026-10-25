@@ -1,6 +1,7 @@
 //! The sole owner of blocking socket, transfer and theme IO; off the GUI thread.
 use crate::{
     Request,
+    backups::ExportFile,
     icons::Icons,
     session::{Error, Inspection, Refresh, Session},
     theme::Palette,
@@ -14,7 +15,6 @@ use rad_client::{
 use serde_json::{Value, json};
 use std::{
     fs::File,
-    io::Write,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -50,6 +50,8 @@ pub enum Job {
         path: PathBuf,
         kind: TransferKind,
     },
+    /// Export to the private default backup folder, resolved on this worker.
+    ExportBackup,
     TransferStep,
     Image {
         id: String,
@@ -96,6 +98,7 @@ pub enum Reply {
     TransferFinished {
         kind: TransferKind,
         data: Value,
+        path: Option<PathBuf>,
     },
     /// The key keeps its look: it has an image, or its application ships no usable icon.
     NoAppIcon,
@@ -123,58 +126,37 @@ pub struct Event {
     pub result: Result<Reply, Error>,
     pub palette: Palette,
 }
-struct PartialFile {
-    file: File,
-    path: PathBuf,
-    complete: bool,
-}
-impl Write for PartialFile {
-    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-        self.file.write(b)
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.file.flush()
-    }
-}
-impl Drop for PartialFile {
-    fn drop(&mut self) {
-        if !self.complete {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
 enum Transfer {
     Upload(TransferKind, Upload<File>),
-    Download(Download<PartialFile>),
+    Download(Download<ExportFile>),
+}
+fn begin_export(writer: ExportFile, s: &mut Session<Client>) -> Result<Transfer, Error> {
+    let data = s
+        .request(crate::Request::TransferBegin {
+            kind: rad_api::TransferKind::Export,
+            size: None,
+        })?
+        .data;
+    let rad_api::ResponseData::Transfer(data) = data else {
+        return Err(Error::protocol());
+    };
+    Ok(Transfer::Download(Download::new(writer, data.transfer_id)))
 }
 fn begin(path: PathBuf, kind: TransferKind, s: &mut Session<Client>) -> Result<Transfer, Error> {
     if kind == TransferKind::Export {
-        use std::os::unix::fs::OpenOptionsExt;
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|_| transfer::io_error())?;
-        let writer = PartialFile {
-            file,
-            path,
-            complete: false,
-        };
-        let data = s
-            .request(crate::Request::TransferBegin {
-                kind: rad_api::TransferKind::Export,
-                size: None,
-            })?
-            .data;
-        let rad_api::ResponseData::Transfer(data) = data else {
-            return Err(Error::protocol());
-        };
-        let id = data.transfer_id;
-        Ok(Transfer::Download(Download::new(writer, id)))
+        let writer = ExportFile::at(path).map_err(|_| transfer::io_error())?;
+        begin_export(writer, s)
     } else {
         upload(path, kind, s).map(|upload| Transfer::Upload(kind, upload))
     }
+}
+fn automatic_backup(s: &mut Session<Client>) -> Result<Transfer, Error> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(transfer::io_error)?;
+    let writer = ExportFile::automatic(&home, std::time::SystemTime::now())
+        .map_err(|_| transfer::io_error())?;
+    begin_export(writer, s)
 }
 /// Opens `path` and announces its upload; the runtime validates what arrives.
 fn upload(
@@ -267,15 +249,17 @@ fn step(active: &mut Option<Transfer>, s: &mut Session<Client>) -> Result<Reply,
             Ok(Progress::Chunk(n)) => offset = n,
             Ok(Progress::Finished(data)) => {
                 let transfer = active.take().unwrap();
-                let kind = match transfer {
-                    Transfer::Upload(k, _) => k,
-                    Transfer::Download(d) => {
-                        let mut file = d.into_inner();
-                        file.complete = true;
-                        TransferKind::Export
+                let (kind, path) = match transfer {
+                    Transfer::Upload(kind, _) => (kind, None),
+                    Transfer::Download(download) => {
+                        let path = download
+                            .into_inner()
+                            .finish()
+                            .map_err(|_| transfer::io_error())?;
+                        (TransferKind::Export, Some(path))
                     }
                 };
-                return Ok(Reply::TransferFinished { kind, data });
+                return Ok(Reply::TransferFinished { kind, data, path });
             }
         }
         if started.elapsed() >= Duration::from_millis(20) {
@@ -308,7 +292,10 @@ pub fn start_with_clock(
             matches!(&job,Job::Request(r) if r.operation().as_str()=="plugin_dependencies");
         let plugin_form = matches!(&job, Job::PluginForm { .. });
         let plugin_visual = matches!(&job, Job::PluginVisuals { .. });
-        let transfer_job = matches!(job, Job::Transfer { .. } | Job::TransferStep);
+        let transfer_job = matches!(
+            job,
+            Job::Transfer { .. } | Job::ExportBackup | Job::TransferStep
+        );
         // Only the plugin manager also answers `recovery_required`, so any other job
         // refused with it was refused by the runtime's recovery mode.
         let recovery_aware = match &job {
@@ -318,6 +305,7 @@ pub fn start_with_clock(
             | Job::Image { .. }
             | Job::AppIcon { .. }
             | Job::Transfer { .. }
+            | Job::ExportBackup
             | Job::TransferStep => true,
             _ => false,
         };
@@ -461,6 +449,21 @@ pub fn start_with_clock(
                         } else {
                             begin(path, kind, s).map(|t| {
                                 active = Some(t);
+                                Reply::TransferProgress(0)
+                            })
+                        }
+                    }
+                    Job::ExportBackup => {
+                        if active.is_some() {
+                            Err(Error {
+                                code: "busy".into(),
+                                cause: None,
+                                source_change: None,
+                                unknown: false,
+                            })
+                        } else {
+                            automatic_backup(s).map(|transfer| {
+                                active = Some(transfer);
                                 Reply::TransferProgress(0)
                             })
                         }

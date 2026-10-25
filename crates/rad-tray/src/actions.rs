@@ -81,6 +81,10 @@ impl Actions {
     }
 }
 fn open_editor(bus: &gio::DBusConnection, editor: &std::path::Path, launch: &mut Option<Child>) {
+    // A menu click must not race the installation coordinator into a new editor.
+    if !matches!(rad_update::gate::startup_allowed(), Ok(true)) {
+        return;
+    }
     let platform = std::collections::BTreeMap::<String, gio::glib::Variant>::new();
     match bus.call_sync(
         Some(EDITOR),

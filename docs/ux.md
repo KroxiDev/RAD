@@ -73,6 +73,13 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
 - **Resolver antes de preguntar.** Ante un resultado desconocido, el editor vuelve a
   leer el estado y muestra lo que ocurrió; solo si no puede saberlo lo dice en
   lenguaje llano. La acción se repite solo si el usuario la pide.
+- **Copias.** En Ajustes → Copias, «Export Backup» («Exportar copia» en español)
+  guarda con un clic la configuración publicada en `~/RAD Backups`, fuera de los
+  datos de RAD, con un nombre nuevo sin sobrescribir otras copias. No exporta al
+  abrir la sección y pide guardar borradores antes de iniciar. La exportación usa
+  el worker cliente, muestra la ubicación bajo «Ver detalles» al terminar y la deja
+  seleccionada para la restauración manual. No incluye contraseñas ni ejecutables
+  de plugins; no equivale a un respaldo completo de la instalación.
 - **Restaurar** es una sola acción, sin preguntas sobre IDs, y se puede deshacer.
 - **Plugins.** Los oficiales se instalan desde una lista, con un botón; uno de
   terceros, pegando su enlace de GitHub. Actualizar usa el origen registrado. Mientras
@@ -100,6 +107,34 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
 - **Progreso.** Las transferencias muestran una barra.
 - **Puesta en marcha.** El editor arranca RAD y ofrece «Iniciar RAD con el equipo»;
   el usuario nunca usa la terminal ([ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md)).
+
+## Actualizaciones de RAD
+
+Ajustes → Actualizaciones funciona también sin conexión con el runtime o durante
+recuperación. Entrar o abrir RAD no consulta Internet. Solo «Verificar
+actualizaciones» inicia una consulta; salir invalida su respuesta y su candidato.
+No hay notificaciones, temporizadores ni indicadores fuera de esta sección.
+
+Antes de consultar no se afirma que RAD esté actualizado. «Verificando…» es
+transitorio; cada consulta termina únicamente en uno de estos tres resultados:
+
+| Resultado | Texto | Acción |
+|---|---|---|
+| Error | «No se pudo verificar si hay actualizaciones.» | Verificar actualizaciones · Ver detalles |
+| Sin versión superior | «No hay actualizaciones disponibles.» | Verificar actualizaciones |
+| Versión superior elegible | «Hay una actualización disponible.» | Actualizar RAD, solo si la instalación está gestionada por el paquete oficial |
+
+«Actualizar RAD» abre una confirmación dentro de Ajustes. Explica que RAD se
+cerrará brevemente y dejará de controlar el Stream Deck mientras se instala. No
+hay una descarga separada. Los borradores se conservan hasta que el usuario los
+guarde o descarte; las operaciones pendientes deben terminar antes del relevo.
+La descarga muestra progreso y permite cancelar antes del relevo sin detener RAD.
+
+El resultado de una instalación solicitada se muestra en esta sección tras la
+reapertura; los errores tienen «Ver detalles». No se confunden esos resultados con
+los tres de la consulta, ni se afirma éxito por haber lanzado un proceso. La
+confianza en GitHub oficial y sus límites están en
+[ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md).
 
 ## Checklist para cambios en la interfaz
 

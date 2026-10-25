@@ -2171,6 +2171,7 @@ dependencies = [
  "rad-api",
  "rad-client",
  "rad-plugin-contract",
+ "rad-update",
  "serde_json",
  "toml",
  "zeroize",
@@ -2287,6 +2288,7 @@ dependencies = [
  "rad-protocol",
  "rad-store",
  "rad-transport",
+ "rad-update",
  "rad-wire",
  "serde",
  "serde_json",
@@ -2323,7 +2325,20 @@ dependencies = [
  "gio",
  "image",
  "rad-editor",
+ "rad-update",
  "serde_json",
+]
+
+[[package]]
+name = "rad-update"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "libc",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

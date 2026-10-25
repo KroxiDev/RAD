@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 [dependencies]
+rad-update = { path = "../rad-update" }
 rad-plugin-package = { path = "../rad-plugin-package" }
 rad-api = { path = "../rad-api" }
 rad-credentials = { path = "../rad-credentials" }

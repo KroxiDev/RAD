@@ -142,8 +142,14 @@ fn check_workspace(root: &Path, workspace: &Path, allowed: &BTreeMap<String, Vec
                     );
                     if matches!(name, "rad-client" | "rad-editor" | "rad-tray") {
                         assert!(
-                            ["rad-wire", "rad-api", "rad-client", "rad-plugin-contract"]
-                                .contains(&local.as_str()),
+                            [
+                                "rad-wire",
+                                "rad-api",
+                                "rad-client",
+                                "rad-plugin-contract",
+                                "rad-update"
+                            ]
+                            .contains(&local.as_str()),
                             "client depends on implementation: {name} -> {local}"
                         );
                     }

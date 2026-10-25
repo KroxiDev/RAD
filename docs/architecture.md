@@ -122,6 +122,7 @@ El usuario ve el funcionamiento, no el mecanismo: principios S1–S5 en [ux.md](
 | 1 | `rad-codec` | Documento JSON de configuración, acotado | core |
 | 2 · Aplicación | `rad-authority` | Publicación, historial, navegación, vistas y bindings de plugins | plugin-contract, core, codec |
 | 3 · Adapters | `rad-store` | SQLite, identidades, revisiones, medios, recuperación y GC | core, codec, media |
+| 3 | `rad-update` | Subsistema independiente de instalación: contrato cliente, releases, descarga y coordinador/instalador limitado; sin datos del deck | ninguna |
 | 3 | `rad-credentials` | Vault cifrado privado y reconciliación | ninguna |
 | 3 | `rad-package` | Copias: exportar, restaurar y staging | core, codec, media |
 | 3 | `rad-plugin-manager` | Preparación, descarga, selector durable y journal | plugin-contract, plugin-package |
@@ -132,8 +133,8 @@ El usuario ve el funcionamiento, no el mecanismo: principios S1–S5 en [ux.md](
 | 4 · Traducción y composición | `rad-protocol` | API de clientes ↔ interface de aplicación | plugin-contract, authority, core, wire, api |
 | 4 | `rad-runtime` | Composición, event loop, efectos y ajustes de la máquina; único que compone adapters | todas las anteriores |
 | 5 · Clientes | `rad-client` | Conexión, consultas consistentes y CLI | wire, api |
-| 5 | `rad-tray` | Bandeja de sesión, activación del editor y parada del servicio | ninguna |
-| 5 | `rad-editor` | Presentación, catálogos de textos, preferencias, borradores y workers cliente | plugin-contract, client, api |
+| 5 | `rad-tray` | Bandeja de sesión, activación del editor y parada del servicio | update |
+| 5 | `rad-editor` | Presentación, catálogos de textos, preferencias, borradores y workers cliente | plugin-contract, client, api, update |
 | Extensiones (workspace `plugins/`) | `rad-plugin-sdk` | Handshake, framing, correlación, respuestas, suscripciones y límites | plugin-contract ([ADR 0007](adr/0007-contrato-de-plugins-v1.md)) |
 | Extensiones | plugins oficiales | Semántica de cada integración | SDK |
 
@@ -147,7 +148,8 @@ Reglas:
    `gio`, `glib`, `eframe`). `rad-core` no tiene dependencias.
 3. Los adapters no dependen entre sí; solo `rad-runtime` los compone.
 4. Los clientes dependen solo de contratos y de `rad-client`, nunca del dominio, la
-   autoridad ni los adapters.
+   autoridad ni los adapters. Excepción explícita: `rad-update` administra solo
+   la instalación, sin autoridad sobre datos del deck ([ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md)).
 5. Las extensiones dependen solo del SDK y del contrato.
 
 Un test de arquitectura lee los manifiestos y falla si una dependencia normal no
@@ -175,6 +177,7 @@ causa y `NotApplied` sin una segunda tabla de mutaciones.
 | Modelo nuevo de Stream Deck | `rad-deck` | Descriptor de modelo; el dominio cambia solo si hay controles nuevos |
 | Cambio de formato | Store, codec o package | Atomicidad, migración hacia adelante, evidencia preservada e importador con golden real |
 | Bug o refactor interno | Módulo dueño | Conserva la interface observable o declara el cambio; prueba la composición entre dueños |
+| Distribución y actualización de RAD | `rad-update`, editor y `packaging/` | Origen oficial, elevación mínima, relevo y recuperación de [ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md) |
 | Sandbox, firma u otras plataformas | Ampliación de alcance | Pedido explícito del usuario |
 
 ## Complejidad deliberada
@@ -241,3 +244,4 @@ Estas piezas parecen simplificables y no lo son:
 | [0015](adr/0015-gesto-del-plan-y-documento-v3.md) | Un gesto por botón, umbral global de pulsación larga y documento v3 |
 | [0016](adr/0016-presencia-de-escritorio.md) | Identidad de escritorio, bandeja independiente y activación de un único editor |
 | [0017](adr/0017-accion-nativa-sleep-y-documento-v4.md) | Acción nativa Sleep, transición compartida con inactividad y documento v4 |
+| [0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md) | Paquete Arch y actualizador independiente; confianza en GitHub oficial por HTTPS |

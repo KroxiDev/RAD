@@ -31,6 +31,10 @@ quedar en el disco del repo: los builds en tmpfs agotaron su cuota.
 export CARGO_HOME="$PWD/target/cargo-home"
 export CARGO_TARGET_DIR="$PWD/target"
 export CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
+# Los tests de recuperación y limpieza nunca deben heredar el runtime/estado personal.
+install -d -m 700 "$PWD/target/test-session/runtime" "$PWD/target/test-session/state"
+export XDG_RUNTIME_DIR="$PWD/target/test-session/runtime"
+export XDG_STATE_HOME="$PWD/target/test-session/state"
 cargo fmt --all -- --check
 cargo build --offline --locked --release --workspace --all-features --bins --examples
 export RAD_TEST_LAUNCHER_HELPER="$CARGO_TARGET_DIR/release/rad-launcher-helper"
@@ -47,6 +51,7 @@ cargo clippy --offline --locked --release --workspace --all-features --all-targe
 bash scripts/conformance/audio-media/run.sh
 bash scripts/conformance/obs/run.sh
 bash scripts/conformance/metrics/run.sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s packaging/tests -v
 ```
 
 Los ejemplos/helpers deben compilarse antes de tests focalizados. Una comprobación
@@ -60,6 +65,21 @@ el real dentro de `bwrap`, sin acceso al audio personal. Multimedia usa un bus
 D-Bus privado y reproductores falsos; OBS, servidores loopback efímeros; métricas,
 archivos y NVML falsos. Si el sandbox no permite ejecutarlos, informar lo no
 verificado: una suite verde no certifica hardware real ni todas las distribuciones.
+
+## Contratos del actualizador
+
+Las pruebas críticas de distribución son sintéticas y no certifican una sesión
+personal ni una publicación:
+
+| Comportamiento | Pruebas de referencia |
+|---|---|
+| Identidad/metadata, selección estable y comparación Arch | [`contract.rs`](../crates/rad-update/tests/contract.rs), [`releases.rs`](../crates/rad-update/tests/releases.rs) |
+| URL/bytes/tamaño/digest/cancelación | [`download.rs`](../crates/rad-update/tests/download.rs) |
+| Revalidación root, configuración y transacción limitada | [`installer.rs`](../crates/rad-update/tests/installer.rs) |
+| Recolección de temporales, dueños/namespace, enlaces y leases | [`staging_gc.rs`](../crates/rad-update/tests/staging_gc.rs) y pruebas sintéticas de IPC/herencia en `coordinator.rs`/`installer.rs` |
+| Exclusión de arranque, relevo/consentimiento y recuperación | [`lifecycle_gate.rs`](../crates/rad-update/tests/lifecycle_gate.rs), [`lifecycle_transaction.rs`](../crates/rad-update/tests/lifecycle_transaction.rs), [`lifecycle_recovery.rs`](../crates/rad-update/tests/lifecycle_recovery.rs) |
+| Clic explícito, duplicados, cancelación y respuesta tardía | [`updates.rs`](../crates/rad-editor/tests/updates.rs) y pruebas headless de [`app/updates.rs`](../crates/rad-editor/src/app/updates.rs) |
+| Layout, identidad del paquete, notices y entorno de build | [`test_release.py`](../packaging/tests/test_release.py) |
 
 ## Ciclo de vida de los tests
 
@@ -87,7 +107,7 @@ Casos que se conservan, o se añaden si falta cobertura.
 | Publicación y Store | Fallos de escritura, sync o rollback; before/after; reinicio; hold de evidencia corrupta; medios cambiados en la segunda pasada |
 | Formatos | Golden real de cada versión; importadores de v1, v2 y v3 en el Store y en la restauración; rechazo de versiones futuras |
 | Identidades | Contadores tras recuperación y restauración; poda tras el historial; límite sobre lo vigente con mensaje claro; un ShortId nunca reasignado |
-| Copias | Los tres destinos; reserva de ambos rangos; destino editado y deshecho hasta quedar vacío; deshacer tras restaurar; copia v1 real; ajustes de plugins restaurados; plugins ausentes ofrecidos para instalar |
+| Copias | Exportación de un clic solo en Copias; sin inicio automático, duplicados ni borradores omitidos; destino privado sin sobrescritura y limpieza de incompletos ([pruebas de archivos](../crates/rad-editor/tests/backups.rs)); los tres destinos; reserva de ambos rangos; destino editado y deshecho hasta quedar vacío; deshacer tras restaurar; copia v1 real; ajustes de plugins restaurados; plugins ausentes ofrecidos para instalar |
 | Host con runtime y Authority | Handshake, API, frames y correlaciones inválidas; flood; caída; residual de setup; deadline seguido de respuesta tardía o reap; parada y reap; selección distinta |
 | Demanda | Metadata sin proceso, primera demanda, reutilización, última baja, reactivación durante la parada, preparación administrativa retenida |
 | Credenciales | Revisión antigua y nueva, captura antes de esperar, Unknown, release con consumidor vivo, limpieza y ACK, desconexión |
@@ -97,4 +117,5 @@ Casos que se conservan, o se añaden si falta cobertura.
 | Escritorio | Entrada del menú e ícono instalados y reescritos solo si cambian; bandeja registrada también cuando aparece tarde; un solo editor abierto; «Salir» con parada limpia; ninguna ventana flotante |
 | Capas | Test de arquitectura contra la tabla y sus invariantes |
 | Audio, Media, OBS, Metrics | `pactl` colgado o con flood, con kill y reap; bus privado y epochs; backpressure y sin replay; CPU y RAM sin NVML y lector terminal |
+| Distribución de RAD | Metadata enlazada a bytes/identidad Arch; layout sin fixtures ni datos; rechazo de fuente sucia para release; consulta manual y cancelación; relevo y privilegios probados con dobles |
 | Instalación y paquetes | Configuración conservada al desinstalar y reinstalar, journal y reinicio, confianza explícita, cambio de origen, actualización desde el origen registrado, framing, límites y EOF |

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>RAD</vendor>
+  <vendor_url>https://github.com/KroxiDev/RAD</vendor_url>
+  <action id="io.github.KroxiDev.RAD.update">
+    <description>Update RAD from its official release</description>
+    <description xml:lang="es">Actualizar RAD desde su release oficial</description>
+    <message>Authentication is required to update RAD.</message>
+    <message xml:lang="es">Se requiere autorización para actualizar RAD.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/rad/rad-update-installer</annotate>
+  </action>
+</policyconfig>

@@ -28,6 +28,9 @@ fn pixmaps() -> Pixmaps {
         .collect()
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(_update_guard) = rad_update::gate::startup_guard()? else {
+        return Ok(());
+    };
     let bus = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE)?;
     let editor = std::env::current_exe()?
         .parent()
