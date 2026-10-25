@@ -649,7 +649,7 @@ fn collection_prunes_actor_registry_and_next_commit_does_not_resurrect_retired_i
             }
         } else {
             Edit::SetSettings(SettingsData {
-                brightness_percent: i,
+                brightness_percent: i + 10,
                 ..Default::default()
             })
         };
@@ -850,5 +850,109 @@ fn original_empty_backup_after_adoption_has_exact_undo_redo_and_reopens() {
     assert_eq!(
         Some(Store::open(&file.0).unwrap().load().unwrap().configuration),
         restored
+    );
+}
+
+#[test]
+fn native_brightness_without_client_publication_ticket_is_durable_through_the_real_store_worker() {
+    use rad_core::execution::{ExecutionStatus, Target};
+    let file = Fixture(std::env::temp_dir().join(format!(
+        "rad-native-brightness-{}.sqlite3",
+        std::process::id()
+    )));
+    let c = Configuration::prepare_new(&IdentityRegistry::new(731).unwrap()).unwrap();
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
+            Edit::CreateButton {
+                folder: c.configuration().data().principal,
+                position: 0,
+                name: "Brightness".into(),
+            },
+        )
+        .unwrap();
+    let button = c.configuration().data().buttons[0].binding.identity();
+    let initial = c
+        .configuration()
+        .prepare_edits(
+            c.registry(),
+            Origin::Editor,
+            &[
+                Edit::AddAction {
+                    button,
+                    kind: ActionKind::Brightness(BrightnessDirection::Increase),
+                },
+                Edit::SetSettings(SettingsData {
+                    brightness_percent: 55,
+                    ..SettingsData::default()
+                }),
+            ],
+        )
+        .unwrap();
+    let store = Store::create(&file.0, &initial).unwrap();
+    let mut actor = Authority::new(initial, 1, NonZeroU128::new(732).unwrap());
+    let mut poll = mio::Poll::new().unwrap();
+    let wake = Arc::new(mio::Waker::new(poll.registry(), mio::Token(9)).unwrap());
+    let mut persistence = Persistence::new(store, wake).unwrap();
+    let ticket = actor.reserve(1, Origin::Editor).unwrap();
+    let request = ticket.request();
+    let effects = actor.submit(
+        ticket,
+        Command::Run {
+            target: Target::Button(button),
+        },
+    );
+    let execution = effects
+        .iter()
+        .find_map(|e| {
+            if let Effect::Accepted { execution, .. } = e {
+                Some(*execution)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    assert!(actor.finish(request));
+    persistence.route(&mut actor, effects);
+    assert_eq!(
+        actor.settings(Origin::Editor).unwrap().brightness_percent,
+        55
+    );
+    let end = Instant::now() + Duration::from_secs(3);
+    let mut events = mio::Events::with_capacity(4);
+    loop {
+        let effects = persistence.poll(&mut actor);
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::Rejected { .. } | Effect::Unknown { .. }))
+        );
+        if actor.result(Origin::Editor, execution).unwrap().status == ExecutionStatus::Succeeded {
+            break;
+        }
+        assert!(
+            Instant::now() < end,
+            "native publication must finish without a client request binding"
+        );
+        poll.poll(&mut events, Some(Duration::from_millis(50)))
+            .unwrap();
+    }
+    assert_eq!(
+        actor.settings(Origin::Editor).unwrap().brightness_percent,
+        65
+    );
+    assert_eq!(actor.editor_view(Origin::Editor).unwrap().revision, 2);
+    drop(persistence);
+    let store = Store::open(&file.0).unwrap();
+    assert_eq!(
+        store
+            .load()
+            .unwrap()
+            .configuration
+            .settings()
+            .brightness_percent(),
+        65
     );
 }

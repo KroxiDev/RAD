@@ -367,7 +367,7 @@ mod tests {
         let effects = actor.submit(
             ticket,
             vec![Edit::SetSettings(SettingsData {
-                brightness_percent: 1,
+                brightness_percent: 11,
                 ..Default::default()
             })],
         );

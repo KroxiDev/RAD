@@ -1,0 +1,13 @@
+use rad_core::{configuration::*,identity::*};
+#[test]
+fn generate_v4_golden() {
+ let bytes=include_bytes!("../../../docs/fixtures/v3/profile.json");
+ let mut data=rad_codec::decode_data(bytes).unwrap();
+ data.settings.brightness_percent=5;
+ let registry=IdentityRegistry::new(data.principal.installation()).unwrap();
+ let initial=Configuration::prepare_new(&registry).unwrap();
+ let candidate=initial.configuration().prepare_restore(initial.registry(), Origin::Editor,true,data).unwrap();
+ let output=rad_codec::encode(candidate.configuration()).unwrap();
+ assert_eq!(rad_codec::document_version(&output).unwrap(),4);
+ std::fs::write("../../docs/fixtures/v4/profile.json",output).unwrap();
+}

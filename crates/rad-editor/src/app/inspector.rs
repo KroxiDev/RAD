@@ -1,7 +1,7 @@
 //! Bottom panel: what the selected key is and does. Only Try runs anything.
 use super::{
     App, Draft, Drag,
-    deck::{key_label, paint_key},
+    deck::{key_label, native_icon, paint_key},
     look::{Icon, Look, glyph_button, icon_button, menu_button, paint_icon},
     string, tr,
 };
@@ -78,6 +78,7 @@ impl App {
                 || published.order != draft.order
                 || published.waits != draft.waits
                 || published.entries != draft.entries
+                || published.brightness_directions != draft.brightness_directions
         })
     }
     fn save(&mut self) {
@@ -112,6 +113,14 @@ impl App {
             .filter(|(action, _)| action["fields"]["type"] == "launcher")
             .map(|(action, entry)| (string(&action["id"]), entry.clone()))
             .collect();
+        let brightness: Vec<_> = self
+            .inspection
+            .iter()
+            .flat_map(|i| &i.actions)
+            .zip(&self.draft.brightness_directions)
+            .filter(|(action, _)| action["fields"]["type"] == "brightness")
+            .map(|(action, direction)| (string(&action["id"]), *direction))
+            .collect();
         let request = commands::save_button(&commands::KeySave {
             id: &self.draft.id,
             name: &self.draft.name,
@@ -123,6 +132,7 @@ impl App {
             order: &self.draft.order,
             waits: &waits,
             launchers: &launchers,
+            brightness: &brightness,
         });
         self.send(request);
     }
@@ -241,21 +251,32 @@ impl App {
             return;
         };
         let published = view.appearance["image"].as_str();
-        let sleep_icon = self.draft.image.is_empty()
-            && view.appearance["visual_type"].is_null()
-            && (view.appearance["native_icon"] == "sleep"
-                || self.inspection.as_ref().is_some_and(|inspection| {
-                    inspection
-                        .actions
-                        .iter()
-                        .any(|action| action["fields"]["type"] == "sleep")
-                }));
+        let icon = if self.draft.image.is_empty() && view.appearance["visual_type"].is_null() {
+            native_icon(&view.appearance).or_else(|| {
+                self.inspection.as_ref().and_then(|inspection| {
+                    [
+                        ("sleep", rad_api::NativeIcon::Sleep),
+                        ("brightness", rad_api::NativeIcon::Brightness),
+                    ]
+                    .into_iter()
+                    .find_map(|(kind, icon)| {
+                        inspection
+                            .actions
+                            .iter()
+                            .any(|action| action["fields"]["type"] == kind)
+                            .then_some(icon)
+                    })
+                })
+            })
+        } else {
+            None
+        };
         let (label, position, image) = if self.inspection.is_some() {
             (
                 key_label(
                     &self.draft.text,
                     &self.draft.name,
-                    !self.draft.image.is_empty() || sleep_icon,
+                    !self.draft.image.is_empty() || icon.is_some(),
                 ),
                 self.draft.text_position.clone(),
                 published.filter(|reference| *reference == self.draft.image),
@@ -265,7 +286,7 @@ impl App {
                 key_label(
                     &string(&view.appearance["text"]),
                     &string(&view.entity["fields"]["name"]),
-                    published.is_some() || sleep_icon,
+                    published.is_some() || icon.is_some(),
                 ),
                 string(&view.appearance["text_position"]),
                 published,
@@ -273,7 +294,7 @@ impl App {
         };
         let texture = image.and_then(|reference| self.textures.get(reference));
         if !self.plugin_face(ui, look, id, preview) {
-            paint_key(ui, look, preview, &label, &position, texture, sleep_icon);
+            paint_key(ui, look, preview, &label, &position, texture, icon);
         }
     }
     /// Button that opens how the text is placed: at the top, in the middle or at the
@@ -487,6 +508,22 @@ impl App {
                     self.es,
                     "Any key wakes the deck without running its action",
                 ));
+            }
+            "brightness" => {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(22., 22.), egui::Sense::hover());
+                paint_icon(ui.painter(), rect.center(), Icon::Sun, look.muted);
+                ui.label(tr(self.es, "Brightness"));
+                let index = self.draft.order[display_index];
+                for (direction, label) in [
+                    (rad_api::BrightnessDirection::Increase, "Increase (+10)"),
+                    (rad_api::BrightnessDirection::Decrease, "Decrease (−10)"),
+                ] {
+                    ui.selectable_value(
+                        &mut self.draft.brightness_directions[index],
+                        direction,
+                        tr(self.es, label),
+                    );
+                }
             }
             "wait" => {
                 ui.label(tr(self.es, "Wait"));
@@ -727,5 +764,103 @@ impl App {
                     }
                 }
             });
+    }
+}
+
+#[cfg(test)]
+mod brightness_tests {
+    use super::*;
+
+    fn app() -> App {
+        let root =
+            std::env::temp_dir().join(format!("rad-brightness-inspector-{}", std::process::id()));
+        let mut app = App::with_preferences_path(root.clone(), root.join("theme"), None);
+        app.es = crate::preferences::Language::En;
+        app.inspection = Some(crate::session::Inspection {
+            button: json!({"id":"b2","fields":{"name":"Light","mode":"sequential","gesture":"press"}}),
+            appearance: json!({"text":"","image":null,"text_position":"bottom"}),
+            actions: vec![
+                json!({"id":"a3","fields":{"type":"brightness","parameters":{"direction":"increase"}}}),
+            ],
+        });
+        app.draft = Draft::load(app.inspection.as_ref().unwrap());
+        app
+    }
+
+    #[test]
+    fn brightness_has_only_increase_and_decrease_controls_not_plugin_configuration() {
+        let mut app = app();
+        let action = app.inspection.as_ref().unwrap().actions[0].clone();
+        let output = egui::Context::default().run_ui(Default::default(), |ui| {
+            ui.horizontal(|ui| {
+                app.action_content(
+                    ui,
+                    &Look::new(&Default::default()),
+                    &action,
+                    "brightness",
+                    0,
+                );
+            });
+        });
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect();
+        for expected in ["Brightness", "Increase (+10)", "Decrease (−10)"] {
+            assert!(
+                texts.iter().any(|text| text == expected),
+                "missing {expected}: {texts:?}"
+            );
+        }
+        assert!(!texts.iter().any(|text| text == "Configure…"));
+    }
+
+    #[test]
+    fn changing_brightness_direction_is_an_unsaved_draft_until_one_atomic_save() {
+        let mut app = app();
+        assert!(!app.unsaved());
+        app.draft.brightness_directions[0] = rad_api::BrightnessDirection::Decrease;
+        assert!(app.unsaved());
+        let (sent, received) = std::sync::mpsc::channel();
+        app.worker = crate::worker::Worker::spawn(move |job| {
+            if let Job::Request(request) = job {
+                sent.send(request.arguments()).unwrap();
+            }
+            crate::native::Event {
+                plugin_apply: false,
+                plugin_admin: false,
+                plugin_manifest: false,
+                plugin_dependencies: false,
+                plugin_form: false,
+                plugin_visual: false,
+                connected: false,
+                transfer_job: false,
+                palette: Default::default(),
+                result: Err(crate::session::Error::protocol()),
+            }
+        });
+        assert!(
+            received.try_recv().is_err(),
+            "a direction draft sends nothing"
+        );
+        app.save();
+        let request = received
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let changes = request["changes"].as_array().unwrap();
+        assert_eq!(
+            changes
+                .iter()
+                .filter(|edit| edit["id"] == "a3")
+                .collect::<Vec<_>>(),
+            vec![
+                &json!({"kind":"set","id":"a3","field":"parameters","value":{"direction":"decrease"}})
+            ]
+        );
+        assert!(app.unsaved(), "sending a request is not a publication");
     }
 }

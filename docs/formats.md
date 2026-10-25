@@ -6,13 +6,14 @@ Las decisiones están en [ADR 0002](adr/0002-identidades-sobre-lo-vigente.md),
 [0003](adr/0003-copias-portables.md), [0004](adr/0004-evolucion-de-formatos.md),
 [0005](adr/0005-tres-tipos-de-ajustes.md) y
 [0006](adr/0006-dispositivo-por-modelo.md) y
-[0017](adr/0017-accion-nativa-sleep-y-documento-v4.md).
+[0017](adr/0017-accion-nativa-sleep-y-documento-v4.md) y
+[0019](adr/0019-brightness-persistente-y-documento-v5.md).
 
 ## Versiones y compatibilidad
 
 | Formato | Escritor actual | Lectores |
 |---|---|---|
-| Documento JSON del deck | 4 | 1, 2 y 3 mediante importadores, 4 |
+| Documento JSON del deck | 5 | 1, 2, 3 y 4 mediante importadores, 5 |
 | Store SQLite | 2 | Migración única de 1, 2 |
 | Copia RADPKG | 2 | 1, 2 |
 | Preferencias del editor | 1 | 1 |
@@ -23,13 +24,13 @@ RAD para abrirlas. Un documento desconocido no se reemplaza por valores de fábr
 El lector heredado vive únicamente en `rad-codec`; Store y restauración lo
 reutilizan. El codec trabaja con bytes acotados, sin acceder al sistema de archivos.
 
-## Documento del deck v4
+## Documento del deck v5
 
 JSON UTF-8 de hasta **1 MiB**; el escritor canónico es `rad_codec::encode` y el
 lector es `rad_codec::decode_data`. La reconstrucción del dominio valida el árbol,
 las referencias, las identidades y los valores. Los campos desconocidos se rechazan.
 
-- `version`: `4`.
+- `version`: `5`.
 - `grid`: `[8,4]` (columnas, filas). Solo se admite el XL; guardar una rejilla no
   implementa otros modelos. `Grid::XL` reúne sus constantes en el dominio.
 - `settings`: brillo, reposo y umbral de pulsación. No contiene idioma ni opciones
@@ -56,7 +57,7 @@ compacto; el lector no exige el orden de sus propiedades ni ausencia de espacios
 
 | Objeto | Campos y representación |
 |---|---|
-| `settings` | `brightness_percent`: número entero 0–100; `sleep_ms` y `press_threshold_ms`: cadenas decimales `u64` (0–18446744073709551615). Defaults al crear: `100`, `"300000"`, `"0"`. `long_press_threshold_ms`: cadena decimal `u64`, independiente del umbral de pulsar; omitido equivale a `"500"` y el escritor omite ese valor. Reposo cero desactiva solo el reposo automático. |
+| `settings` | `brightness_percent`: número entero 10–100; `sleep_ms` y `press_threshold_ms`: cadenas decimales `u64` (0–18446744073709551615). Defaults al crear: `100`, `"300000"`, `"0"`. `long_press_threshold_ms`: cadena decimal `u64`, independiente del umbral de pulsar; omitido equivale a `"500"` y el escritor omite ese valor. Reposo cero desactiva solo el reposo automático. |
 | Identidad | `{"installation":"77","serial":"1"}`: instalación `u128` (1–340282366920938463463374607431768211455), serial `u64` no nulo. |
 | Binding | `{"kind":"folder","number":"1","identity":{...}}`: `kind` es `folder`, `button` o `action`; `number` es `u64` no nulo. El ShortId es la pareja clase/número (`f1`, `b1`, `a1`); la identidad es instalación/serial. |
 | Permisos | `{"consult":true,"modify":true,"execute":false}`: tres booleanos; `modify` o `execute` requieren `consult`. Este ejemplo es el default global al crear. |
@@ -77,6 +78,7 @@ compacto; el lector no exige el orden de sus propiedades ni ausencia de espacios
 | Entrar en carpeta | `{"enter_folder":{"installation":"77","serial":"2"}}` |
 | Volver | `"return"` |
 | Suspender | `"sleep"`; activa el reposo existente, sin parámetros ni ajustes nuevos. |
+| Brillo | `{"brightness":"increase"}` o `{"brightness":"decrease"}`; cambia el brillo vigente en diez puntos porcentuales, con saturación en 10–100. |
 | Esperar | `{"wait":"1000"}`; milisegundos de 0 a 600000. |
 
 Los decimales en cadenas son ASCII, sin signo, espacios ni ceros iniciales salvo
@@ -87,8 +89,12 @@ configuración externos a 4.095 bytes decodificados. La referencia de imagen se
 valida contra los medios al persistir/restaurar, no solamente al decodificar JSON.
 
 La variante `"sleep"` solo existe desde v4. Los importadores cerrados v1, v2 y
-v3 rechazan esa variante bajo una etiqueta anterior. Los documentos v3 se
-importan sin alterar gesto, umbral, ajustes, identidades ni acciones anteriores.
+v3 rechazan esa variante bajo una etiqueta anterior. La variante `brightness` solo
+existe desde v5; los importadores v1–v4 la rechazan bajo una etiqueta anterior.
+Al importar documentos v1–v4, los porcentajes válidos de brillo 0–9 pasan a 10;
+valores mayores de 100 siguen siendo inválidos. Se conservan gesto, umbral,
+identidades y acciones anteriores. El [golden v4](fixtures/v4/README.md) se generó
+con el escritor anterior, no con el escritor v5.
 
 ### Relaciones del árbol
 
@@ -294,9 +300,9 @@ Un candidato con contadores menores que los persistidos se rechaza.
 
 ### Apertura de un Store v2 con documento antiguo
 
-Antes de convertir documentos v3 se conserva el archivo completo como
-`.document-v3-backup`; si solo hay documentos v1/v2, se conserva
-`.document-v2-backup`. Ninguno sobrescribe un respaldo distinto. Las revisiones
+Antes de convertir documentos v4 se conserva el archivo completo como
+`.document-v4-backup`; con documentos v3 se conserva `.document-v3-backup`;
+si solo hay documentos v1/v2, se conserva `.document-v2-backup`. Ninguno sobrescribe un respaldo distinto. Las revisiones
 válidas se convierten atómicamente, incluidos sus digests, sin cambiar IDs,
 heads, contadores, medios ni el esquema SQLite v2. Evidencia corrupta permanece
 intacta y retenida; una versión documental futura impide migrar. Reabrir una

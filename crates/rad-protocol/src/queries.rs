@@ -124,6 +124,7 @@ fn action(v: &ActionView, rev: &str) -> Value {
         ActionType::EnterFolder => "enter_folder".to_owned(),
         ActionType::Return => "return".to_owned(),
         ActionType::Sleep => "sleep".to_owned(),
+        ActionType::Brightness(_) => "brightness".to_owned(),
         ActionType::Wait => "wait".to_owned(),
         ActionType::External(t) => format!("{}:{}", t.plugin(), t.name()),
     };
@@ -131,6 +132,9 @@ fn action(v: &ActionView, rev: &str) -> Value {
 }
 /// The action's own configuration, for the kinds whose parameters are not opaque.
 fn parameters(v: &ActionView) -> Value {
+    if let ActionType::Brightness(direction) = v.kind {
+        return json!({"direction": match direction {rad_core::configuration::BrightnessDirection::Increase=>"increase",rad_core::configuration::BrightnessDirection::Decrease=>"decrease"}});
+    }
     match (&v.desktop_entry, v.wait_ms) {
         (Some(entry), _) => json!({"desktop_entry":entry.id()}),
         (None, Some(milliseconds)) => json!({"milliseconds":milliseconds}),

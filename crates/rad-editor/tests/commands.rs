@@ -1,7 +1,7 @@
 use rad_editor::commands::{KeySave, add_action, save_button};
 use serde_json::json;
 #[test]
-fn save_is_one_atomic_edit_with_current_action_order_and_wait_durations() {
+fn save_is_one_atomic_edit_with_current_order_waits_and_brightness_direction() {
     let request = save_button(&KeySave {
         id: "b7",
         name: "Browser",
@@ -10,9 +10,10 @@ fn save_is_one_atomic_edit_with_current_action_order_and_wait_durations() {
         text_position: None,
         mode: "parallel",
         gesture: "long_press",
-        order: &[1, 0],
+        order: &[2, 1, 0],
         waits: &[("a9".into(), 1500)],
         launchers: &[("a8".into(), "browser.desktop".into())],
+        brightness: &[("a10".into(), rad_api::BrightnessDirection::Decrease)],
     });
     assert_eq!(request.operation().as_str(), "edit");
     assert_eq!(
@@ -24,7 +25,8 @@ fn save_is_one_atomic_edit_with_current_action_order_and_wait_durations() {
             {"kind":"set","id":"b7","field":"gesture","value":"long_press"},
             {"kind":"set","id":"a8","field":"desktop_entry","value":"browser.desktop"},
             {"kind":"set","id":"a9","field":"milliseconds","value":1500},
-            {"kind":"order","id":"b7","indices":[1,0]}
+            {"kind":"set","id":"a10","field":"parameters","value":{"direction":"decrease"}},
+            {"kind":"order","id":"b7","indices":[2,1,0]}
         ]})
     );
 }
@@ -42,6 +44,7 @@ fn save_names_the_text_position_only_when_one_was_chosen() {
             order: &[],
             waits: &[],
             launchers: &[],
+            brightness: &[],
         })
         .arguments()["changes"][1]["value"]
             .clone()
@@ -54,12 +57,18 @@ fn save_names_the_text_position_only_when_one_was_chosen() {
 }
 #[test]
 fn adding_an_action_names_its_type_and_parameters_for_the_runtime_to_validate() {
-    let request = add_action("b7", "wait", json!({"milliseconds":1000}));
-    assert_eq!(request.operation().as_str(), "add_action");
-    assert_eq!(
-        request.arguments(),
-        json!({"button_id":"b7","type":"wait","parameters":{"milliseconds":1000}})
-    );
+    for (kind, parameters) in [
+        ("wait", json!({"milliseconds":1000})),
+        ("brightness", json!({"direction":"increase"})),
+        ("brightness", json!({"direction":"decrease"})),
+    ] {
+        let request = add_action("b7", kind, parameters.clone());
+        assert_eq!(request.operation().as_str(), "add_action");
+        assert_eq!(
+            request.arguments(),
+            json!({"button_id":"b7","type":kind,"parameters":parameters})
+        );
+    }
 }
 #[test]
 fn permission_controls_emit_consistent_explicit_own_values() {

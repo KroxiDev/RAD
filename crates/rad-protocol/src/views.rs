@@ -80,24 +80,42 @@ fn entity(a: &Authority, c: IncomingContext, id: ShortId, rev: &str) -> Checked<
 }
 fn action_fields(v: rad_authority::ActionView) -> EntityFields {
     use rad_authority::ActionType;
-    let type_key = match v.kind {
+    let type_key = match &v.kind {
         ActionType::Launcher => "launcher".into(),
         ActionType::Wait => "wait".into(),
         ActionType::EnterFolder => "enter_folder".into(),
         ActionType::Return => "return".into(),
         ActionType::Sleep => "sleep".into(),
+        ActionType::Brightness(_) => "brightness".into(),
         ActionType::External(key) => format!("{}:{}", key.plugin(), key.name()),
     };
-    let parameters = match (v.desktop_entry, v.wait_ms) {
-        (Some(e), _) => Some(rad_api::ActionParameters::Launcher(
-            rad_api::LauncherParameters {
-                desktop_entry: e.id().into(),
+    let parameters = if let ActionType::Brightness(direction) = v.kind {
+        Some(rad_api::ActionParameters::Brightness(
+            rad_api::BrightnessParameters {
+                direction: match direction {
+                    rad_core::configuration::BrightnessDirection::Increase => {
+                        rad_api::BrightnessDirection::Increase
+                    }
+                    rad_core::configuration::BrightnessDirection::Decrease => {
+                        rad_api::BrightnessDirection::Decrease
+                    }
+                },
             },
-        )),
-        (_, Some(milliseconds)) => Some(rad_api::ActionParameters::Wait(rad_api::WaitParameters {
-            milliseconds,
-        })),
-        _ => None,
+        ))
+    } else {
+        match (v.desktop_entry, v.wait_ms) {
+            (Some(e), _) => Some(rad_api::ActionParameters::Launcher(
+                rad_api::LauncherParameters {
+                    desktop_entry: e.id().into(),
+                },
+            )),
+            (_, Some(milliseconds)) => {
+                Some(rad_api::ActionParameters::Wait(rad_api::WaitParameters {
+                    milliseconds,
+                }))
+            }
+            _ => None,
+        }
     };
     EntityFields::Action(rad_api::ActionFields {
         type_key,
@@ -115,16 +133,20 @@ pub(super) fn appearance(
 ) -> Checked<AppearanceView> {
     use rad_core::configuration::TextPosition as P;
     let v = a.appearance(c.origin, id).ok_or("not_found")?;
-    let has_sleep = match a.get(c.origin, id) {
-        Some(rad_authority::EntityView::Button(button)) => button.actions.iter().any(|action| {
-            matches!(action, Visible::Visible(action) if action.kind == rad_authority::ActionType::Sleep)
-        }),
-        _ => false,
+    let fallback = match a.get(c.origin, id) {
+        Some(rad_authority::EntityView::Button(button)) => {
+            if button.actions.iter().any(|action|matches!(action,Visible::Visible(a) if a.kind==rad_authority::ActionType::Sleep)) {Some(rad_api::NativeIcon::Sleep)}
+            else if button.actions.iter().any(|action|matches!(action,Visible::Visible(a) if matches!(a.kind,rad_authority::ActionType::Brightness(_)))) {Some(rad_api::NativeIcon::Brightness)}
+            else {None}
+        }
+        _ => None,
     };
-    let native_icon = (v.appearance.image.is_none()
-        && matches!(v.visual, rad_authority::VisualView::Static)
-        && has_sleep)
-        .then_some(rad_api::NativeIcon::Sleep);
+    let native_icon =
+        if v.appearance.image.is_none() && matches!(v.visual, rad_authority::VisualView::Static) {
+            fallback
+        } else {
+            None
+        };
     let position = if native_icon.is_some() {
         v.appearance.text_position.unwrap_or(P::Bottom)
     } else {

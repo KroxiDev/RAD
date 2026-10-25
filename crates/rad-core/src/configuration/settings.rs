@@ -15,7 +15,7 @@ pub struct Settings {
 }
 impl Settings {
     pub fn from_data(data: SettingsData) -> Result<Self, ConfigurationError> {
-        if data.brightness_percent > 100 {
+        if !(10..=100).contains(&data.brightness_percent) {
             return Err(ConfigurationError::InvalidValue);
         }
         Ok(Self { data })

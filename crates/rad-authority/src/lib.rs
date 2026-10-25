@@ -128,11 +128,21 @@ struct Slot {
     phase: Phase,
     deadline: u64,
 }
+#[derive(Clone, Copy)]
+enum PublicationTarget {
+    Client(RequestId),
+    Brightness(DispatchId),
+}
+struct NativeBrightness {
+    id: DispatchId,
+    direction: rad_core::configuration::BrightnessDirection,
+    deadline: u64,
+}
 struct Pending {
     id: CommitId,
     candidate: Option<Candidate>,
     cursor: Option<usize>,
-    request: RequestId,
+    target: PublicationTarget,
 }
 /// Trusted protocol DTO preparation, evaluated only at its FIFO turn. No I/O.
 pub type EditPreparation =
@@ -231,6 +241,8 @@ pub struct Authority {
     tickets: BTreeMap<RequestId, Slot>,
     next_ticket: u64,
     queue: VecDeque<(RequestId, Command)>,
+    brightness_queue: VecDeque<NativeBrightness>,
+    draining: bool,
 }
 impl Authority {
     /// Convenience constructor for deterministic epoch-zero callers.
@@ -291,6 +303,8 @@ impl Authority {
             tickets: BTreeMap::new(),
             next_ticket: 1,
             queue: VecDeque::new(),
+            brightness_queue: VecDeque::new(),
+            draining: false,
         };
         actor
             .engine
@@ -459,7 +473,7 @@ impl Authority {
             id,
             candidate: Some(candidate.clone()),
             cursor,
-            request,
+            target: PublicationTarget::Client(request),
         });
         self.awaiting = true;
         self.tickets.get_mut(&request).unwrap().phase = Phase::Started;
@@ -470,12 +484,25 @@ impl Authority {
         }]
     }
     fn drain(&mut self) -> Vec<Effect> {
+        // Native completions can immediately dispatch another step. The outer drain owns
+        // the bounded loop so chains of saturated/no-op adjustments do not recurse.
+        if self.draining {
+            return vec![];
+        }
+        self.draining = true;
         let mut effects = vec![];
         while self.pending.is_none()
             && self.collection.is_none()
             && self.state == StorageState::Ready
         {
             let Some((request, command)) = self.queue.pop_front() else {
+                // Client edits already queued have priority. Native jobs use the same
+                // publication lane and evaluate their delta against the published value
+                // at this turn, never the value captured at admission.
+                if let Some(job) = self.brightness_queue.pop_front() {
+                    effects.extend(self.persist_brightness(job));
+                    continue;
+                }
                 break;
             };
             let origin = self.tickets[&request].origin;
@@ -588,7 +615,7 @@ impl Authority {
                         id,
                         candidate: None,
                         cursor: Some(index),
-                        request,
+                        target: PublicationTarget::Client(request),
                     });
                     self.awaiting = true;
                     self.tickets.get_mut(&request).unwrap().phase = Phase::Started;
@@ -599,6 +626,7 @@ impl Authority {
                 }
             }
         }
+        self.draining = false;
         effects
     }
     /// Starts the single reaffirmation of a commit whose durable outcome is unknown
@@ -639,7 +667,7 @@ impl Authority {
         {
             return vec![];
         }
-        let request = self.pending.as_ref().unwrap().request;
+        let target = self.pending.as_ref().unwrap().target;
         if matches!(outcome, Outcome::Uncertain | Outcome::RecoveryRequired)
             || matches!(outcome, Outcome::Applied { changed: false, .. })
             || matches!(outcome,Outcome::Applied{revision,..} if revision<=self.revision)
@@ -651,10 +679,13 @@ impl Authority {
             };
             self.awaiting = false;
             let mut e = self.invalidate_input();
-            e.push(Effect::Unknown { request });
+            if let PublicationTarget::Client(request) = target {
+                e.push(Effect::Unknown { request });
+            }
             while let Some((request, _)) = self.queue.pop_front() {
                 e.push(self.reject(request, Rejection::StorageUncertain));
             }
+            e.extend(self.fail_queued_brightness());
             return e;
         }
         self.state = StorageState::Ready;
@@ -665,7 +696,7 @@ impl Authority {
                 Outcome::ResourceExhausted(limit) => Rejection::ResourceExhausted(limit),
                 _ => Rejection::Persistence,
             };
-            let mut e = vec![self.reject(request, reason)];
+            let mut e = self.publication_finished(target, false, Err(reason));
             e.extend(self.drain());
             return e;
         }
@@ -704,7 +735,7 @@ impl Authority {
                 vec![]
             };
             e.extend(self.sync_input());
-            e.push(self.reply(request, changed));
+            e.extend(self.publication_finished(target, changed, Ok(())));
             self.refresh_views();
             e.extend(self.drain());
             return e;
@@ -831,6 +862,9 @@ impl Authority {
         }
         let pending = self.pending.take().unwrap();
         self.awaiting = false;
+        let PublicationTarget::Client(request) = pending.target else {
+            unreachable!("only client history operations read revisions")
+        };
         let candidate = data.ok().and_then(|data| {
             self.published
                 .configuration()
@@ -838,8 +872,8 @@ impl Authority {
                 .ok()
         });
         let mut e = match candidate {
-            Some(candidate) => self.persist(pending.request, candidate, pending.cursor, false),
-            None => vec![self.reject(pending.request, Rejection::Persistence)],
+            Some(candidate) => self.persist(request, candidate, pending.cursor, false),
+            None => vec![self.reject(request, Rejection::Persistence)],
         };
         e.extend(self.drain());
         e
@@ -1005,6 +1039,25 @@ impl Authority {
                         .complete(intent.id, Completion::Succeeded)
                         .expect("fresh sleep dispatch, prevalidated scheduling horizon"),
                 );
+            } else if let rad_core::execution::Operation::Brightness(direction) = intent.operation {
+                let revision = self.runs[&intent.id.execution()];
+                self.jobs.insert(intent.id, revision);
+                if self.state == StorageState::Ready {
+                    // Engine credit bounds this queue to MAX_JOBS, including residuals.
+                    self.brightness_queue.push_back(NativeBrightness {
+                        id: intent.id,
+                        direction,
+                        deadline: intent.deadline_ms,
+                    });
+                } else {
+                    e.extend(
+                        self.job_complete(
+                            intent.id,
+                            Completion::Failed(rad_core::execution::Failure::ActionFailed),
+                        )
+                        .expect("new brightness dispatch"),
+                    );
+                }
             } else {
                 let revision = self.runs[&intent.id.execution()];
                 self.jobs.insert(intent.id, revision);
@@ -1036,6 +1089,7 @@ impl Authority {
                 || self.releasing_holds.contains(id)
         });
         self.refresh_views();
+        e.extend(self.drain());
         e
     }
 }
@@ -1289,6 +1343,7 @@ impl Authority {
             while let Some((request, _)) = self.queue.pop_front() {
                 e.push(self.reject(request, Rejection::StorageUncertain));
             }
+            e.extend(self.fail_queued_brightness());
         } else {
             self.collection = None;
             self.state = StorageState::Ready;
@@ -1484,7 +1539,10 @@ impl Authority {
         self.pending
             .as_ref()
             .filter(|pending| pending.id == id)
-            .map(|pending| pending.request)
+            .and_then(|pending| match pending.target {
+                PublicationTarget::Client(request) => Some(request),
+                PublicationTarget::Brightness(_) => None,
+            })
     }
 }
 
@@ -1601,5 +1659,95 @@ impl Authority {
             }
         }
         Ok(())
+    }
+}
+
+impl Authority {
+    fn publication_finished(
+        &mut self,
+        target: PublicationTarget,
+        changed: bool,
+        result: Result<(), Rejection>,
+    ) -> Vec<Effect> {
+        match target {
+            PublicationTarget::Client(request) => vec![match result {
+                Ok(()) => self.reply(request, changed),
+                Err(reason) => self.reject(request, reason),
+            }],
+            PublicationTarget::Brightness(id) => self
+                .job_complete(
+                    id,
+                    if result.is_ok() {
+                        Completion::Succeeded
+                    } else {
+                        Completion::Failed(rad_core::execution::Failure::ActionFailed)
+                    },
+                )
+                .expect("native publication retains its dispatch"),
+        }
+    }
+    fn fail_queued_brightness(&mut self) -> Vec<Effect> {
+        let mut effects = vec![];
+        while let Some(job) = self.brightness_queue.pop_front() {
+            effects.extend(
+                self.job_complete(
+                    job.id,
+                    Completion::Failed(rad_core::execution::Failure::ActionFailed),
+                )
+                .expect("queued native dispatch"),
+            );
+        }
+        effects
+    }
+    fn persist_brightness(&mut self, job: NativeBrightness) -> Vec<Effect> {
+        let fail = |this: &mut Self| {
+            this.job_complete(
+                job.id,
+                Completion::Failed(rad_core::execution::Failure::ActionFailed),
+            )
+            .expect("queued brightness dispatch")
+        };
+        // A job that expired while waiting for another publication must never write.
+        if job.deadline <= self.now {
+            return fail(self);
+        }
+        let mut settings = self.published.configuration().settings().data();
+        let next = job.direction.apply(settings.brightness_percent);
+        if next == settings.brightness_percent {
+            return self
+                .job_complete(job.id, Completion::Succeeded)
+                .expect("saturated native dispatch");
+        }
+        if self.plugin_barrier.is_some() {
+            return fail(self);
+        }
+        settings.brightness_percent = next;
+        // The admitted native operation owns precisely this fixed brightness edit;
+        // it does not grant any client a general settings-modification capability.
+        let Ok(candidate) = self.published.configuration().prepare_edit(
+            self.published.registry(),
+            Origin::Editor,
+            Edit::SetSettings(settings),
+        ) else {
+            return fail(self);
+        };
+        let Ok(document) = rad_codec::encode(candidate.configuration()) else {
+            return fail(self);
+        };
+        let Some(id) = self.command_id() else {
+            return fail(self);
+        };
+        self.pending = Some(Pending {
+            id,
+            candidate: Some(candidate.clone()),
+            cursor: None,
+            target: PublicationTarget::Brightness(job.id),
+        });
+        self.awaiting = true;
+        vec![Effect::Persist {
+            id,
+            candidate,
+            document,
+        }]
     }
 }

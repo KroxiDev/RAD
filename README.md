@@ -15,11 +15,12 @@ The runtime keeps working when the editor is closed.
 ## Features
 
 - A 32-key layout, folders, drag-and-drop editing and undo/redo.
-- Up to 20 actions per button, sequential or parallel execution, and built-in Wait
-  and Sleep actions.
+- Up to 20 actions per button, sequential or parallel execution, and built-in Wait,
+  Sleep and Brightness actions.
 - Application launching from your desktop's application catalog.
 - Custom labels and static PNG/JPEG images.
-- English and Spanish UI; brightness, idle and press-threshold settings.
+- English and Spanish UI; brightness (10–100%), idle and press-threshold settings.
+  Brightness actions raise or lower the saved value in ten-percentage-point steps.
 - Configuration export/restore. Exports exclude credentials and plugin executables.
 - Local CLI automation with inherited query, modify and execute permissions.
 - Optional audio, media, OBS and system-metrics plugins.
@@ -107,7 +108,7 @@ icon closes the editor and stops the runtime.
 Data lives in `$XDG_DATA_HOME/rad` or `~/.local/share/rad`; local sockets live
 under `$XDG_RUNTIME_DIR/rad`.
 
-The current deck document is v4; the SQLite store and backup container remain v2.
+The current deck document is v5; the SQLite store and backup container remain v2.
 Older data migrates forward while preserving the original; a v1 store keeps a
 `.v1-backup`.
 In **Settings → Backup**, **Export Backup** saves a new copy to `~/RAD Backups`

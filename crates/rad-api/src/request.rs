@@ -17,6 +17,7 @@ pub enum ActionParameters {
     Plugin(PluginParameters),
     Launcher(LauncherParameters),
     Wait(WaitParameters),
+    Brightness(BrightnessParameters),
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +28,17 @@ pub struct LauncherParameters {
 #[serde(deny_unknown_fields)]
 pub struct WaitParameters {
     pub milliseconds: u64,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", try_from = "String")]
+pub enum BrightnessDirection {
+    Increase,
+    Decrease,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrightnessParameters {
+    pub direction: BrightnessDirection,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -293,4 +305,15 @@ where
     T: Deserialize<'de>,
 {
     T::deserialize(d).map(Some)
+}
+
+impl TryFrom<String> for BrightnessDirection {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "increase" => Ok(Self::Increase),
+            "decrease" => Ok(Self::Decrease),
+            _ => Err("invalid brightness direction"),
+        }
+    }
 }

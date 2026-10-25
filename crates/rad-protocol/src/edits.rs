@@ -50,6 +50,9 @@ pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
             let id = parse_id(button_id)?;
             let kind = match (type_key.as_str(), parameters) {
                 ("sleep", rad_api::ActionParameters::None) => ActionKind::Sleep,
+                ("brightness", rad_api::ActionParameters::Brightness(p)) => {
+                    ActionKind::Brightness(brightness_direction(p.direction))
+                }
                 ("launcher", rad_api::ActionParameters::Launcher(p)) => {
                     ActionKind::Launcher(launcher(&p.desktop_entry)?)
                 }
@@ -131,6 +134,9 @@ fn milliseconds(value: u64) -> Checked<Wait> {
 fn parameters(value: &rad_api::ActionParameters) -> Checked<ActionParameters> {
     Ok(match value {
         rad_api::ActionParameters::None => return Err("invalid_request"),
+        rad_api::ActionParameters::Brightness(p) => {
+            ActionParameters::Brightness(brightness_direction(p.direction))
+        }
         rad_api::ActionParameters::Plugin(p) => ActionParameters::External(parameter_bytes(p)?),
         rad_api::ActionParameters::Launcher(p) => {
             ActionParameters::Launcher(launcher(&p.desktop_entry)?)
@@ -323,4 +329,17 @@ fn parameter_bytes(value: &rad_api::PluginParameters) -> Checked<Vec<u8>> {
     serde_json::from_slice::<rad_plugin_contract::Parameters>(&bytes)
         .map_err(|_| "invalid_request")?;
     Ok(bytes)
+}
+
+fn brightness_direction(
+    direction: rad_api::BrightnessDirection,
+) -> rad_core::configuration::BrightnessDirection {
+    match direction {
+        rad_api::BrightnessDirection::Increase => {
+            rad_core::configuration::BrightnessDirection::Increase
+        }
+        rad_api::BrightnessDirection::Decrease => {
+            rad_core::configuration::BrightnessDirection::Decrease
+        }
+    }
 }

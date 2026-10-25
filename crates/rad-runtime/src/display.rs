@@ -86,9 +86,16 @@ pub(crate) fn project_with_plugins(
             && button
                 .actions
                 .iter()
-                .any(|a| matches!(a, Visible::Visible(a) if a.kind == ActionType::Sleep));
+                .any(|a| matches!(a,Visible::Visible(a) if a.kind==ActionType::Sleep));
+        let native_brightness = !native_sleep
+            && !external
+            && view.appearance.image.is_none()
+            && button.actions.iter().any(
+                |a| matches!(a,Visible::Visible(a) if matches!(a.kind,ActionType::Brightness(_))),
+            );
+        let native_picture = native_sleep || native_brightness;
         let text = plugin.as_ref().map(|v| v.text.as_str()).unwrap_or_else(|| {
-            if native_sleep {
+            if native_picture {
                 view.appearance.text.as_str()
             } else {
                 view.appearance.label(&button.name)
@@ -99,7 +106,7 @@ pub(crate) fn project_with_plugins(
             .is_some_and(|v| v.view.availability == crate::plugin_visuals::Availability::Stale);
         let color = plugin.as_ref().and_then(|v| v.view.color);
         let position = plugin.as_ref().map(|v| v.position).unwrap_or_else(|| {
-            if native_sleep {
+            if native_picture {
                 view.appearance
                     .text_position
                     .unwrap_or(TextPosition::Bottom)
@@ -116,6 +123,7 @@ pub(crate) fn project_with_plugins(
         };
         KeyVisual::new(text, image, unavailable, launcher)
             .sleep_icon(native_sleep)
+            .brightness_icon(native_brightness)
             .text_at(placement)
             .stale(stale)
             .background_color(color)

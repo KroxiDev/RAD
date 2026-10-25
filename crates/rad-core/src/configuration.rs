@@ -230,7 +230,22 @@ pub enum ActionKind {
     EnterFolder(EntityIdentity),
     Return,
     Sleep,
+    Brightness(BrightnessDirection),
     Wait(Wait),
+}
+/// Fixed relative brightness adjustment; no configurable amount or absolute target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrightnessDirection {
+    Increase,
+    Decrease,
+}
+impl BrightnessDirection {
+    pub fn apply(self, current: u8) -> u8 {
+        match self {
+            Self::Increase => current.saturating_add(10).clamp(10, 100),
+            Self::Decrease => current.saturating_sub(10).clamp(10, 100),
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Typed edits: no generic setter, raw-document patch, or client-supplied bypass.
@@ -383,6 +398,7 @@ pub enum VisualSource {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionParameters {
+    Brightness(BrightnessDirection),
     Launcher(DesktopEntry),
     External(Vec<u8>),
     Wait(Wait),

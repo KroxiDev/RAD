@@ -91,6 +91,14 @@ Prueba de referencia:
 `imported_navigation_and_plugin_settings_remap_together` en
 [portable_restore.rs](../crates/rad-core/tests/portable_restore.rs).
 
+**Brillo ejecutado y guardado:** Brightness es un tipo de acción nativo, no un
+ajuste de máquina ni un plugin. Su dirección pertenece al snapshot admitido; el
+delta fijo se calcula sobre el brillo publicado vigente y se guarda mediante la
+misma autoridad que las ediciones. El límite de 10–100 no apaga el deck: el reposo
+sigue siendo otro estado. No se informa éxito antes de confirmar la persistencia
+ni se repite el delta al reconciliar un resultado incierto. Véase
+[ADR 0019](adr/0019-brightness-persistente-y-documento-v5.md).
+
 ## Permisos y origen
 
 Los permisos de automatización distinguen consultar, modificar y ejecutar. Los

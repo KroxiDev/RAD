@@ -109,6 +109,7 @@ pub enum Operation {
     },
     Navigate(EntityIdentity),
     Sleep,
+    Brightness(crate::configuration::BrightnessDirection),
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchIntent {
@@ -401,6 +402,7 @@ impl State {
                             Operation::Navigate(folder.parent.ok_or(ExecutionError::NotFound)?)
                         }
                         ActionKind::Sleep => Operation::Sleep,
+                        ActionKind::Brightness(direction) => Operation::Brightness(*direction),
                         ActionKind::Wait(wait) => return Ok(Planned::Wait(wait.milliseconds())),
                     },
                 })

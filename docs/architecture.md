@@ -245,3 +245,4 @@ Estas piezas parecen simplificables y no lo son:
 | [0016](adr/0016-presencia-de-escritorio.md) | Identidad de escritorio, bandeja independiente y activación de un único editor |
 | [0017](adr/0017-accion-nativa-sleep-y-documento-v4.md) | Acción nativa Sleep, transición compartida con inactividad y documento v4 |
 | [0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md) | Paquete Arch y actualizador independiente; confianza en GitHub oficial por HTTPS |
+| [0019](adr/0019-brightness-persistente-y-documento-v5.md) | Acción Brightness con publicación durable y documento v5; brillo configurable 10–100 |

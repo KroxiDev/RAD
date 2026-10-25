@@ -199,6 +199,7 @@ impl App {
                     (Badge::Glyph("🗀"), None),
                     (Badge::Glyph("⏱"), Some(NewAction::Wait)),
                     (Badge::Icon(Icon::Moon), Some(NewAction::Sleep)),
+                    (Badge::Icon(Icon::Sun), Some(NewAction::Brightness)),
                     (Badge::Icon(Icon::Apps), Some(NewAction::OpenApp)),
                 ]
                 .into_iter()
@@ -329,6 +330,43 @@ impl App {
                 self.catalog_more = true;
                 self.catalog_due = Some(0);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod brightness_tests {
+    use super::*;
+
+    fn texts(app: &mut App) -> Vec<String> {
+        egui::Context::default()
+            .run_ui(Default::default(), |ui| {
+                app.actions(ui, &Look::new(&Default::default()));
+            })
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn brightness_belongs_to_the_native_rad_group_and_can_be_searched() {
+        for (language, label) in [
+            (crate::preferences::Language::En, "Brightness"),
+            (crate::preferences::Language::Es, "Brillo"),
+        ] {
+            let root =
+                std::env::temp_dir().join(format!("rad-brightness-palette-{}", std::process::id()));
+            let mut app = App::with_preferences_path(root.clone(), root.join("theme"), None);
+            app.es = language;
+            assert!(texts(&mut app).iter().any(|text| text == label));
+            app.folded.insert(Category::Native);
+            assert!(!texts(&mut app).iter().any(|text| text == label));
+            app.catalog.query = label.into();
+            assert!(texts(&mut app).iter().any(|text| text == label));
         }
     }
 }

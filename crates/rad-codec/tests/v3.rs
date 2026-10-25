@@ -20,7 +20,7 @@ fn v3_imports_real_v2_without_losing_configuration_or_inflating_default_profiles
     let config = Configuration::from_data(data.clone(), &registry).unwrap();
     let bytes = encode(&config).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(value["version"], 4);
+    assert_eq!(value["version"], 5);
     assert_eq!(decode_data(&bytes).unwrap(), data);
     assert_eq!(bytes.len(), old.len());
     assert_eq!(
@@ -66,7 +66,7 @@ fn v3_golden_import_keeps_nondefault_gesture_and_long_threshold() {
         encode(&Configuration::from_data(data, &registry).unwrap()).unwrap(),
         String::from_utf8(bytes.to_vec())
             .unwrap()
-            .replacen("\"version\":3", "\"version\":4", 1)
+            .replacen("\"version\":3", "\"version\":5", 1)
             .as_bytes()
     );
 }

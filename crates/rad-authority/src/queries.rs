@@ -13,6 +13,7 @@ pub enum ActionType {
     EnterFolder,
     Return,
     Sleep,
+    Brightness(rad_core::configuration::BrightnessDirection),
     Wait,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +72,9 @@ impl Authority {
                     rad_core::configuration::ActionKind::EnterFolder(_) => ActionType::EnterFolder,
                     rad_core::configuration::ActionKind::Return => ActionType::Return,
                     rad_core::configuration::ActionKind::Sleep => ActionType::Sleep,
+                    rad_core::configuration::ActionKind::Brightness(d) => {
+                        ActionType::Brightness(*d)
+                    }
                     rad_core::configuration::ActionKind::Wait(_) => ActionType::Wait,
                 };
                 Visible::Visible(ActionView {

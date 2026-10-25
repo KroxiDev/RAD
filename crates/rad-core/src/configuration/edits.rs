@@ -110,6 +110,9 @@ impl Configuration {
                 Edit::SetParameters { action, parameters } => {
                     let a = action_mut(&mut data, *action)?;
                     match (&mut a.kind, parameters) {
+                        (ActionKind::Brightness(current), ActionParameters::Brightness(next)) => {
+                            *current = *next
+                        }
                         (ActionKind::Launcher(current), ActionParameters::Launcher(next)) => {
                             *current = next.clone()
                         }
@@ -514,6 +517,7 @@ fn authorize_change(data: &ConfigurationData, edit: &Edit) -> Result<(), Configu
                 })
                 .ok_or(ConfigurationError::NotFound)?;
             let changed = match (&a.kind, parameters) {
+                (ActionKind::Brightness(old), ActionParameters::Brightness(new)) => old != new,
                 (ActionKind::Launcher(old), ActionParameters::Launcher(new)) => old != new,
                 (
                     ActionKind::External {

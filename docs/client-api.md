@@ -161,7 +161,7 @@ El editor nunca escribe la configuración por su cuenta.
 `add_action {button_id, type:"sleep", parameters:null}` añade un paso nativo sin
 parámetros; objetos de parámetros de otros tipos se rechazan como
 `invalid_request` (`not_applied`). `get` e `inspector` lo proyectan con
-`type:"sleep"` y `parameters:null`. Persiste en documento v4 (ADR 0017), se copia
+`type:"sleep"` y `parameters:null`. Existe desde documento v4 (ADR 0017), se copia
 y entra en el historial como cualquier acción. No depende de un plugin.
 
 `run {id}` desde CLI o «Probar», y la entrada física, pasan por la misma admisión
@@ -185,6 +185,31 @@ apariencias anteriores, preservando sus vectores v1; el cliente nuevo admite su
 ausencia. Un cliente anterior con DTO cerrado necesita actualizarse para mostrar
 esa apariencia nueva. Los contratos de automatización de las acciones anteriores,
 el framing y JSON CLI siguen en v1.
+
+## Acción nativa Brightness
+
+`add_action {button_id, type:"brightness", parameters:{direction:"increase"}}`
+añade una acción nativa; `direction` solo admite `increase` o `decrease`.
+`get`, `inspector` y el catálogo conservan el tipo `brightness`; los parámetros
+no tienen cantidad, paso ni porcentaje objetivo. Una dirección ausente o
+desconocida, o campos adicionales, se rechazan antes de admitir la edición.
+El icono nativo opcional añade `brightness` al enum de presentación; no desplaza
+una imagen propia ni un visual externo. Un cliente cerrado anterior necesita
+actualizarse para interpretar las variantes nuevas.
+
+La admisión y los permisos son los ordinarios. El paso guarda el brillo publicado
+vigente más o menos diez puntos porcentuales, limitado a 10–100, y publica las
+vistas afectadas solo después de la confirmación durable. Llegar al extremo es
+éxito sin otra escritura ni revisión. Un resultado incierto se reconcilia sin
+volver a sumar o restar. El editor refleja cambios externos en Ajustes sin
+descartar modificaciones pendientes del usuario. No navega ni cambia el reposo.
+Se admiten `press` y `long_press`, no `hold`.
+
+La acción se guarda y se copia en documento v5; los envelopes SQLite/RADPKG y el
+framing de clientes conservan sus versiones. Los ajustes nuevos validan
+`brightness_percent` en 10–100; las importaciones históricas conservan el resto
+del contenido y elevan valores válidos 0–9 a 10. Contrato y motivos:
+[ADR 0019](adr/0019-brightness-persistente-y-documento-v5.md).
 
 ## CLI JSON y salida de proceso
 

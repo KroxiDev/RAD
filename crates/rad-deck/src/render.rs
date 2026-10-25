@@ -42,6 +42,7 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
     let centred_text = !key.text.is_empty() && key.text_placement == TextPlacement::Middle;
     let generic = key.image.is_none() && key.generic_launcher && !centred_text;
     let moon = key.image.is_none() && key.sleep_icon;
+    let sun = key.image.is_none() && key.brightness_icon && !moon;
     if moon {
         let center_y = top as f32 + height as f32 / 2.;
         let radius = 22.;
@@ -57,7 +58,28 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
             }
         }
     }
-    if generic && !moon {
+    if sun {
+        let center_y = top as f32 + height as f32 / 2.;
+        let rays: [(f32, f32); 8] = std::array::from_fn(|ray| {
+            let angle = std::f32::consts::TAU * ray as f32 / 8.;
+            (angle.cos(), angle.sin())
+        });
+        for y in top..top + height {
+            for x in 0..SIDE {
+                let dx = x as f32 + 0.5 - 48.;
+                let dy = y as f32 + 0.5 - center_y;
+                let distance = dx * dx + dy * dy;
+                let ring = (7.5_f32.powi(2)..=11_f32.powi(2)).contains(&distance);
+                let ray = rays.iter().any(|(vx, vy)| {
+                    (15.4..=22.).contains(&(dx * vx + dy * vy)) && (dx * vy - dy * vx).abs() <= 1.7
+                });
+                if ring || ray {
+                    canvas.put_pixel(x, y, image::Rgb([225, 230, 245]));
+                }
+            }
+        }
+    }
+    if generic && !moon && !sun {
         let offset = top + (height - PICTURE) / 2;
         for y in 12..54 {
             for x in 22..74 {
@@ -75,7 +97,7 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
             &mut canvas,
             &key.text,
             key.text_placement,
-            key.image.is_some() || generic || moon,
+            key.image.is_some() || generic || moon || sun,
         );
     }
     // An amber pause marks last-known content. Unavailable takes precedence.
@@ -203,6 +225,27 @@ mod tests {
         let custom = KeyVisual::new("", Some(image), false, false);
         assert_eq!(
             rgb(&custom.clone().sleep_icon(true)).unwrap(),
+            rgb(&custom).unwrap()
+        );
+    }
+    #[test]
+    fn brightness_sun_is_visible_without_text_and_preserves_custom_images_and_text() {
+        let plain = KeyVisual::default();
+        let sun = plain.clone().brightness_icon(true);
+        let pixels = rgb(&sun).unwrap();
+        let lit = pixels.pixels().filter(|p| p.0 != [0, 0, 0]).count();
+        assert!(lit > 200 && lit < 1500, "a sun, not blank or a full key");
+        assert_ne!(pixels, rgb(&plain).unwrap());
+        let labelled = KeyVisual::new("Light", None, false, false).brightness_icon(true);
+        assert_ne!(rgb(&labelled).unwrap(), pixels);
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(&[255, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        let image = Arc::new(rad_media::normalize(&bytes).unwrap());
+        let custom = KeyVisual::new("Light", Some(image), false, false);
+        assert_eq!(
+            rgb(&custom.clone().brightness_icon(true)).unwrap(),
             rgb(&custom).unwrap()
         );
     }

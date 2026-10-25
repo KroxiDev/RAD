@@ -16,7 +16,7 @@ español.
 | Comprender por qué se eligió un diseño | [Índice de ADR](architecture.md#decisiones-registradas) |
 | Cambiar pantallas o textos | [Norma de UX](ux.md) y [pendientes](roadmap.md#ux-pendiente) |
 | Crear un cliente o automatizar RAD | [API local y CLI](client-api.md) |
-| Cambiar persistencia, migraciones o copias | [Formatos](formats.md) y [fixtures históricos](fixtures/v1/README.md) ([v2](fixtures/v2/README.md), [v3](fixtures/v3/README.md)) |
+| Cambiar persistencia, migraciones o copias | [Formatos](formats.md) y [fixtures históricos](fixtures/v1/README.md) ([v2](fixtures/v2/README.md), [v3](fixtures/v3/README.md), [v4](fixtures/v4/README.md)) |
 | Desarrollar un plugin | [Entrada del workspace de plugins](../plugins/README.md) y [arnés de compatibilidad](plugin-check.md) |
 | Empaquetar, distribuir o recuperar una actualización | [Distribución e integración](../packaging/README.md) y [ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md) |
 | Compilar y verificar cambios | [Pruebas y validación](testing.md) |

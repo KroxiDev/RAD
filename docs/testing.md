@@ -105,7 +105,8 @@ Casos que se conservan, o se añaden si falta cobertura.
 | Cliente y UI | Desconexión tras el envío, worker muerto, sin replay, crédito único, vistas coherentes por revisión, avisos coalescidos, Unknown resuelto releyendo, cursor inválido o parcial, salida JSON de `rad-cli` |
 | Textos | Todas las claves existen en cada catálogo; ningún código en bruto en la UI; respaldo en inglés |
 | Publicación y Store | Fallos de escritura, sync o rollback; before/after; reinicio; hold de evidencia corrupta; medios cambiados en la segunda pasada |
-| Formatos | Golden real de cada versión; importadores de v1, v2 y v3 en el Store y en la restauración; rechazo de versiones futuras |
+| Formatos | Golden real de cada versión; importadores de v1, v2, v3 y v4 en el Store y en la restauración; rechazo de versiones futuras; brillo histórico 0–9 normalizado a 10 sin aceptar valores mayores de 100 |
+| Brillo | Ajuste 10–100 y acción nativa subir/bajar diez puntos sobre el valor vigente, con saturación, sin escritura en el límite; publicación solo tras Applied, fallo e incertidumbre sin doble delta; cola vencida sin efecto tardío; Ajustes actualizado sin descartar borradores |
 | Identidades | Contadores tras recuperación y restauración; poda tras el historial; límite sobre lo vigente con mensaje claro; un ShortId nunca reasignado |
 | Copias | Exportación de un clic solo en Copias; sin inicio automático, duplicados ni borradores omitidos; destino privado sin sobrescritura y limpieza de incompletos ([pruebas de archivos](../crates/rad-editor/tests/backups.rs)); los tres destinos; reserva de ambos rangos; destino editado y deshecho hasta quedar vacío; deshacer tras restaurar; copia v1 real; ajustes de plugins restaurados; plugins ausentes ofrecidos para instalar |
 | Host con runtime y Authority | Handshake, API, frames y correlaciones inválidas; flood; caída; residual de setup; deadline seguido de respuesta tardía o reap; parada y reap; selección distinta |

@@ -343,7 +343,7 @@ fn administrative_tree_settings_and_permissions_use_domain_commands() {
     apply(
         &mut a,
         "set_settings",
-        json!({"changes":{"brightness_percent":0,"sleep_ms":"0","press_threshold_ms":"18446744073709551615"}}),
+        json!({"changes":{"brightness_percent":10,"sleep_ms":"0","press_threshold_ms":"18446744073709551615"}}),
     );
     apply(
         &mut a,
@@ -2172,4 +2172,79 @@ fn native_sleep_can_be_added_and_run_through_the_public_api_without_an_idle_time
             .iter()
             .any(|e| matches!(e, rad_authority::Effect::HardwareAccepted { .. }))
     );
+}
+
+#[test]
+fn native_brightness_uses_typed_direction_parameters_and_published_settings() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":0,"name":"Brightness"}),
+    );
+    apply(
+        &mut a,
+        "set_settings",
+        json!({"changes":{"brightness_percent":55}}),
+    );
+    apply(
+        &mut a,
+        "add_action",
+        json!({"button_id":"b1","type":"brightness","parameters":{"direction":"increase"}}),
+    );
+    let inspector = response(call(
+        &mut a,
+        Origin::Editor,
+        "inspector",
+        json!({"id":"b1"}),
+    ));
+    let value = serde_json::to_value(inspector.data).unwrap();
+    assert_eq!(value["appearance"]["native_icon"], "brightness");
+    assert_eq!(value["actions"][0]["fields"]["type"], "brightness");
+    assert_eq!(
+        value["actions"][0]["fields"]["parameters"],
+        json!({"direction":"increase"})
+    );
+    for parameters in [
+        json!({"direction":"sideways"}),
+        json!({"direction":"increase","amount":20}),
+        json!({"amount":10}),
+        Value::Null,
+    ] {
+        let r = response(call(
+            &mut a,
+            Origin::Editor,
+            "add_action",
+            json!({"button_id":"b1","type":"brightness","parameters":parameters}),
+        ));
+        assert_eq!(r.error.unwrap().code, "invalid_request");
+    }
+    apply(
+        &mut a,
+        "edit",
+        json!({"changes":[{"kind":"set","id":"a1","field":"parameters","value":{"direction":"decrease"}}]}),
+    );
+    let Resolution::Command(command) = call(&mut a, Origin::Editor, "run", json!({"id":"b1"}))
+    else {
+        panic!("run command")
+    };
+    let ticket = a.reserve(4, Origin::Editor).unwrap();
+    let effects = a.submit(ticket, command);
+    let id = effects
+        .iter()
+        .find_map(|e| match e {
+            rad_authority::Effect::Persist { id, .. } => Some(*id),
+            _ => None,
+        })
+        .expect("native brightness must persist");
+    assert_eq!(a.settings(Origin::Editor).unwrap().brightness_percent, 55);
+    let revision = a.editor_view(Origin::Editor).unwrap().revision + 1;
+    a.complete(
+        id,
+        rad_authority::Outcome::Applied {
+            revision,
+            changed: true,
+        },
+    );
+    assert_eq!(a.settings(Origin::Editor).unwrap().brightness_percent, 45);
 }

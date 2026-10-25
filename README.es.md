@@ -16,10 +16,11 @@ combina acciones. El runtime sigue funcionando al cerrar el editor.
 
 - Distribución de 32 teclas, carpetas, edición por arrastre y deshacer/rehacer.
 - Hasta 20 acciones por botón, ejecución secuencial o paralela y acciones nativas
-  Esperar y Suspender.
+  Esperar, Suspender y Brillo.
 - Apertura de aplicaciones desde el catálogo del escritorio.
 - Texto propio e imágenes PNG/JPEG estáticas.
-- Interfaz en inglés y español; ajustes de brillo, reposo y umbral de pulsación.
+- Interfaz en inglés y español; ajustes de brillo (10–100%), reposo y umbral de pulsación.
+  Las acciones de Brillo suben o bajan el valor guardado en pasos de diez puntos porcentuales.
 - Exportar/restaurar configuración. La exportación excluye credenciales y ejecutables de plugins.
 - Automatización local por CLI con permisos heredados de consulta, modificación y ejecución.
 - Plugins opcionales de audio, multimedia, OBS y métricas del sistema.
@@ -109,7 +110,7 @@ otras aplicaciones. Cerrar el editor deja el runtime activo; «Salir de RAD» en
 Los datos viven en `$XDG_DATA_HOME/rad` o `~/.local/share/rad`; los sockets locales,
 bajo `$XDG_RUNTIME_DIR/rad`.
 
-El documento actual del deck es v4; el Store SQLite y el contenedor de copias
+El documento actual del deck es v5; el Store SQLite y el contenedor de copias
 siguen en v2. Los datos anteriores migran hacia adelante conservando el original;
 un Store v1 conserva un `.v1-backup`.
 En **Ajustes → Copias**, **Exportar copia** guarda una copia nueva en `~/RAD Backups`

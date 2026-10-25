@@ -18,7 +18,8 @@ detalle.
   revisiones, generaciones, códigos, rutas, bytes ni nombres de procesos.
 - **S2 · Lo técnico, en un solo lugar.** «Avanzado», en Ajustes y oculto por
   defecto, reúne los IDs con botón de copiar (para scripts), los permisos de
-  automatización, el registro reciente, las versiones y la información para soporte.
+  automatización, el registro reciente y la información para soporte. La versión
+  actual del producto se muestra directamente en Actualizaciones, sin desplegable.
   Cada error tiene «Ver detalles».
 - **S3 · Mensajes llanos con una acción.** Cada error dice qué pasó y ofrece qué
   hacer; siempre hay una salida.
@@ -85,7 +86,7 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   terceros, pegando su enlace de GitHub. Actualizar usa el origen registrado. Mientras
   un plugin funcione, no se muestran mensajes.
 - **Paleta de acciones.** Las nativas se reúnen en «RAD»: Carpeta, Esperar,
-  Suspender y Abrir aplicación. «Aplicaciones» conserva los accesos directos y
+  Suspender, Brillo y Abrir aplicación. «Aplicaciones» conserva los accesos directos y
   empieza colapsado. Cada plugin tiene su propio grupo con sus acciones y visuales;
   arrastrar un visual configura la apariencia, no agrega un paso al plan. La
   búsqueda general dice «Buscar acciones» y filtra la paleta. Abrir aplicación
@@ -99,6 +100,11 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   cuando el reposo automático está desactivado. Cualquier tecla despierta sin
   ejecutar su acción; conserva carpeta y brillo. La luna predeterminada no
   reemplaza una imagen propia ni un visual de plugin.
+- **Brillo.** El ajuste admite de 10% a 100%. La acción nativa «Brightness»
+  («Brillo» en español), en el grupo RAD, solo permite elegir subir o bajar:
+  cada ejecución cambia el brillo vigente en diez puntos porcentuales, con
+  saturación en 10% y 100%. El valor se guarda y se refleja en Ajustes; no hay
+  cantidad ni paso configurables, y alcanzar un límite no genera otra escritura.
 - **Gestos.** El editor ofrece pulsar, mantener o pulsación larga solo si la acción
   los admite.
 - **Pantallas.** Ajustes y los formularios ocupan la ventana o el panel de la tecla,
@@ -114,6 +120,8 @@ Ajustes → Actualizaciones funciona también sin conexión con el runtime o dur
 recuperación. Entrar o abrir RAD no consulta Internet. Solo «Verificar
 actualizaciones» inicia una consulta; salir invalida su respuesta y su candidato.
 No hay notificaciones, temporizadores ni indicadores fuera de esta sección.
+La versión actual de RAD permanece visible directamente, sin «Avanzado» ni otra
+flecha para descubrirla.
 
 Antes de consultar no se afirma que RAD esté actualizado. «Verificando…» es
 transitorio; cada consulta termina únicamente en uno de estos tres resultados:

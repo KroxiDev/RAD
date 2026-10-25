@@ -16,6 +16,8 @@ pub struct KeySave<'a> {
     pub waits: &'a [(String, u64)],
     /// Launcher actions and the applications selected for them.
     pub launchers: &'a [(String, String)],
+    /// Native Brightness actions and their fixed-step direction.
+    pub brightness: &'a [(String, rad_api::BrightnessDirection)],
 }
 pub fn save_button(save: &KeySave) -> Request {
     use rad_api::{Appearance, Change, FieldEdit, Gesture, Mode, TextPosition};
@@ -68,6 +70,16 @@ pub fn save_button(save: &KeySave) -> Request {
             .iter()
             .map(|(action, milliseconds)| set(action, FieldEdit::Milliseconds(*milliseconds))),
     );
+    changes.extend(save.brightness.iter().map(|(action, direction)| {
+        set(
+            action,
+            FieldEdit::Parameters(rad_api::ActionParameters::Brightness(
+                rad_api::BrightnessParameters {
+                    direction: *direction,
+                },
+            )),
+        )
+    }));
     changes.push(Change::Order {
         id: save.id.into(),
         indices: save.order.to_vec(),

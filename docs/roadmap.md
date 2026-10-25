@@ -31,11 +31,11 @@ y [procedimiento de empaquetado](../packaging/README.md). Pendiente de cierre:
 
 - Verificación del artefacto final y del flujo con systemd/polkit/pacman reales;
   los dobles no certifican integración ni compatibilidad de Omarchy.
-- Primera release estable utilizable y actualización desde una versión anterior;
-  publicación, tags y acceso remoto de escritura requieren encargo separado.
-- Confirmar disponibilidad del nombre del paquete antes de su primera publicación.
+- Actualización integrada desde una versión anterior mediante una release estable
+  superior; publicación, tags y acceso remoto de escritura requieren encargo separado.
 - Congelar y validar un snapshot de construcción Omarchy 4.0.6; el número de
   distribución no congela sus bibliotecas rolling.
 
-No se presenta una release como disponible por existir la receta. No introducir
+Las releases publicadas se consultan en el [origen oficial](https://github.com/KroxiDev/RAD/releases);
+existir la receta no demuestra que un artefacto se haya publicado. No introducir
 CI, AUR, canales beta, actualización de plugins o rollback automático por inferencia.

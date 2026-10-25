@@ -842,7 +842,7 @@ fn future_document_in_package_reports_unsupported_version() {
     let length = u32::from_be_bytes(bytes[20..24].try_into().unwrap()) as usize;
     let document = String::from_utf8(bytes[60..60 + length].to_vec())
         .unwrap()
-        .replace("\"version\":4", "\"version\":5");
+        .replace("\"version\":5", "\"version\":6");
     let bytes = with_document(bytes, document.into_bytes());
     let (root, area) = area();
     assert!(matches!(
@@ -912,7 +912,7 @@ fn frozen_v2_package_imports_then_roundtrips_v3_with_portable_settings_and_count
     assert_eq!(
         rad_codec::encode(&configuration).unwrap(),
         include_str!("../../../docs/fixtures/v2/profile.json")
-            .replacen("\"version\":2", "\"version\":4", 1)
+            .replacen("\"version\":2", "\"version\":5", 1)
             .as_bytes()
     );
     let mut encoded = vec![];

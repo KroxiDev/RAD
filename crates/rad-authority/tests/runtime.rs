@@ -133,7 +133,7 @@ fn timeout_ttl_and_history_eviction_do_not_release_residual_revision_until_real_
         let e = submit(
             &mut a,
             vec![Edit::SetSettings(SettingsData {
-                brightness_percent: i,
+                brightness_percent: i + 10,
                 ..SettingsData::default()
             })],
         );

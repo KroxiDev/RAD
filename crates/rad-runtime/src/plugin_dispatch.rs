@@ -242,6 +242,29 @@ impl Plugins {
         self.jobs.insert((key.generation, key.request), intent.id);
         Ok(true)
     }
+    /// Records the lifecycle observation independently of how many pump turns
+    /// separate a failure from its eventual reap.
+    fn observe_state(
+        &mut self,
+        actor: &mut Authority,
+        plugin: &str,
+        generation: u64,
+        state: State,
+        stopped_normally: bool,
+    ) {
+        let previous = self.observed.insert(plugin.into(), (generation, state));
+        let already_failed = previous.is_some_and(|(previous_generation, previous_state)| {
+            previous_generation == generation
+                && matches!(previous_state, State::Failed | State::Reaped)
+        });
+        if matches!(state, State::Failed | State::Reaped) && !stopped_normally && !already_failed {
+            actor.plugin_failed(plugin, generation);
+            self.events.push(crate::events::Occurrence::new(
+                rad_api::EventCode::PluginFailed,
+                Some(plugin),
+            ));
+        }
+    }
     pub fn pump(
         &mut self,
         actor: &mut Authority,
@@ -258,14 +281,8 @@ impl Plugins {
             .collect();
         self.observed.retain(|id, _| self.host.state(id).is_some());
         for (m, g, s) in bindings {
-            self.observed.insert(m.id.clone(), (g, s));
-            if matches!(s, State::Failed | State::Reaped) && !self.host.stopped_normally(&m.id) {
-                actor.plugin_failed(&m.id, g);
-                self.events.push(crate::events::Occurrence::new(
-                    rad_api::EventCode::PluginFailed,
-                    Some(&m.id),
-                ));
-            }
+            let stopped_normally = self.host.stopped_normally(&m.id);
+            self.observe_state(actor, &m.id, g, s, stopped_normally);
         }
         let mut done = vec![];
         for (id, intent) in std::mem::take(&mut self.deferred) {
@@ -924,6 +941,36 @@ mod hold_tests {
     #[test]
     fn ready_plugin_end_failure_updates_original_execution() {
         real_release("end_fail");
+    }
+    #[test]
+    fn terminal_observations_report_one_failure_per_generation_not_one_per_pump_state() {
+        use crate::events::Occurrence;
+        let plugin = "org.rad.fixture";
+        let mut actor = fixture(plugin);
+        let mut plugins = Plugins::default();
+        plugins.observe_state(&mut actor, plugin, 1, State::Ready, false);
+        plugins.observe_state(&mut actor, plugin, 1, State::Failed, false);
+        plugins.observe_state(&mut actor, plugin, 1, State::Reaped, false);
+        let failure = Occurrence::new(rad_api::EventCode::PluginFailed, Some(plugin));
+        assert_eq!(plugins.events.as_slice(), std::slice::from_ref(&failure));
+        assert_eq!(plugins.observed.get(plugin), Some(&(1, State::Reaped)));
+        plugins.observe_state(&mut actor, plugin, 1, State::Reaped, false);
+        assert_eq!(plugins.events.as_slice(), std::slice::from_ref(&failure));
+        // An explicitly stopped generation does not produce a failure event.
+        plugins.observe_state(&mut actor, plugin, 2, State::Ready, false);
+        plugins.observe_state(&mut actor, plugin, 2, State::Failed, true);
+        plugins.observe_state(&mut actor, plugin, 2, State::Reaped, true);
+        assert_eq!(plugins.events.as_slice(), std::slice::from_ref(&failure));
+        // A later generation can fail again, even when Failed and Reaped collapse.
+        plugins.observe_state(&mut actor, plugin, 3, State::Ready, false);
+        plugins.observe_state(&mut actor, plugin, 3, State::Reaped, false);
+        plugins.observe_state(&mut actor, plugin, 3, State::Reaped, false);
+        assert_eq!(plugins.events, [failure.clone(), failure.clone()]);
+        assert_eq!(plugins.observed.get(plugin), Some(&(3, State::Reaped)));
+        // A complete replacement can happen between observations, without Ready.
+        plugins.observe_state(&mut actor, plugin, 4, State::Reaped, false);
+        assert_eq!(plugins.events, [failure.clone(), failure.clone(), failure]);
+        assert_eq!(plugins.observed.get(plugin), Some(&(4, State::Reaped)));
     }
     #[cfg(feature = "fixture-tests")]
     #[test]

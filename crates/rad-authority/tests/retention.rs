@@ -25,7 +25,7 @@ fn export_lease_retains_snapshot_after_history_eviction_and_expires_on_idle_dead
         let e = a.submit(
             t,
             vec![Edit::SetSettings(SettingsData {
-                brightness_percent: i,
+                brightness_percent: i + 10,
                 ..SettingsData::default()
             })],
         );

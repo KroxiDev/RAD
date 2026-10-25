@@ -168,6 +168,7 @@ pub(super) enum Icon {
     /// A thin cross: take this away.
     Close,
     Moon,
+    Sun,
 }
 
 /// Draws `icon` around `center` with strokes, so it never depends on the fonts' glyphs.
@@ -176,6 +177,7 @@ pub(super) fn paint_icon(painter: &egui::Painter, center: egui::Pos2, icon: Icon
     let at = |x: f32, y: f32| center + egui::vec2(x, y);
     match icon {
         Icon::Moon => paint_moon(painter, center, 7., color),
+        Icon::Sun => paint_sun(painter, center, 7., color),
         Icon::Back => {
             painter.line(vec![at(2.5, -5.5), at(-3., 0.), at(2.5, 5.5)], stroke);
         }
@@ -297,6 +299,23 @@ pub(super) fn paint_moon(painter: &egui::Painter, center: egui::Pos2, radius: f3
         }
     }
     painter.add(egui::Shape::mesh(mesh));
+}
+
+/// A sun drawn in code, shared by the native action row and its key preview.
+pub(super) fn paint_sun(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
+    let stroke = Stroke::new(radius * 0.16, color);
+    painter.circle_stroke(center, radius * 0.43, stroke);
+    for ray in 0..8 {
+        let angle = std::f32::consts::TAU * ray as f32 / 8.;
+        let direction = egui::vec2(angle.cos(), angle.sin());
+        painter.line_segment(
+            [
+                center + direction * radius * 0.7,
+                center + direction * radius,
+            ],
+            stroke,
+        );
+    }
 }
 
 /// Square icon button drawn with strokes, independent of the bundled fonts' glyph coverage.

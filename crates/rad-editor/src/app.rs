@@ -45,6 +45,7 @@ enum NewAction {
     Launcher(Entry),
     Wait,
     Sleep,
+    Brightness,
     Plugin(crate::plugins::CatalogEntry),
 }
 #[derive(Clone)]
@@ -76,6 +77,8 @@ struct Draft {
     /// Milliseconds typed for each action; only wait actions use theirs.
     waits: Vec<String>,
     entries: Vec<String>,
+    /// The sole parameter of native Brightness actions; other steps do not use theirs.
+    brightness_directions: Vec<rad_api::BrightnessDirection>,
     permissions: Value,
     action_permissions: Vec<Value>,
 }
@@ -107,6 +110,14 @@ impl Draft {
                 .actions
                 .iter()
                 .map(|a| string(&a["fields"]["parameters"]["desktop_entry"]))
+                .collect(),
+            brightness_directions: v
+                .actions
+                .iter()
+                .map(|a| match a["fields"]["parameters"]["direction"].as_str() {
+                    Some("decrease") => rad_api::BrightnessDirection::Decrease,
+                    _ => rad_api::BrightnessDirection::Increase,
+                })
                 .collect(),
             permissions: v.button["fields"]["permissions"].clone(),
             action_permissions: v
@@ -554,6 +565,11 @@ impl App {
             NewAction::Sleep => {
                 self.send(crate::commands::add_action(button, "sleep", Value::Null))
             }
+            NewAction::Brightness => self.send(crate::commands::add_action(
+                button,
+                "brightness",
+                json!({"direction":"increase"}),
+            )),
         }
     }
     /// What the list calls `action`; also the name of a key created just for it.
@@ -563,6 +579,7 @@ impl App {
             NewAction::Launcher(entry) => entry.name.clone(),
             NewAction::Wait => tr(self.es, "Wait").into(),
             NewAction::Sleep => tr(self.es, "Sleep").into(),
+            NewAction::Brightness => tr(self.es, "Brightness").into(),
             NewAction::Plugin(entry) => entry.label.clone(),
         }
     }
@@ -801,8 +818,18 @@ impl App {
                 }
                 Ok(Reply::Refresh(r)) => {
                     if !r.status.is_null() {
-                        if self.navigation.screen() == crate::screens::Screen::Keys {
+                        if self.navigation.screen() == crate::screens::Screen::Keys
+                            || self.settings.is_null()
+                        {
                             self.settings = r.status["settings"].clone();
+                        } else if let Some(settings) = r.status["settings"].as_object() {
+                            // A native action may publish brightness while Settings is open.
+                            // Follow untouched fields without discarding the user's drafts.
+                            for (field, value) in settings {
+                                if self.settings.get(field) == self.status["settings"].get(field) {
+                                    self.settings[field] = value.clone();
+                                }
+                            }
                         }
                         if self.status["view_revision"] != r.status["view_revision"] {
                             self.plugins.dependencies.reset();

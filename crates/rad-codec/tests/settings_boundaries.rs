@@ -16,7 +16,7 @@ fn all_brightness_bytes_and_failed_restore_preserve_original_and_ledger() {
             Origin::Editor,
             Edit::SetSettings(settings),
         );
-        assert_eq!(changed.is_ok(), brightness <= 100);
+        assert_eq!(changed.is_ok(), (10..=100).contains(&brightness));
         if let Ok(candidate) = changed {
             let bytes = rad_codec::encode(candidate.configuration()).unwrap();
             let data = rad_codec::decode_data(&bytes).unwrap();
@@ -29,7 +29,7 @@ fn all_brightness_bytes_and_failed_restore_preserve_original_and_ledger() {
         let mut data = before.data().clone();
         data.settings = settings;
         let restored = before.prepare_restore(&ledger, Origin::Editor, true, data);
-        assert_eq!(restored.is_ok(), brightness <= 100);
+        assert_eq!(restored.is_ok(), (10..=100).contains(&brightness));
         assert_eq!(base.configuration(), &before);
         assert_eq!(base.registry(), &ledger);
     }

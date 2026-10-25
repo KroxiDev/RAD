@@ -208,7 +208,7 @@ pub fn plan_gestures(actions: &[Value], catalog: &[CatalogEntry]) -> Vec<rad_api
                 } else {
                     matches!(
                         kind,
-                        "launcher" | "wait" | "return" | "enter_folder" | "sleep"
+                        "launcher" | "wait" | "return" | "enter_folder" | "sleep" | "brightness"
                     ) && *gesture != Gesture::Hold
                 }
             })

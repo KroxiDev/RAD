@@ -173,9 +173,11 @@ pub(crate) fn migrate_documents(
     let mut corrupt = Vec::new();
     for (id, bytes) in documents {
         match rad_codec::document_version(&bytes) {
-            Ok(version) if version > 4 => return Err(StoreError::UnsupportedVersion),
-            Ok(version @ 1..=3) => {
-                if version == 3 {
+            Ok(version) if version > 5 => return Err(StoreError::UnsupportedVersion),
+            Ok(version @ 1..=4) => {
+                if version == 4 {
+                    backup = ".document-v4-backup";
+                } else if version == 3 && backup != ".document-v4-backup" {
                     backup = ".document-v3-backup";
                 }
                 match Store::read_revision(&tx, id, &registry) {

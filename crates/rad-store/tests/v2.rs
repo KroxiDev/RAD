@@ -551,7 +551,7 @@ fn migrates_v2_documents_without_bumping_sqlite_or_losing_original_evidence() {
     assert!(
         String::from_utf8(document)
             .unwrap()
-            .contains("\"version\":4")
+            .contains("\"version\":5")
     );
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
@@ -581,6 +581,10 @@ fn v2_and_v3_document_migration_keeps_corrupt_head_and_can_reopen_without_overwr
         (
             3,
             include_bytes!("../../../docs/fixtures/v3/profile.json").as_slice(),
+        ),
+        (
+            4,
+            include_bytes!("../../../docs/fixtures/v4/profile.json").as_slice(),
         ),
     ] {
         let path = path(&format!("v{version}-corrupt-document"));
@@ -662,10 +666,10 @@ fn v3_document_migration_preserves_separate_evidence_and_refuses_future_document
     let current: Vec<u8> = db
         .query_row("SELECT document FROM revisions LIMIT 1", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(rad_codec::document_version(&current).unwrap(), 4);
+    assert_eq!(rad_codec::document_version(&current).unwrap(), 5);
     let future = String::from_utf8(current)
         .unwrap()
-        .replacen("\"version\":4", "\"version\":5", 1);
+        .replacen("\"version\":5", "\"version\":6", 1);
     db.execute(
         "UPDATE revisions SET document=?1,digest=?2",
         rusqlite::params![
@@ -681,4 +685,54 @@ fn v3_document_migration_preserves_separate_evidence_and_refuses_future_document
         Err(rad_store::StoreError::UnsupportedVersion)
     ));
     assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn v4_migration_preserves_source_and_normalizes_only_legacy_low_brightness() {
+    use sha2::{Digest, Sha256};
+    let path = path("v4-brightness-floor");
+    std::fs::write(
+        &path,
+        include_bytes!("../../../docs/fixtures/v2/profile.sqlite3"),
+    )
+    .unwrap();
+    let original = include_bytes!("../../../docs/fixtures/v4/profile.json");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute(
+        "UPDATE revisions SET document=?1,digest=?2",
+        rusqlite::params![original.as_slice(), Sha256::digest(original).as_slice()],
+    )
+    .unwrap();
+    drop(db);
+    let before = std::fs::read(&path).unwrap();
+    let old_backup = PathBuf::from(format!("{}.document-v3-backup", path.display()));
+    std::fs::write(&old_backup, b"retained previous evidence").unwrap();
+    let store = Store::open(&path).unwrap();
+    assert_eq!(
+        store.load().unwrap().configuration.data(),
+        &rad_codec::decode_data(original).unwrap()
+    );
+    assert_eq!(
+        store
+            .load()
+            .unwrap()
+            .configuration
+            .settings()
+            .brightness_percent(),
+        10
+    );
+    drop(store);
+    let backup = PathBuf::from(format!("{}.document-v4-backup", path.display()));
+    assert_eq!(std::fs::read(&backup).unwrap(), before);
+    assert_eq!(
+        std::fs::read(&old_backup).unwrap(),
+        b"retained previous evidence"
+    );
+    drop(Store::open(&path).unwrap());
+    assert_eq!(std::fs::read(&backup).unwrap(), before);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let current: Vec<u8> = db
+        .query_row("SELECT document FROM revisions LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rad_codec::document_version(&current).unwrap(), 5);
 }

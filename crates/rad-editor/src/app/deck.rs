@@ -35,6 +35,14 @@ pub(super) fn key_label(text: &str, name: &str, has_image: bool) -> String {
     label.chars().take(40).collect()
 }
 
+pub(super) fn native_icon(appearance: &serde_json::Value) -> Option<rad_api::NativeIcon> {
+    match appearance["native_icon"].as_str() {
+        Some("sleep") => Some(rad_api::NativeIcon::Sleep),
+        Some("brightness") => Some(rad_api::NativeIcon::Brightness),
+        _ => None,
+    }
+}
+
 /// Paints one key face the way the deck does. Text at the top, in the middle or at the
 /// bottom lies over the picture, which is dimmed behind it; text above or below the
 /// picture gets a band of its own and the picture shrinks to make room.
@@ -45,7 +53,7 @@ pub(super) fn paint_key(
     label: &str,
     text_position: &str,
     texture: Option<&egui::TextureHandle>,
-    sleep_icon: bool,
+    native_icon: Option<rad_api::NativeIcon>,
 ) {
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     let radius = CornerRadius::same(KEY_RADIUS);
@@ -64,8 +72,16 @@ pub(super) fn paint_key(
             .corner_radius(radius)
             .paint_at(ui, egui::Rect::from_center_size(picture.center(), fitted));
     }
-    if sleep_icon && texture.is_none() {
-        super::look::paint_moon(&painter, picture.center(), 22. * unit, look.text);
+    if texture.is_none() {
+        match native_icon {
+            Some(rad_api::NativeIcon::Sleep) => {
+                super::look::paint_moon(&painter, picture.center(), 22. * unit, look.text);
+            }
+            Some(rad_api::NativeIcon::Brightness) => {
+                super::look::paint_sun(&painter, picture.center(), 22. * unit, look.text);
+            }
+            None => {}
+        }
     }
     if label.is_empty() {
         return;
@@ -97,7 +113,7 @@ pub(super) fn paint_key(
             (top, Some((top - 3., top + height + 3.)))
         }
     };
-    if let (Some((from, to)), true) = (band, texture.is_some() || sleep_icon) {
+    if let (Some((from, to)), true) = (band, texture.is_some() || native_icon.is_some()) {
         let band =
             egui::Rect::from_min_max(egui::pos2(rect.left(), from), egui::pos2(rect.right(), to));
         // Square corners would poke out of the key where the band reaches its edge.
@@ -196,7 +212,7 @@ impl App {
                 key_label(
                     &string(&b.appearance["text"]),
                     &string(&b.entity["fields"]["name"]),
-                    b.appearance["image"].is_string() || b.appearance["native_icon"] == "sleep",
+                    b.appearance["image"].is_string() || native_icon(&b.appearance).is_some(),
                 )
             })
             .unwrap_or_default();
@@ -236,7 +252,7 @@ impl App {
                         &label,
                         &position,
                         texture,
-                        view.appearance["native_icon"] == "sleep",
+                        native_icon(&view.appearance),
                     );
                 }
                 if response.hovered() {
@@ -289,5 +305,51 @@ impl App {
         if let Some(name) = name.filter(|name| !name.is_empty()) {
             response.on_hover_text(name);
         }
+    }
+}
+
+#[cfg(test)]
+mod brightness_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn face(text: &str) -> Vec<egui::epaint::Shape> {
+        let root = std::env::temp_dir().join(format!("rad-brightness-face-{}", std::process::id()));
+        let mut app = App::with_preferences_path(root.clone(), root.join("theme"), None);
+        let mut slots = vec![serde_json::Value::Null; 32];
+        slots[0] = json!({"id":"b2"});
+        app.board = Some(crate::session::Board {
+            grid: Grid::XL,
+            folder: json!({"id":"f1","fields":{"slots":slots}}),
+            buttons: vec![crate::session::KeyView {
+                entity: json!({"id":"b2","fields":{"name":"Light"}}),
+                appearance: json!({"text":text,"image":null,"text_position":"bottom","native_icon":"brightness"}),
+            }],
+        });
+        egui::Context::default()
+            .run_ui(Default::default(), |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::Vec2::splat(96.), egui::Sense::hover());
+                app.key(ui, &Look::new(&Default::default()), 0, rect);
+            })
+            .shapes
+            .into_iter()
+            .map(|shape| shape.shape)
+            .collect()
+    }
+
+    #[test]
+    fn native_brightness_has_a_sun_without_replacing_custom_text() {
+        let plain = face("");
+        assert!(
+            plain
+                .iter()
+                .any(|shape| matches!(shape, egui::epaint::Shape::Circle(_))),
+            "the native sun must be painted"
+        );
+        assert!(!plain.iter().any(|shape| matches!(shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "Light")),
+            "a native icon replaces the fallback key name");
+        assert!(face("Keep").iter().any(|shape| matches!(shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "Keep")),
+            "custom text is preserved over the native icon");
     }
 }

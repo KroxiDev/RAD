@@ -22,7 +22,7 @@ fn settings_constructor_rejects_bad_brightness_and_preserves_full_durations_and_
             long_press_threshold_ms: 500,
         };
         let result = Settings::from_data(data);
-        if brightness_percent > 100 {
+        if !(10..=100).contains(&brightness_percent) {
             assert_eq!(result, Err(ConfigurationError::InvalidValue));
         } else {
             assert_eq!(result.unwrap().data(), data);
@@ -46,7 +46,7 @@ fn reconstruction_validates_settings_without_silently_defaulting() {
         Err(ConfigurationError::InvalidValue)
     );
     data.settings = SettingsData {
-        brightness_percent: 0,
+        brightness_percent: 10,
         sleep_ms: 0,
         press_threshold_ms: u64::MAX,
         long_press_threshold_ms: 500,
@@ -83,7 +83,7 @@ fn automation_cannot_administer_settings_even_noop_or_with_global_modify() {
     for settings in [
         SettingsData::default(),
         SettingsData {
-            brightness_percent: 0,
+            brightness_percent: 10,
             ..SettingsData::default()
         },
     ] {

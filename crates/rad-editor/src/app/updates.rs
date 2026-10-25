@@ -190,16 +190,14 @@ impl App {
             }
         }
         ui.add_space(12.);
-        ui.collapsing(tr(self.es, "Advanced"), |ui| {
-            if let Ok(release) = rad_update::current_release() {
-                ui.label(format!(
-                    "{} {}-{}",
-                    tr(self.es, "RAD version"),
-                    release.version,
-                    release.pkgrel
-                ));
-            }
-        });
+        if let Ok(release) = rad_update::current_release() {
+            ui.label(format!(
+                "{} {}-{}",
+                tr(self.es, "RAD version"),
+                release.version,
+                release.pkgrel
+            ));
+        }
         if !self.update_outcome_asked && !self.updates.busy() && self.updates.read_outcome() {
             self.update_outcome_asked = true;
         }
@@ -284,6 +282,18 @@ mod tests {
             !texts
                 .iter()
                 .any(|text| text.contains("No hay actualizaciones disponibles"))
+        );
+        let release = rad_update::current_release().unwrap();
+        assert!(
+            texts
+                .iter()
+                .any(|text| text
+                    == &format!("Versión de RAD {}-{}", release.version, release.pkgrel)),
+            "the current product version must be directly visible: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|text| text == "Avanzado"),
+            "Updates must not hide the version behind Advanced"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }

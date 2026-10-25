@@ -425,7 +425,7 @@ fn uncredited_reconciliation_enters_recovery_without_replay_or_publication() {
 fn append_history_stays_at_twenty_five_operations_without_retaining_trees() {
     let mut a = actor();
     for i in 0..30 {
-        let effects = a.edit(Origin::Editor, brightness(i));
+        let effects = a.edit(Origin::Editor, brightness(i + 10));
         let id = commit_id(&effects);
         let e = a.complete_without_display(
             id,
@@ -443,7 +443,7 @@ fn append_history_stays_at_twenty_five_operations_without_retaining_trees() {
         a.editor_view(Origin::Editor).unwrap().history_operations,
         25
     );
-    assert_eq!(a.editor_view(Origin::Editor).unwrap().brightness, 29);
+    assert_eq!(a.editor_view(Origin::Editor).unwrap().brightness, 39);
 }
 #[test]
 fn rejection_reasons_distinguish_storage_uncertainty_from_invalid_and_expired_without_payloads() {

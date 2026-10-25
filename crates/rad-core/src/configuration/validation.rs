@@ -118,7 +118,8 @@ pub(super) fn validate_data(
                 ActionKind::Launcher(_)
                 | ActionKind::External { .. }
                 | ActionKind::Wait(_)
-                | ActionKind::Sleep => {}
+                | ActionKind::Sleep
+                | ActionKind::Brightness(_) => {}
                 ActionKind::EnterFolder(target) => {
                     let owner = data
                         .folders

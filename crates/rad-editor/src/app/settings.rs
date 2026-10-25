@@ -292,8 +292,8 @@ impl App {
                 let mut brightness = self.settings["brightness_percent"]
                     .as_u64()
                     .unwrap_or(100)
-                    .min(100) as u8;
-                ui.add(egui::Slider::new(&mut brightness, 0..=100).suffix(tr(self.es, " %")));
+                    .clamp(10, 100) as u8;
+                ui.add(egui::Slider::new(&mut brightness, 10..=100).suffix(tr(self.es, " %")));
                 self.settings["brightness_percent"] = json!(brightness);
             });
             for (key, en, unit_en) in [
@@ -567,5 +567,65 @@ mod backup_tests {
                 .iter()
                 .any(|text| text == "Export Backup")
         );
+    }
+    #[test]
+    fn general_brightness_never_offers_a_value_below_ten_percent() {
+        for (published, expected) in [(0, 10), (9, 10), (10, 10), (100, 100)] {
+            let mut app = app();
+            app.status = json!({"settings":{"brightness_percent":published}});
+            let _ = texts(&mut app, Section::General);
+            assert_eq!(app.settings["brightness_percent"], expected);
+        }
+    }
+    #[test]
+    fn general_settings_follow_published_brightness_without_overwriting_drafts() {
+        for (draft_brightness, draft_sleep, expected_brightness) in
+            [(55, 1000, 65), (55, 2000, 65), (35, 1000, 35)]
+        {
+            let mut app = app();
+            app.status = json!({"view_revision":"1","settings":{
+                "brightness_percent":55,"sleep_ms":1000,
+                "press_threshold_ms":0,"long_press_threshold_ms":500
+            }});
+            app.open_settings(Section::General);
+            app.settings["brightness_percent"] = json!(draft_brightness);
+            app.settings["sleep_ms"] = json!(draft_sleep);
+            app.worker = crate::worker::Worker::spawn(|_| crate::native::Event {
+                plugin_apply: false,
+                plugin_admin: false,
+                plugin_manifest: false,
+                plugin_dependencies: false,
+                plugin_form: false,
+                plugin_visual: false,
+                connected: false,
+                transfer_job: false,
+                palette: Default::default(),
+                result: Ok(crate::native::Reply::Refresh(crate::session::Refresh {
+                    status: json!({"view_revision":"2","settings":{
+                        "brightness_percent":65,"sleep_ms":1000,
+                        "press_threshold_ms":0,"long_press_threshold_ms":500
+                    }}),
+                    board: None,
+                })),
+            });
+            app.worker
+                .submit(crate::native::Job::Refresh {
+                    board: false,
+                    overview: true,
+                })
+                .unwrap();
+            let ctx = egui::Context::default();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while app.status["view_revision"] != "2" {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "refresh did not settle"
+                );
+                app.pump(&ctx);
+                std::thread::yield_now();
+            }
+            assert_eq!(app.settings["brightness_percent"], expected_brightness);
+            assert_eq!(app.settings["sleep_ms"], draft_sleep);
+        }
     }
 }

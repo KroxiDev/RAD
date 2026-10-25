@@ -123,6 +123,7 @@ pub(crate) enum ActionKind {
     EnterFolder(Identity),
     Return,
     Sleep,
+    Brightness(BrightnessDirection),
     Wait(String),
 }
 #[derive(Serialize, Deserialize)]
@@ -205,4 +206,22 @@ fn default_long_threshold() -> String {
 }
 fn is_default_long_threshold(value: &str) -> bool {
     value == "500"
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", try_from = "String")]
+pub(crate) enum BrightnessDirection {
+    Increase,
+    Decrease,
+}
+
+impl TryFrom<String> for BrightnessDirection {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "increase" => Ok(Self::Increase),
+            "decrease" => Ok(Self::Decrease),
+            _ => Err("invalid brightness direction"),
+        }
+    }
 }

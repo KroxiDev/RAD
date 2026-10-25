@@ -2,7 +2,7 @@ use rad_codec::{CodecError, decode_data, encode};
 use rad_core::{configuration::*, identity::*};
 
 #[test]
-fn sleep_roundtrips_in_v4_and_is_rejected_under_every_older_document_version() {
+fn legacy_sleep_roundtrips_current_and_is_rejected_under_every_version_before_v4() {
     let initial = Configuration::prepare_new(&IdentityRegistry::new(61).unwrap()).unwrap();
     let c = initial
         .configuration()
@@ -29,8 +29,14 @@ fn sleep_roundtrips_in_v4_and_is_rejected_under_every_older_document_version() {
         )
         .unwrap();
     let bytes = encode(c.configuration()).unwrap();
-    assert_eq!(rad_codec::document_version(&bytes).unwrap(), 4);
+    assert_eq!(rad_codec::document_version(&bytes).unwrap(), 5);
     assert_eq!(decode_data(&bytes).unwrap(), *c.configuration().data());
+    let mut legacy: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    legacy["version"] = serde_json::json!(4);
+    assert_eq!(
+        decode_data(&serde_json::to_vec(&legacy).unwrap()).unwrap(),
+        *c.configuration().data()
+    );
     for old in [
         include_bytes!("../../../docs/fixtures/v1/profile.json").as_slice(),
         include_bytes!("../../../docs/fixtures/v2/profile.json").as_slice(),
