@@ -40,7 +40,7 @@ fn main() -> Result<(), eframe::Error> {
         .unwrap_or_default()
         .join(".local/state/omarchy/current/theme");
     let icon = rad_editor::app_icon::png_rgba(256);
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_app_id(rad_editor::app_icon::APP_ID)
@@ -53,6 +53,9 @@ fn main() -> Result<(), eframe::Error> {
             .with_min_inner_size([980., 680.]),
         ..Default::default()
     };
+    // Hidden Wayland windows get no frame callbacks: a vsynced swap blocks the main
+    // thread, so the compositor marks the application as unresponsive.
+    options.glow_options.vsync = false;
     eframe::run_native(
         rad_editor::texts::text("en", "RAD"),
         options,

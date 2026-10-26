@@ -21,6 +21,7 @@ mod launcher;
 mod look;
 mod machine;
 mod options;
+mod pacing;
 mod plugins;
 mod recovery;
 mod service;
@@ -148,6 +149,7 @@ pub struct App {
     credential_selection: Option<String>,
     control: Controller,
     schedule: crate::schedule::Schedule,
+    frame_pacer: pacing::FramePacer,
     result_due: bool,
     wake_registered: bool,
     search_wake: Option<crate::worker::WakeTimer>,
@@ -280,6 +282,7 @@ impl App {
             credential_selection: None,
             control: Controller::default(),
             schedule: Default::default(),
+            frame_pacer: Default::default(),
             result_due: false,
             wake_registered: false,
             search_wake: None,
@@ -1294,6 +1297,10 @@ impl App {
 }
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let wait = self.frame_pacer.wait(Instant::now());
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+        }
         let ctx = ui.ctx().clone();
         if !self.wake_registered {
             let wake = ctx.clone();

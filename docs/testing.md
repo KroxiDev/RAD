@@ -115,7 +115,7 @@ Casos que se conservan, o se añaden si falta cobertura.
 | SDK y salida | Salida parcial o sin lector, concurrencia máxima sin cola creciente, baja y cierre, vigencia vencida en el host, fuente sana sin cambios, renovación sin carga |
 | Operación | Clases de salida, tope de reinicios, modo recuperación, plugins e hijos que mueren con el runtime, aplicaciones que sobreviven en su scope, servicio instalado y arrancado sin autoinicio |
 | Dispositivo | Detección por VID/PID en cualquier puerto, ausencia y reconexión, rejilla desde el modelo |
-| Escritorio | Entrada del menú e ícono instalados y reescritos solo si cambian; bandeja registrada también cuando aparece tarde; un solo editor abierto; «Salir» con parada limpia; ninguna ventana flotante |
+| Escritorio | Entrada del menú e ícono instalados y reescritos solo si cambian; bandeja registrada también cuando aparece tarde; un solo editor abierto; «Salir» con parada limpia; ninguna ventana flotante; editor oculto sin bloquearse; redibujado limitado a 60 fps |
 | Capas | Test de arquitectura contra la tabla y sus invariantes |
 | Audio, Media, OBS, Metrics | `pactl` colgado o con flood, con kill y reap; bus privado y epochs; backpressure y sin replay; CPU y RAM sin NVML y lector terminal |
 | Distribución de RAD | Metadata enlazada a bytes/identidad Arch; layout sin fixtures ni datos; rechazo de fuente sucia para release; consulta manual y cancelación; relevo y privilegios probados con dobles |
