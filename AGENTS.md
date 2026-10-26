@@ -67,6 +67,8 @@ Antes de añadir o retirar tests: aplicar la
 - Para GitHub usar el MCP `github`. Usar `gh` solo si falta conexión/operación o
   falla el MCP, explicando el motivo. El checkout se opera con `git`; con checkout
   local no escribir archivos directamente al remoto mediante MCP.
+- Releases: título exactamente `RAD X.Y.Z-Q` y descripción vacía, sin notas
+  adicionales (`X.Y.Z` es la versión y `Q` el `pkgrel`).
 
 ## Seguridad
 
