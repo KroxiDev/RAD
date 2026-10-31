@@ -418,6 +418,23 @@ no vacía entre `LC_ALL`, `LC_MESSAGES` y `LANG`, con respaldo en inglés. El ca
 de idioma no necesita conexión con el runtime. La escritura usa archivo temporal,
 sync, reemplazo atómico y sync del directorio.
 
+### Memoria de iconos del editor
+
+`$XDG_STATE_HOME/rad/editor-icons.json`, o `$HOME/.local/state/rad/editor-icons.json`
+si no se define XDG. JSON v1 de hasta 128 KiB con las 512 imágenes guardadas más
+recientes desde la biblioteca de iconos, de la más antigua a la más reciente:
+
+```json
+{"version":1,"icons":[{"image":"<digest SHA-256>","icon":"speaker-high","color":"#EBEDF0","background":"#181A1F","size":100}]}
+```
+
+`image` es la referencia de la imagen en el deck; `icon`, el identificador estable
+del icono incluido; `size`, un porcentaje del 50 al 100 múltiplo de 5. Es una ayuda
+local, no configuración: no viaja en las copias, un archivo ausente, mayor del
+límite, de otra versión o ilegible se trata como vacío, y una entrada inválida se
+ignora. La escribe el worker del editor tras subir la imagen, con la misma
+escritura atómica privada que las preferencias; un fallo no altera el guardado.
+
 ### Ajustes de máquina
 
 `machine.json` en el directorio local privado del runtime, separado del Store. JSON

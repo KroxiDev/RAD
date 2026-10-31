@@ -73,4 +73,5 @@ pub mod updates;
 pub mod backups;
 
 pub mod icon_library;
+pub mod icon_memory;
 pub mod icon_save;

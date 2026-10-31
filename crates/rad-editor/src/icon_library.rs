@@ -45,11 +45,16 @@ fn searchable(text: &str) -> String {
         })
         .collect()
 }
+/// Size of the symbol inside the key, in percent: 100 is the full fit, 50 the smallest.
+pub const SCALES: std::ops::RangeInclusive<u8> = 50..=100;
+pub const SCALE_STEP: u8 = 5;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Choice {
     pub icon: usize,
     pub foreground: [u8; 3],
     pub background: [u8; 3],
+    /// Percent within [`SCALES`].
+    pub scale: u8,
 }
 impl Default for Choice {
     fn default() -> Self {
@@ -57,6 +62,7 @@ impl Default for Choice {
             icon: 0,
             foreground: [235, 237, 240],
             background: [24, 26, 31],
+            scale: *SCALES.end(),
         }
     }
 }
@@ -68,12 +74,12 @@ pub struct Rendered {
 #[derive(Default)]
 pub struct Renderer {
     thumbnails: BTreeMap<usize, Vec<u8>>,
-    selected: Option<(usize, Vec<u8>)>,
+    selected: Option<((usize, u8), Vec<u8>)>,
 }
 impl Renderer {
     pub fn thumbnail(&mut self, icon: usize) -> Result<Pixels, String> {
         if let std::collections::btree_map::Entry::Vacant(slot) = self.thumbnails.entry(icon) {
-            slot.insert(mask(icon, 64)?);
+            slot.insert(mask(icon, 64, *SCALES.end())?);
         }
         let rgba = self.thumbnails[&icon]
             .iter()
@@ -85,12 +91,9 @@ impl Renderer {
         })
     }
     pub fn render(&mut self, choice: Choice) -> Result<Rendered, String> {
-        if self
-            .selected
-            .as_ref()
-            .is_none_or(|(icon, _)| *icon != choice.icon)
-        {
-            self.selected = Some((choice.icon, mask(choice.icon, 256)?));
+        let key = (choice.icon, choice.scale);
+        if self.selected.as_ref().is_none_or(|(held, _)| *held != key) {
+            self.selected = Some((key, mask(choice.icon, 256, choice.scale)?));
         }
         let alpha = &self.selected.as_ref().expect("mask loaded").1;
         let mut rgba = Vec::with_capacity(256 * 256 * 4);
@@ -114,7 +117,7 @@ impl Renderer {
         })
     }
 }
-fn mask(icon: usize, size: u32) -> Result<Vec<u8>, String> {
+fn mask(icon: usize, size: u32, scale: u8) -> Result<Vec<u8>, String> {
     let entry = ENTRIES.get(icon).ok_or("unknown bundled icon")?;
     let options = resvg::usvg::Options {
         image_href_resolver: resvg::usvg::ImageHrefResolver {
@@ -126,12 +129,15 @@ fn mask(icon: usize, size: u32) -> Result<Vec<u8>, String> {
     let tree = resvg::usvg::Tree::from_str(entry.svg, &options)
         .map_err(|e| format!("{}: {e}", entry.id))?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).ok_or("icon image allocation")?;
-    // Leave room around every symbol; the SVG's own viewBox remains proportional.
-    let inset = size as f32 * 0.08;
-    let scale = (size as f32 - 2.0 * inset) / tree.size().width().max(tree.size().height());
+    // At full size the symbol leaves an 8% margin; a smaller one stays centered. The
+    // SVG's own viewBox remains proportional.
+    let percent = f32::from(scale.clamp(*SCALES.start(), *SCALES.end())) / 100.;
+    let room = size as f32 * 0.84 * percent;
+    let offset = (size as f32 - room) / 2.;
+    let factor = room / tree.size().width().max(tree.size().height());
     resvg::render(
         &tree,
-        resvg::tiny_skia::Transform::from_row(scale, 0., 0., scale, inset, inset),
+        resvg::tiny_skia::Transform::from_row(factor, 0., 0., factor, offset, offset),
         &mut pixmap.as_mut(),
     );
     Ok(pixmap

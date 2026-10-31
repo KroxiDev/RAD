@@ -1270,8 +1270,10 @@ impl App {
             )
             .show_separator_line(false)
             .show(ui, |ui| self.status_line(ui, look));
+        // The cap keeps content that outgrows the column from ever covering the editor.
         egui::Panel::right("actions")
             .default_size(260.)
+            .max_size(420.)
             .frame(look.panel(look.surface, 12))
             .show(ui, |ui| {
                 ui.add_enabled_ui(editable, |ui| {

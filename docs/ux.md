@@ -99,19 +99,29 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   posición vacía, la tecla se crea recién al elegir, con el nombre de la aplicación y
   su ícono cuando está disponible; cancelar no deja una tecla vacía. Los cambios de aplicación de un
   lanzador existente se guardan con «Guardar», también desde «Avanzado».
+- **Menú Imagen.** Sus opciones (Biblioteca de iconos, Usar icono de la app,
+  Importar y Quitar imagen) se ven como botones desde el primer momento, no como
+  texto que solo se distingue al pasar el puntero; Quitar imagen usa el estilo
+  de acción destructiva.
 - **Biblioteca de iconos.** En Imagen → Biblioteca de iconos (apariencia manual),
   200 iconos Phosphor regulares se buscan por nombres y etiquetas en español o
   inglés y se recorren por grupos. El panel sustituye temporalmente la paleta
-  derecha: no abre otra ventana ni duplica la vista previa del inspector. Elegir
-  un icono habilita colores sólidos de icono y fondo, con muestras y selector
-  personalizado; abrir la biblioteca por sí solo no cambia la tecla. «Guardar»
+  derecha con el mismo ancho, que nunca supera 420 px y vuelve intacto a la
+  paleta al cerrar; no abre otra ventana ni duplica la vista previa del
+  inspector. Elegir un icono habilita colores sólidos de icono y fondo, con
+  muestras y selector personalizado, y una barra de tamaño del 50% al 100%, de 5
+  en 5 y al 100% por defecto; abrir la biblioteca por sí solo no cambia la tecla. «Guardar»
   es la única acción primaria y publica también el resto del borrador; «Cancelar»
   o Esc descarta solo la elección del icono, sin borrar los otros campos editados.
   Cambiar de tecla, entrar a Ajustes o a un formulario, o perder la conexión
   invalida la elección local aún no enviada. Importar
   PNG/JPEG propio sigue disponible. Los SVG son exclusivamente los incluidos:
   no se aceptan SVG externos. Se guarda un PNG, incluido en las copias, no una
-  receta editable; al reabrir hay que elegir de nuevo para cambiar colores.
+  receta editable. Este equipo recuerda qué icono, colores y tamaño produjeron
+  cada imagen guardada desde la biblioteca: al reabrirla sobre esa imagen parte de
+  ellos, con el icono seleccionado y a la vista, y «Guardar» se habilita solo ante
+  un cambio. El recuerdo no viaja en las copias ni a otro equipo; si falta o no se
+  puede leer, la biblioteca abre sin selección, como antes.
 - **Suspender.** Acción nativa con media luna en el grupo RAD. Activa
   inmediatamente el mismo reposo configurado por inactividad, incluso
   cuando el reposo automático está desactivado. Cualquier tecla despierta sin

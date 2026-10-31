@@ -1,7 +1,7 @@
 //! Contextual library in the actions column. Raster work stays off the GUI thread.
 use super::{App, look::Look, tr};
 use crate::{
-    icon_library::{Choice, ENTRIES, GROUPS, Rendered, Renderer},
+    icon_library::{Choice, ENTRIES, GROUPS, Rendered, Renderer, SCALE_STEP, SCALES},
     preferences::Language,
     preview::Pixels,
     worker::{Polled, Worker},
@@ -33,6 +33,11 @@ pub(super) struct Library {
     query: String,
     scroll_query: Option<String>,
     choice: Option<Choice>,
+    /// What this computer remembers drew the key's image: the choice starts here and only a
+    /// different one is a change to save.
+    recalled: Option<Choice>,
+    /// Scroll the grid once to the recalled icon.
+    reveal: bool,
     prepared: Option<Prepared>,
     before: Option<Prepared>,
     generation: u64,
@@ -50,6 +55,8 @@ impl Library {
         self.open = false;
         self.owner.clear();
         self.choice = None;
+        self.recalled = None;
+        self.reveal = false;
         self.prepared = None;
         self.before = None;
         self.pending_save = None;
@@ -61,7 +68,7 @@ impl Library {
         self.generation = self.generation.wrapping_add(1);
         self.submitted = None;
     }
-    pub fn begin(&mut self, owner: &str) {
+    pub fn begin(&mut self, owner: &str, recalled: Option<Choice>) {
         if self.owner != owner {
             self.reset();
             self.owner = owner.into();
@@ -71,6 +78,14 @@ impl Library {
             self.query.clear();
             self.scroll_query = None;
             self.open = true;
+            if self.choice.is_none()
+                && let Some(choice) = recalled
+            {
+                self.choice = Some(choice);
+                self.recalled = Some(choice);
+                self.reveal = true;
+                self.invalidate();
+            }
         }
     }
     pub fn cancel(&mut self) {
@@ -79,6 +94,10 @@ impl Library {
         }
         self.prepared = self.before.take();
         self.choice = self.prepared.as_ref().map(|p| p.choice);
+        if self.choice.is_none() {
+            self.recalled = None;
+        }
+        self.reveal = false;
         self.error = None;
         self.open = false;
         self.invalidate();
@@ -97,7 +116,7 @@ impl Library {
         self.pending_save.is_some()
     }
     pub fn dirty_for(&self, owner: &str) -> bool {
-        self.owner == owner && self.choice.is_some()
+        self.owner == owner && self.choice.is_some() && self.choice != self.recalled
     }
     pub fn preview(&self, owner: &str) -> Option<&egui::TextureHandle> {
         (self.owner == owner)
@@ -122,6 +141,7 @@ impl Library {
             ticket: self.generation,
             png: self.prepared.as_ref()?.png.clone(),
             request,
+            choice: self.choice?,
         })
     }
     pub fn saving(&mut self) {
@@ -244,19 +264,23 @@ impl Library {
         ui.heading(tr(language, "Icon library"));
         ui.label(look.muted_text("Phosphor"));
         ui.add_space(4.);
+        // The clear button is placed first, from the right, and the field takes exactly what
+        // is left: a row wider than the column would make egui widen it on every frame.
         ui.horizontal(|ui| {
-            let width = (ui.available_width() - 32.).max(40.);
-            ui.add(
-                look.field(&mut self.query, tr(language, "Search icons…"))
-                    .desired_width(width),
-            );
-            if ui
-                .add_enabled(!self.query.is_empty(), egui::Button::new("×"))
-                .on_hover_text(tr(language, "Clear search"))
-                .clicked()
-            {
-                self.query.clear();
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(!self.query.is_empty(), egui::Button::new("×"))
+                    .on_hover_text(tr(language, "Clear search"))
+                    .clicked()
+                {
+                    self.query.clear();
+                }
+                let width = ui.available_width();
+                ui.add(
+                    look.field(&mut self.query, tr(language, "Search icons…"))
+                        .desired_width(width),
+                );
+            });
         });
         let mut save = false;
         let pending = self.pending_save.is_some();
@@ -269,6 +293,12 @@ impl Library {
                     let previous = choice;
                     color_row(ui, look, language, "Icon color", &mut choice.foreground);
                     color_row(ui, look, language, "Background", &mut choice.background);
+                    ui.label(look.muted_text(tr(language, "Size")));
+                    ui.add(
+                        egui::Slider::new(&mut choice.scale, SCALES)
+                            .step_by(f64::from(SCALE_STEP))
+                            .suffix("%"),
+                    );
                     if choice != previous {
                         self.choose(choice);
                     }
@@ -298,8 +328,12 @@ impl Library {
                     {
                         self.cancel();
                     }
+                    let changed = self.choice != self.recalled;
                     save = ui
-                        .add_enabled(can_save && self.ready(), look.primary(tr(language, "Save")))
+                        .add_enabled(
+                            can_save && changed && self.ready(),
+                            look.primary(tr(language, "Save")),
+                        )
                         .clicked();
                     if pending || (self.choice.is_some() && !self.ready() && self.error.is_none()) {
                         ui.spinner();
@@ -373,6 +407,10 @@ impl Library {
                                 } else {
                                     ui.painter().circle_filled(rect.center(), 2., look.muted);
                                 }
+                            }
+                            if selected && self.reveal {
+                                response.scroll_to_me(Some(egui::Align::Center));
+                                self.reveal = false;
                             }
                             if response.on_hover_text(name).clicked() && !pending {
                                 self.choose(Choice {
@@ -536,11 +574,46 @@ mod tests {
         });
         app
     }
+    /// Draws the keys screen once and returns the width of the right column.
+    fn side_panel_width(ctx: &egui::Context, app: &mut App, look: &Look) -> f32 {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1180., 780.),
+            )),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| app.keys_screen(ui, look, true));
+        output.textures_delta.clear();
+        egui::containers::panel::PanelState::load(ctx, egui::Id::new("actions"))
+            .expect("the right column was drawn")
+            .size()
+            .x
+    }
+    #[test]
+    fn open_library_keeps_the_side_panel_width_and_hands_it_back_to_the_palette() {
+        let ctx = egui::Context::default();
+        let look = Look::new(&Default::default());
+        look.apply(&ctx);
+        let mut app = app();
+        app.connected = true;
+        let palette = side_panel_width(&ctx, &mut app, &look);
+        app.icon_library.begin("b7", None);
+        for frame in 1..=50 {
+            assert_eq!(
+                side_panel_width(&ctx, &mut app, &look),
+                palette,
+                "the library widened the column on frame {frame}"
+            );
+        }
+        app.icon_library.cancel();
+        assert_eq!(side_panel_width(&ctx, &mut app, &look), palette);
+    }
     #[test]
     fn opening_library_and_refreshed_inspection_preserve_unrelated_draft_edits() {
         let mut app = app();
         app.draft.text = "Local text".into();
-        app.icon_library.begin("b7");
+        app.icon_library.begin("b7", None);
         assert!(app.icon_library.preview("b7").is_none());
         assert!(!app.icon_library.dirty_for("b7"));
         app.adopt_inspection(app.inspection.clone().unwrap());
@@ -564,13 +637,13 @@ mod tests {
     fn cancel_switch_and_stale_render_never_change_the_next_key() {
         let ctx = egui::Context::default();
         let mut library = Library::default();
-        library.begin("b7");
+        library.begin("b7", None);
         prepare(&mut library, &ctx, Choice::default());
         let old = library.generation;
         library.cancel();
         assert!(!library.dirty_for("b7"));
         assert!(library.preview("b7").is_none());
-        library.begin("b9");
+        library.begin("b9", None);
         let choice = Choice {
             icon: 8,
             foreground: [180, 130, 60],
@@ -600,7 +673,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = app();
         app.draft.text = "A draft".into();
-        app.icon_library.begin("b7");
+        app.icon_library.begin("b7", None);
         prepare(&mut app.icon_library, &ctx, Choice::default());
         let (sent, received) = std::sync::mpsc::channel();
         app.worker = Worker::spawn(move |job| {
@@ -635,6 +708,7 @@ mod tests {
             ticket,
             request,
             png,
+            ..
         } = job
         else {
             panic!("captured save")
@@ -654,7 +728,7 @@ mod tests {
         view.button["id"] = json!("b9");
         app.adopt_inspection(view.clone());
         app.draft.text = "B local".into();
-        app.icon_library.begin("b9");
+        app.icon_library.begin("b9", None);
         prepare(
             &mut app.icon_library,
             &ctx,
@@ -694,7 +768,7 @@ mod tests {
     fn refused_save_retains_local_image_unknown_discards_it_without_replay() {
         let ctx = egui::Context::default();
         let mut library = Library::default();
-        library.begin("b7");
+        library.begin("b7", None);
         prepare(&mut library, &ctx, Choice::default());
         let ticket = library.generation;
         library.saving();
@@ -714,7 +788,7 @@ mod tests {
             json!({"image":null,"text":"","visual_type":"plugin:status"}),
         ] {
             let mut app = app();
-            app.icon_library.begin("b7");
+            app.icon_library.begin("b7", None);
             prepare(&mut app.icon_library, &ctx, Choice::default());
             let old = app.icon_library.generation;
             let mut view = app.inspection.clone().unwrap();
@@ -739,7 +813,7 @@ mod tests {
         for unknown in [false, true] {
             let mut app = app();
             app.draft.text = "Saved text".into();
-            app.icon_library.begin("b7");
+            app.icon_library.begin("b7", None);
             prepare(&mut app.icon_library, &ctx, Choice::default());
             app.icon_library.saving();
             let ticket = app.icon_library.generation;
@@ -775,7 +849,7 @@ mod tests {
         let mut app = app();
         app.connected = true;
         app.draft.text = "Other local fields".into();
-        app.icon_library.begin("b7");
+        app.icon_library.begin("b7", None);
         prepare(&mut app.icon_library, &ctx, Choice::default());
         app.navigation.open(crate::screens::Section::General);
         app.pump_auxiliary(&ctx);
@@ -784,7 +858,7 @@ mod tests {
             "settings must not retain a competing Save panel"
         );
         assert_eq!(app.draft.text, "Other local fields");
-        app.icon_library.begin("b7");
+        app.icon_library.begin("b7", None);
         prepare(&mut app.icon_library, &ctx, Choice::default());
         app.icon_library.saving();
         let ticket = app.icon_library.generation;

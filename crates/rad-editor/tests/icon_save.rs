@@ -53,7 +53,9 @@ fn save_uploads_then_publishes_only_the_captured_key_without_losing_other_fields
         .render(Default::default())
         .unwrap()
         .png;
-    let response = rad_editor::icon_save::save(&mut session, "b7", &png, edit("b7")).unwrap();
+    let response = rad_editor::icon_save::save(&mut session, "b7", &png, edit("b7"))
+        .unwrap()
+        .response;
     assert_eq!(response.status, Status::Applied);
     let calls = calls.borrow();
     assert_eq!(

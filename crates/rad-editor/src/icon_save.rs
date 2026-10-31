@@ -6,6 +6,14 @@ use crate::{
 };
 use rad_client::response::Response;
 
+/// What a save produced: the runtime's answer and the image it now refers to.
+#[derive(Debug)]
+pub struct Saved {
+    pub response: Response,
+    /// Digest of the image as the runtime stored it.
+    pub image: String,
+}
+
 /// No preparation is held in the GUI: its 60-second lease starts only after Save.
 /// The captured edit owns its destination; a later UI selection cannot redirect it.
 pub fn save<P: Port>(
@@ -13,7 +21,7 @@ pub fn save<P: Port>(
     button: &str,
     png: &[u8],
     mut edit: Request,
-) -> Result<Response, Error> {
+) -> Result<Saved, Error> {
     let Request::Edit { changes } = &mut edit else {
         return Err(Error::protocol());
     };
@@ -68,8 +76,11 @@ pub fn save<P: Port>(
         else {
             unreachable!()
         };
-        appearance.image = Some(reference);
-        session.request(edit)
+        appearance.image = Some(reference.clone());
+        session.request(edit).map(|response| Saved {
+            response,
+            image: reference,
+        })
     })();
     if result.is_err() && session.is_open() {
         // Keep the original error, including Unknown. Cancellation never repeats the edit.

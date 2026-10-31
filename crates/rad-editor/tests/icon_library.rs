@@ -7,6 +7,7 @@ fn icon_colors_are_opaque_with_antialiased_edges_and_matching_png() {
         icon: 0,
         foreground: [220, 180, 90],
         background: [18, 24, 35],
+        ..Default::default()
     };
     let rendered = Renderer::default().render(choice).unwrap();
     assert_eq!(rendered.pixels.size, [256, 256]);

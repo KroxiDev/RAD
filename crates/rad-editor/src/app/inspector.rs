@@ -388,8 +388,9 @@ impl App {
                 .into();
             });
     }
-    /// Button with everything about the key's picture: import a PNG/JPEG, take the icon of
-    /// the application the key opens, or remove it. Imports and removals stick with Save.
+    /// Button with everything about the key's picture: open the icon library, take the icon
+    /// of the application the key opens, import a PNG/JPEG, or remove it. Imports and removals
+    /// stick with Save.
     fn image_menu(&mut self, ui: &mut egui::Ui, look: &Look, open_now: bool) {
         let has_image = !self.draft.image.is_empty() || self.icon_library.dirty_for(&self.draft.id);
         let label = if has_image {
@@ -410,15 +411,38 @@ impl App {
         egui::Popup::menu(&button)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
-                if self
+                // egui draws menu entries as bare text until hovered; next to a label and a
+                // field they would read as text, so they keep the editor's button look.
+                ui.reset_style();
+                let manual = self
                     .inspection
                     .as_ref()
-                    .is_some_and(|i| i.appearance["visual_type"].is_null())
+                    .is_some_and(|i| i.appearance["visual_type"].is_null());
+                if manual && ui.button(tr(self.es, "Icon library")).clicked() {
+                    // Start from what drew the current image, when this computer remembers it.
+                    let recalled = crate::icon_memory::default_path()
+                        .and_then(|path| crate::icon_memory::recall(&path, &self.draft.image));
+                    self.icon_library.begin(&self.draft.id, recalled);
+                    ui.close();
+                }
+                if icon_available
+                    && ui
+                        .button(tr(self.es, "Use app icon"))
+                        .on_hover_text(tr(
+                            self.es,
+                            "Take the installed icon of the application this key opens first",
+                        ))
+                        .clicked()
+                    && self.command(Job::AppIcon {
+                        button: self.draft.id.clone(),
+                        application: None,
+                    })
                 {
-                    if ui.button(tr(self.es, "Icon library")).clicked() {
-                        self.icon_library.begin(&self.draft.id);
-                        ui.close();
-                    }
+                    self.icon_library.reset();
+                    self.icon_asked = true;
+                    ui.close();
+                }
+                if manual || icon_available {
                     ui.separator();
                 }
                 ui.label(look.muted_text(tr(self.es, "From a PNG or JPEG file")));
@@ -446,30 +470,16 @@ impl App {
                         ui.close();
                     }
                 });
-                if icon_available || has_image {
+                if has_image {
                     ui.separator();
-                }
-                if icon_available
-                    && ui
-                        .button(tr(self.es, "Use app icon"))
-                        .on_hover_text(tr(
-                            self.es,
-                            "Take the installed icon of the application this key opens first",
-                        ))
+                    if ui
+                        .add(look.dangerous(tr(self.es, "Remove image")))
                         .clicked()
-                    && self.command(Job::AppIcon {
-                        button: self.draft.id.clone(),
-                        application: None,
-                    })
-                {
-                    self.icon_library.reset();
-                    self.icon_asked = true;
-                    ui.close();
-                }
-                if has_image && ui.button(tr(self.es, "Remove image")).clicked() {
-                    self.icon_library.reset();
-                    self.draft.image.clear();
-                    ui.close();
+                    {
+                        self.icon_library.reset();
+                        self.draft.image.clear();
+                        ui.close();
+                    }
                 }
             });
     }
