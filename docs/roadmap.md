@@ -26,16 +26,16 @@ y se verifica con la [política de pruebas](testing.md).
 
 ## Distribución y actualizaciones
 
-Código y receta preparados según [ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md)
-y [procedimiento de empaquetado](../packaging/README.md). Pendiente de cierre:
+Implementada según [ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md)
+y el [procedimiento de empaquetado](../packaging/README.md). La actualización
+integrada entre releases estables ya se comprobó con systemd, polkit y pacman
+reales. Pendiente de cierre:
 
-- Verificación del artefacto final y del flujo con systemd/polkit/pacman reales;
-  los dobles no certifican integración ni compatibilidad de Omarchy.
-- Actualización integrada desde una versión anterior mediante una release estable
-  superior; publicación, tags y acceso remoto de escritura requieren encargo separado.
+- Validar en una sesión Omarchy aislada lo que el uso normal no cubre: cancelación,
+  fallos antes y después de la transacción, desinstalación y reinstalación con
+  datos sintéticos. Los dobles no certifican esa integración.
 - Congelar y validar un snapshot de construcción Omarchy 4.0.6; el número de
   distribución no congela sus bibliotecas rolling.
 
-Las releases publicadas se consultan en el [origen oficial](https://github.com/KroxiDev/RAD/releases);
-existir la receta no demuestra que un artefacto se haya publicado. No introducir
-CI, AUR, canales beta, actualización de plugins o rollback automático por inferencia.
+No introducir CI, AUR, canales beta, actualización de plugins o rollback
+automático por inferencia.
