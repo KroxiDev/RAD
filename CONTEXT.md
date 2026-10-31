@@ -190,6 +190,11 @@ Representación de una fuente observada en la apariencia de un botón, independi
 de las acciones de su plan.
 _No confundir con_: acción, imagen estática.
 
+**Estado de un visual**:
+Identificador de una condición declarada por un tipo de visual, observado por el
+plugin, con una cara propia de texto e imagen.
+_No confundir con_: estado del proceso del plugin, vigencia visual, gesto.
+
 **Fuente observada**:
 Estado externo que un plugin observa para producir un visual dinámico, como la
 escena activa de OBS.

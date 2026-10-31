@@ -14,7 +14,7 @@ pub fn config() -> Config {
         "org.rad.obs",
         Version {
             major: 0,
-            minor: 3,
+            minor: 4,
             patch: 0,
         },
         1..=1,
@@ -26,6 +26,7 @@ pub fn config() -> Config {
         "labels".into(),
         "response_timeout".into(),
         "visual_freshness".into(),
+        "visual_states".into(),
     ])
     .credential_slots(vec!["password".into()])
 }
@@ -831,47 +832,47 @@ impl Session {
     }
 }
 fn visual_state(source: &str, params: &Parameters, data: &Value) -> VisualState {
-    let text = match source {
+    let (state, text) = match source {
         "record" => match (
             data["outputActive"].as_bool(),
             data["outputPaused"].as_bool(),
         ) {
-            (Some(true), Some(true)) => "Paused",
-            (Some(true), Some(false)) => "Recording",
-            (Some(false), _) => "Stopped",
+            (Some(true), Some(true)) => ("recording", "Paused"),
+            (Some(true), Some(false)) => ("recording", "Recording"),
+            (Some(false), _) => ("stopped", "Stopped"),
             _ => return VisualState::Unavailable,
         },
         "stream" => match data["outputActive"].as_bool() {
-            Some(true) => "Streaming",
-            Some(false) => "Stopped",
+            Some(true) => ("live", "Streaming"),
+            Some(false) => ("off", "Stopped"),
             _ => return VisualState::Unavailable,
         },
         "pause" => match (
             data["outputActive"].as_bool(),
             data["outputPaused"].as_bool(),
         ) {
-            (Some(true), Some(true)) => "Paused",
-            (Some(_), Some(_)) => "Not paused",
+            (Some(true), Some(true)) => ("paused", "Paused"),
+            (Some(_), Some(_)) => ("running", "Not paused"),
             _ => return VisualState::Unavailable,
         },
         "virtualcam" | "replay" => match data["outputActive"].as_bool() {
-            Some(true) => "On",
-            Some(false) => "Off",
+            Some(true) => ("on", "On"),
+            Some(false) => ("off", "Off"),
             _ => return VisualState::Unavailable,
         },
         "mute" => match data["inputMuted"].as_bool() {
-            Some(true) => "Muted",
-            Some(false) => "On",
+            Some(true) => ("muted", "Muted"),
+            Some(false) => ("unmuted", "On"),
             _ => return VisualState::Unavailable,
         },
         "filter" => match data["filterEnabled"].as_bool() {
-            Some(true) => "Enabled",
-            Some(false) => "Disabled",
+            Some(true) => ("on", "Enabled"),
+            Some(false) => ("off", "Disabled"),
             _ => return VisualState::Unavailable,
         },
         "item" => match data["sceneItemEnabled"].as_bool() {
-            Some(true) => "Visible",
-            Some(false) => "Hidden",
+            Some(true) => ("visible", "Visible"),
+            Some(false) => ("hidden", "Hidden"),
             _ => return VisualState::Unavailable,
         },
         "scene" => {
@@ -883,15 +884,16 @@ fn visual_state(source: &str, params: &Parameters, data: &Value) -> VisualState 
                 return VisualState::Unavailable;
             };
             if data["currentProgramSceneName"] == name {
-                "Program"
+                ("active", "Program")
             } else {
-                "Inactive"
+                ("inactive", "Inactive")
             }
         }
         _ => return VisualState::Unavailable,
     };
     VisualState::Current {
         content: VisualContent {
+            state: Some(state.into()),
             text: Some(text.into()),
             ..VisualContent::default()
         },

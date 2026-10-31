@@ -339,6 +339,7 @@ fn pictured(initial: &Candidate) -> (Candidate, rad_media::NormalizedImage) {
             Edit::SetAppearance {
                 button: button.configuration().data().buttons[0].binding.identity(),
                 appearance: Appearance {
+                    states: Default::default(),
                     text: String::new(),
                     image: Some(media_key(&image)),
                     text_position: None,
@@ -824,6 +825,7 @@ fn streaming_preflight_error_in_recovery_performs_no_dml() {
             Edit::SetAppearance {
                 button: button.configuration().data().buttons[0].binding.identity(),
                 appearance: rad_core::configuration::Appearance {
+                    states: Default::default(),
                     text: "".into(),
                     image: Some("00".repeat(32)),
                     text_position: None,

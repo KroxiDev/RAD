@@ -164,12 +164,35 @@ pub enum TextPosition {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 /// Logical owned-media reference only: Store validates bytes, never a source path.
 pub struct Appearance {
+    pub states: std::collections::BTreeMap<String, StateFace>,
     pub text: String,
     pub image: Option<String>,
     /// `None` follows the image: centred on a key without one, at the bottom over one.
     pub text_position: Option<TextPosition>,
 }
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StateFace {
+    pub text: String,
+    pub image: Option<String>,
+}
+impl StateFace {
+    pub fn valid_identifier(id: &str) -> bool {
+        !id.is_empty()
+            && id.len() <= 96
+            && id.as_bytes()[0].is_ascii_alphanumeric()
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
+    }
+}
 impl Appearance {
+    /// All owned pictures, including faces not currently shown; roots for copies and GC.
+    pub fn images(&self) -> impl Iterator<Item = &String> {
+        self.image
+            .iter()
+            .chain(self.states.values().filter_map(|face| face.image.as_ref()))
+    }
+
     /// What the key reads: its own text, or `name` while it has neither text nor image.
     /// A key with an image and no text of its own shows the image alone.
     pub fn label<'a>(&'a self, name: &'a str) -> &'a str {

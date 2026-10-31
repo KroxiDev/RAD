@@ -88,6 +88,8 @@ pub enum ActionView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppearanceView {
+    #[serde(default)]
+    pub states: std::collections::BTreeMap<String, crate::StateFace>,
     pub text: String,
     pub image: Option<String>,
     pub text_position: TextPosition,
@@ -112,6 +114,8 @@ pub enum Availability {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VisualView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
     pub availability: Availability,
     pub revision: String,
     pub text: Option<String>,

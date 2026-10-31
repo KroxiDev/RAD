@@ -46,6 +46,7 @@ fn with_images(initial: &Candidate, images: &[rad_media::NormalizedImage]) -> Ca
                 Edit::SetAppearance {
                     button: id,
                     appearance: Appearance {
+                        states: Default::default(),
                         text: "".into(),
                         image: Some(rad_store::media_key(image)),
                         text_position: None,

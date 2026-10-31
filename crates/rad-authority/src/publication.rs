@@ -182,6 +182,15 @@ impl Authority {
                 break;
             };
             let origin = self.tickets[&request].origin;
+            if let Command::CheckedEdits {
+                expected_revision, ..
+            } = &command
+                && self.view_revision(origin).map(|revision| revision.value())
+                    != Some(*expected_revision)
+            {
+                effects.push(self.reject(request, Rejection::ViewChanged));
+                continue;
+            }
             match command {
                 Command::Run { .. } | Command::RunId { .. } => {
                     effects.push(self.reject(request, Rejection::Invalid))
@@ -223,7 +232,7 @@ impl Authority {
                         }
                     }
                 }
-                Command::PrepareEdits(steps) => {
+                Command::PrepareEdits(steps) | Command::CheckedEdits { steps, .. } => {
                     let candidate =
                         steps
                             .into_iter()

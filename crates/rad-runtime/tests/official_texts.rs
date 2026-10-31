@@ -34,3 +34,28 @@ fn every_text_an_official_plugin_shows_has_a_spanish_translation() {
         }
     }
 }
+
+#[test]
+fn binary_official_manifests_fit_wire_budget_and_translate_all_state_labels() {
+    for bytes in [
+        include_bytes!("../../../plugins/audio/manifest.json").as_slice(),
+        include_bytes!("../../../plugins/obs/manifest.json").as_slice(),
+    ] {
+        assert!(bytes.len() <= 65536);
+        let manifest = rad_plugin_contract::Document::new(bytes)
+            .unwrap()
+            .manifest(1, "x86_64-unknown-linux-gnu")
+            .unwrap();
+        assert_eq!(manifest.version.minor, 4);
+        for action in &manifest.actions {
+            assert!(action.visual.is_some());
+        }
+        for visual in &manifest.visuals {
+            assert_eq!(visual.states.len(), 2);
+            for state in &visual.states {
+                assert!(state.icon.as_ref().is_some_and(|i| i.len() <= 4096));
+                assert!(manifest.translations["es"].contains_key(&state.label));
+            }
+        }
+    }
+}

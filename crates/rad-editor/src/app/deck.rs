@@ -330,6 +330,7 @@ impl App {
         if let Some(drag) = response.dnd_release_payload::<Drag>() {
             match &*drag {
                 Drag::Button { id: source, .. } => self.send(crate::Request::Edit {
+                    expected_revision: None,
                     changes: vec![rad_api::Change::Move {
                         id: source.clone(),
                         position,

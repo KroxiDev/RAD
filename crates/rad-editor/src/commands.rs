@@ -38,6 +38,7 @@ pub fn save_button(save: &KeySave) -> Request {
         set(
             save.id,
             FieldEdit::Appearance(Appearance {
+                states: Default::default(),
                 text: save.text.into(),
                 image: save.image.map(str::to_owned),
                 text_position,
@@ -84,7 +85,10 @@ pub fn save_button(save: &KeySave) -> Request {
         id: save.id.into(),
         indices: save.order.to_vec(),
     });
-    Request::Edit { changes }
+    Request::Edit {
+        changes,
+        expected_revision: None,
+    }
 }
 /// Adds an action of a type the runtime knows to `button`, after the ones it has.
 pub fn add_action(button: &str, kind: &str, parameters: Value) -> Request {

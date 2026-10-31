@@ -221,6 +221,13 @@ def scenario(w):
     equal('audio without server reaches CLI', w.cli('run', 'a2', '--wait', code=6)['data']['steps'][0]['code'], 'service_unavailable')
     audio = w.cli('options', 'a2', 'device')['data']
     equal('audio source unavailable not empty available', (audio['availability'], audio['items']), ('unavailable', []))
+    e.call('edit', changes=[dict(kind='set', id='b2', field='visual', value=dict(
+        type='org.rad.audio#output', parameters=parameters(device='default')))])
+    audio_visual = w.until(lambda: e.call('plugin_visual', id='b2'), lambda v: v['availability'] == 'unavailable')
+    equal('audio unavailable rests in second state', audio_visual['state'], 'unmuted')
+    equal('audio state has no implicit text', audio_visual['text'], '')
+    equal('audio unavailable retains manifest icon', audio_visual['image'], True)
+
     e.call('edit', changes=[dict(kind='set', id='b3', field='visual', value=dict(
         type='org.rad.media#now_playing', parameters=parameters(player='absent')))])
     w.until(lambda: e.call('plugin_visual', id='b3'), lambda v: v['availability'] == 'unavailable')

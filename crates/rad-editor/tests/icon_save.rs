@@ -84,10 +84,13 @@ fn malformed_destination_is_refused_before_upload() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let mut session = Session::new(Server(calls.clone()));
     let mut request = edit("b7");
-    let Request::Edit { changes: foreign } = edit("b9") else {
+    let Request::Edit {
+        changes: foreign, ..
+    } = edit("b9")
+    else {
         unreachable!()
     };
-    let Request::Edit { changes } = &mut request else {
+    let Request::Edit { changes, .. } = &mut request else {
         unreachable!()
     };
     changes.extend(foreign.into_iter().filter(|c| {
@@ -167,7 +170,7 @@ fn upload_failures_and_malformed_finish_cannot_publish_and_unknown_edit_is_not_r
         let error =
             rad_editor::icon_save::save(&mut session, "b7", b"\x89PNG\r\n\x1a\n", edit("b7"))
                 .unwrap_err();
-        assert_eq!(error.unknown, !malformed);
+        assert_eq!(error.error.unknown, !malformed);
         assert_eq!(
             calls
                 .borrow()
@@ -183,4 +186,82 @@ fn upload_failures_and_malformed_finish_cannot_publish_and_unknown_edit_is_not_r
             );
         }
     }
+}
+
+#[test]
+fn icon_save_captures_one_state_and_preserves_the_other_face_and_base() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut session = Session::new(Server(calls.clone()));
+    let mut request = edit("b7");
+    if let Request::Edit {
+        changes,
+        expected_revision,
+    } = &mut request
+    {
+        *expected_revision = Some("7".into());
+        for change in changes {
+            if let rad_api::Change::Set {
+                edit: rad_api::FieldEdit::Appearance(a),
+                ..
+            } = change
+            {
+                a.image = Some("base-image".into());
+                a.states.get_or_insert_with(Default::default).insert(
+                    "muted".into(),
+                    rad_api::StateFace {
+                        text: "Quiet".into(),
+                        image: None,
+                    },
+                );
+                a.states.get_or_insert_with(Default::default).insert(
+                    "unmuted".into(),
+                    rad_api::StateFace {
+                        text: "Live".into(),
+                        image: Some("other-image".into()),
+                    },
+                );
+            }
+        }
+    }
+    rad_editor::icon_save::save_to_state(
+        &mut session,
+        "b7",
+        Some("muted"),
+        b"\x89PNG\r\n\x1a\n",
+        request,
+    )
+    .unwrap();
+    let requests = calls.borrow();
+    let Request::Edit {
+        changes,
+        expected_revision,
+    } = requests.last().unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        expected_revision.as_deref(),
+        Some("7"),
+        "upload preserves destination revision"
+    );
+    let a = changes
+        .iter()
+        .find_map(|c| match c {
+            rad_api::Change::Set {
+                edit: rad_api::FieldEdit::Appearance(a),
+                ..
+            } => Some(a),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(a.image.as_deref(), Some("base-image"));
+    assert_eq!(
+        a.states.as_ref().unwrap()["muted"].image.as_deref(),
+        Some("prepared-image")
+    );
+    assert_eq!(a.states.as_ref().unwrap()["muted"].text, "Quiet");
+    assert_eq!(
+        a.states.as_ref().unwrap()["unmuted"].image.as_deref(),
+        Some("other-image")
+    );
 }

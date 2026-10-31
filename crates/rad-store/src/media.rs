@@ -10,7 +10,7 @@ fn references(config: &Configuration) -> BTreeSet<String> {
         .data()
         .buttons
         .iter()
-        .filter_map(|b| b.appearance.image.clone())
+        .flat_map(|b| b.appearance.images().cloned())
         .collect()
 }
 fn parse_key(key: &str) -> Result<Vec<u8>, StoreError> {

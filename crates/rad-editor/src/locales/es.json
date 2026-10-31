@@ -566,5 +566,11 @@
   "Could not draw the icon": "No se pudo dibujar el icono",
   "Try again": "Intentar de nuevo",
   "No matching icons": "No hay iconos que coincidan",
-  "Custom color": "Color personalizado"
+  "Custom color": "Color personalizado",
+  "The key changed. Your changes are still here. Click Apply to try again.": "La tecla cambió. Tus cambios siguen aquí. Pulsa Aplicar para intentarlo de nuevo.",
+  "The key changed. Checking its appearance…": "La tecla cambió. Comprobando su apariencia…",
+  "The key changed. Your appearance changes are still here. Save again.": "La tecla cambió. Tus cambios de apariencia siguen aquí. Vuelve a guardar.",
+  "The appearance changed and your edit was not saved. Check the key and try again.": "La apariencia cambió y no se guardó tu edición. Revisa la tecla y vuelve a intentarlo.",
+  "The key changed. The imported image was not used; choose it again if you still need it.": "La tecla cambió. No se usó la imagen importada; vuelve a elegirla si aún la necesitas.",
+  "The image could not be discarded. Your text is still here; choose the image again.": "No se pudo descartar la imagen. Tu texto sigue aquí; vuelve a elegir la imagen."
 }

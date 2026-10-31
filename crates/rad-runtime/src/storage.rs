@@ -35,6 +35,9 @@ pub enum Job {
     ReleaseMedia {
         transfer_id: String,
     },
+    UnretainImages {
+        transfer_id: String,
+    },
     /// Recovery mode: the base at `path` is replaced by a new one holding the verified
     /// media of the transfer, and the damaged file stays as evidence.
     ReplaceFromMedia {
@@ -224,6 +227,12 @@ impl StorageWorker {
                             ResultValue::Transfer(match transfers.as_mut() {
                                 Some(t) => t.execute_with(store.as_mut(), context, operation),
                                 None => Err(transfers::Error::NotAllowed),
+                            })
+                        }
+                        Job::UnretainImages { transfer_id } => {
+                            ResultValue::Released(match transfers.as_mut() {
+                                Some(t) => t.unretain_images(&transfer_id),
+                                None => Err(transfers::Error::NotFound),
                             })
                         }
                         Job::ReleaseMedia { transfer_id } => {

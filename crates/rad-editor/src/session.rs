@@ -290,6 +290,14 @@ impl<P: Port> Session<P> {
 
 impl<P: Port> Session<P> {
     pub fn media_bytes(&mut self, id: &str, revision: &str) -> Result<Vec<u8>, Error> {
+        self.media_bytes_for(id, revision, None)
+    }
+    pub fn media_bytes_for(
+        &mut self,
+        id: &str,
+        revision: &str,
+        reference: Option<&str>,
+    ) -> Result<Vec<u8>, Error> {
         same_entity_revision(
             &self.request(Request::Get { id: id.into() })?.data,
             revision,
@@ -298,6 +306,7 @@ impl<P: Port> Session<P> {
         loop {
             let data = self
                 .request(Request::MediaRead {
+                    media_ref: reference.map(str::to_owned),
                     id: id.into(),
                     offset: bytes.len().to_string(),
                 })?

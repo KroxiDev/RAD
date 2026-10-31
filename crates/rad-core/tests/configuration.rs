@@ -314,6 +314,7 @@ fn automation_checks_real_field_owners_and_aggregates_atomically_in_both_permiss
         Edit::SetAppearance {
             button: b,
             appearance: Appearance {
+                states: Default::default(),
                 text: "changed".into(),
                 image: None,
                 text_position: None,
@@ -432,6 +433,7 @@ fn action_lifecycle_is_editor_only_and_navigation_cannot_be_removed_retyped_or_c
                     Edit::SetAppearance {
                         button,
                         appearance: Appearance {
+                            states: Default::default(),
                             text: "custom".into(),
                             image: None,
                             text_position: None,

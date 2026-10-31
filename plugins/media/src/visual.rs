@@ -96,6 +96,7 @@ impl Reader {
             Status::Stopped => ("Stopped", STOPPED),
         };
         VisualContent {
+            state: None,
             text: Some(text.into()),
             color: Some(color),
             ..VisualContent::default()

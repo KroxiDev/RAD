@@ -48,23 +48,7 @@ pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
             parameters,
         } => {
             let id = parse_id(button_id)?;
-            let kind = match (type_key.as_str(), parameters) {
-                ("sleep", rad_api::ActionParameters::None) => ActionKind::Sleep,
-                ("brightness", rad_api::ActionParameters::Brightness(p)) => {
-                    ActionKind::Brightness(brightness_direction(p.direction))
-                }
-                ("launcher", rad_api::ActionParameters::Launcher(p)) => {
-                    ActionKind::Launcher(launcher(&p.desktop_entry)?)
-                }
-                ("wait", rad_api::ActionParameters::Wait(p)) => {
-                    ActionKind::Wait(milliseconds(p.milliseconds)?)
-                }
-                (name, rad_api::ActionParameters::Plugin(p)) => ActionKind::External {
-                    type_key: external_key(name, ':')?,
-                    parameters: parameter_bytes(p)?,
-                },
-                _ => return Err("invalid_request"),
-            };
+            let kind = action_kind(type_key, parameters)?;
             Ok(Command::PrepareEdits(vec![Box::new(move |cfg| {
                 Ok(vec![Edit::AddAction {
                     button: button(cfg, id)?.binding.identity(),
@@ -72,7 +56,10 @@ pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
                 }])
             })]))
         }
-        R::Edit { changes } => {
+        R::Edit {
+            changes,
+            expected_revision,
+        } => {
             if changes.is_empty() || changes.len() > 256 {
                 return Err("invalid_request");
             }
@@ -86,10 +73,35 @@ pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
                         as rad_authority::EditPreparation
                 })
                 .collect();
-            Ok(Command::PrepareEdits(steps))
+            Ok(match expected_revision {
+                Some(revision) => Command::CheckedEdits {
+                    expected_revision: decimal(revision)?,
+                    steps,
+                },
+                None => Command::PrepareEdits(steps),
+            })
         }
         _ => admin::command(request),
     }
+}
+fn action_kind(type_key: &str, parameters: &rad_api::ActionParameters) -> Checked<ActionKind> {
+    Ok(match (type_key, parameters) {
+        ("sleep", rad_api::ActionParameters::None) => ActionKind::Sleep,
+        ("brightness", rad_api::ActionParameters::Brightness(p)) => {
+            ActionKind::Brightness(brightness_direction(p.direction))
+        }
+        ("launcher", rad_api::ActionParameters::Launcher(p)) => {
+            ActionKind::Launcher(launcher(&p.desktop_entry)?)
+        }
+        ("wait", rad_api::ActionParameters::Wait(p)) => {
+            ActionKind::Wait(milliseconds(p.milliseconds)?)
+        }
+        (name, rad_api::ActionParameters::Plugin(p)) => ActionKind::External {
+            type_key: external_key(name, ':')?,
+            parameters: parameter_bytes(p)?,
+        },
+        _ => return Err("invalid_request"),
+    })
 }
 pub(super) fn resolve(
     cfg: &Configuration,
@@ -145,11 +157,14 @@ fn parameters(value: &rad_api::ActionParameters) -> Checked<ActionParameters> {
     })
 }
 enum Change {
+    AddAction(ShortId, ActionKind),
+    RemoveAction(ShortId),
     Gesture(ShortId, rad_core::configuration::Gesture),
     Name(ShortId, String),
     Visual(ShortId, VisualSource),
     /// Text and image always; the text position only when the edit names it.
     Appearance {
+        states: Option<std::collections::BTreeMap<String, rad_core::configuration::StateFace>>,
         id: ShortId,
         text: String,
         image: Option<String>,
@@ -163,11 +178,25 @@ enum Change {
 fn convert_change(change: &rad_api::Change) -> Checked<Change> {
     use rad_api::{Change as C, FieldEdit as F};
     Ok(match change {
+        C::AddAction {
+            button_id,
+            type_key,
+            parameters,
+        } => Change::AddAction(parse_id(button_id)?, action_kind(type_key, parameters)?),
+        C::RemoveAction { id } => {
+            let id = parse_id(id)?;
+            if id.kind() != EntityKind::Action {
+                return Err("invalid_request");
+            }
+            Change::RemoveAction(id)
+        }
         C::Order { id, indices } => Change::Order(parse_id(id)?, indices.clone()),
         C::Move { id, position: pos } => Change::Move(parse_id(id)?, position(*pos)?),
         C::Set { id, edit } => {
             let target = parse_id(id)?;
-            let max = if matches!(edit, F::Parameters(_) | F::Visual(_)) {
+            let max = if matches!(edit, F::Appearance(_)) {
+                32768
+            } else if matches!(edit, F::Parameters(_) | F::Visual(_)) {
                 17408
             } else {
                 8192
@@ -213,6 +242,20 @@ fn convert_change(change: &rad_api::Change) -> Checked<Change> {
                     },
                 ),
                 F::Appearance(v) => Change::Appearance {
+                    states: v.states.as_ref().map(|states| {
+                        states
+                            .iter()
+                            .map(|(id, f)| {
+                                (
+                                    id.clone(),
+                                    rad_core::configuration::StateFace {
+                                        text: f.text.clone(),
+                                        image: f.image.clone(),
+                                    },
+                                )
+                            })
+                            .collect()
+                    }),
                     id: target,
                     text: v.text.clone(),
                     image: v.image.clone(),
@@ -240,6 +283,13 @@ fn convert_change(change: &rad_api::Change) -> Checked<Change> {
 impl Change {
     fn prepare(self, cfg: &Configuration) -> Result<Vec<Edit>, ConfigurationError> {
         let e = match self {
+            Self::AddAction(id, kind) => Edit::AddAction {
+                button: button(cfg, id)?.binding.identity(),
+                kind,
+            },
+            Self::RemoveAction(id) => Edit::RemoveAction {
+                action: resolve(cfg, id)?,
+            },
             Self::Gesture(id, gesture) => Edit::SetGesture {
                 button: button(cfg, id)?.binding.identity(),
                 gesture,
@@ -253,6 +303,7 @@ impl Change {
                 name,
             },
             Self::Appearance {
+                states,
                 id,
                 text,
                 image,
@@ -262,6 +313,7 @@ impl Change {
                 Edit::SetAppearance {
                     button: b.binding.identity(),
                     appearance: Appearance {
+                        states: states.unwrap_or_else(|| b.appearance.states.clone()),
                         text,
                         image,
                         text_position: text_position.unwrap_or(b.appearance.text_position),

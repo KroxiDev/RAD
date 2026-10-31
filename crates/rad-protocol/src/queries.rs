@@ -63,6 +63,7 @@ pub(super) fn read(
                     };
                     let v = super::views::appearance(a, c, id)?;
                     let mut items = vec![
+                        json!({"name":"states","value":v.states}),
                         json!({"name":"text","value":v.text}),
                         json!({"name":"image","value":v.image}),
                         json!({"name":"text_position","value":v.text_position}),

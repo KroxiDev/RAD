@@ -149,6 +149,11 @@ pub type EditPreparation =
     Box<dyn FnOnce(&Configuration) -> Result<Vec<Edit>, ConfigurationError> + Send>;
 pub enum Command {
     PrepareEdits(Vec<EditPreparation>),
+    /// Compare the origin's view token at the queued turn, before preparing any candidate.
+    CheckedEdits {
+        expected_revision: u64,
+        steps: Vec<EditPreparation>,
+    },
     RunId {
         id: rad_core::identity::ShortId,
     },
@@ -173,7 +178,7 @@ impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Internal preparation closures and configuration payloads are not diagnostics.
         f.write_str(match self {
-            Self::PrepareEdits(_) => "Command::PrepareEdits",
+            Self::PrepareEdits(_) | Self::CheckedEdits { .. } => "Command::PrepareEdits",
             Self::Edits(_) => "Command::Edits",
             Self::RunId { .. } => "Command::RunId",
             Self::Run { .. } => "Command::Run",
@@ -350,6 +355,7 @@ pub enum Rejection {
     Expired,
     Capacity,
     PublicationPending,
+    ViewChanged,
 }
 
 /// Proof that a configuration snapshot is pinned for an export in progress. Authority

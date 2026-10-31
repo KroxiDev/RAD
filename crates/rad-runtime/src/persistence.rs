@@ -34,6 +34,7 @@ enum BindingState {
     Bound,
     InFlight,
     Release,
+    PrepareAgain,
 }
 struct Binding {
     connection: u64,
@@ -61,7 +62,7 @@ impl Persistence {
             && !self
                 .bindings
                 .values()
-                .any(|b| b.state == BindingState::Release)
+                .any(|b| matches!(b.state, BindingState::Release | BindingState::PrepareAgain))
     }
     /// Retained preflight for which no Authority ticket could be bound. At most
     /// two lease handles, not an external job FIFO. Cleanup happens via poll.
@@ -193,8 +194,16 @@ impl Persistence {
                 Effect::Reconcile { id } => (id, Job::Reconcile),
                 Effect::Collect { id, roots } => (id, Job::Collect(roots)),
                 other => {
-                    if let Effect::Rejected { request, .. } = &other {
-                        self.release_media(*request);
+                    if let Effect::Rejected { request, reason } = &other {
+                        if matches!(reason, rad_authority::Rejection::ViewChanged) {
+                            if let Some(binding) = self.bindings.get_mut(request)
+                                && binding.state == BindingState::Bound
+                            {
+                                binding.state = BindingState::PrepareAgain;
+                            }
+                        } else {
+                            self.release_media(*request);
+                        }
                     }
                     output.push(other);
                     continue;
@@ -262,10 +271,18 @@ impl Persistence {
         if let Some((&request, binding)) = self
             .bindings
             .iter()
-            .find(|(_, b)| b.state == BindingState::Release)
-            && let Ok(job) = self.worker.submit(Job::ReleaseMedia {
-                transfer_id: binding.token.clone(),
-            })
+            .find(|(_, b)| matches!(b.state, BindingState::Release | BindingState::PrepareAgain))
+            && let Ok(job) = self
+                .worker
+                .submit(if binding.state == BindingState::PrepareAgain {
+                    Job::UnretainImages {
+                        transfer_id: binding.token.clone(),
+                    }
+                } else {
+                    Job::ReleaseMedia {
+                        transfer_id: binding.token.clone(),
+                    }
+                })
         {
             self.active = Some(Active::Cleanup {
                 job,

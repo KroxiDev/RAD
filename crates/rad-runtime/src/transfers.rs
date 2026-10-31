@@ -94,6 +94,9 @@ pub enum Operation {
         resolved_key: String,
     },
     /// Internal runtime operation, not an IPC command.
+    RetainImages {
+        media_refs: Vec<String>,
+    },
     RetainImage {
         media_ref: String,
     },
@@ -209,6 +212,7 @@ enum Body {
     Empty,
 }
 struct Transfer {
+    companions: Vec<String>,
     connection: u64,
     kind: Kind,
     declared: Option<u64>,
@@ -468,11 +472,10 @@ impl Transfers {
                 Ok(Output::RestoreData { data })
             }
             Operation::RetainImage { media_ref } => {
-                let (id,t)=self.entries.iter_mut().find(|(_,t)|t.connection==context.connection&&!t.pending&&matches!(&t.body,Body::Image(image) if rad_store::media_key(image)==media_ref)).ok_or(Error::NotFound)?;
-                t.pending = true;
-                Ok(Output::Retained {
-                    transfer_id: id.clone(),
-                })
+                self.retain_images(context.connection, &[media_ref])
+            }
+            Operation::RetainImages { media_refs } => {
+                self.retain_images(context.connection, &media_refs)
             }
             Operation::LoadVisual { resolved_key } => store
                 .ok_or(Error::NotAllowed)?
@@ -526,7 +529,13 @@ impl Transfers {
     ) -> Result<Output, Error> {
         if self.entries.len() >= 2
             || self.released.len() >= 2
-            || self.entries.values().any(|t| t.connection == c.connection)
+            || self.entries.values().any(|t| {
+                t.connection == c.connection
+                    && !(kind == Kind::ImageImport
+                        && t.kind == Kind::ImageImport
+                        && t.prepared.is_some()
+                        && !t.pending)
+            })
         {
             return Err(Error::Capacity);
         }
@@ -555,6 +564,7 @@ impl Transfers {
         self.entries.insert(
             id.clone(),
             Transfer {
+                companions: vec![],
                 connection: c.connection,
                 kind,
                 declared: size,
@@ -718,6 +728,32 @@ impl Transfers {
         t.body = Body::Image(image);
         Ok(Output::ImagePrepared { media_ref: key })
     }
+    fn retain_images(&mut self, connection: u64, refs: &[String]) -> Result<Output, Error> {
+        if refs.is_empty() || refs.len() > 2 {
+            return Err(Error::Invalid);
+        }
+        let mut ids = Vec::new();
+        for key in refs {
+            let (id, _) = self
+                .entries
+                .iter()
+                .find(|(_, t)| {
+                    t.connection == connection
+                        && !t.pending
+                        && matches!(&t.body,Body::Image(image) if rad_store::media_key(image)==*key)
+                })
+                .ok_or(Error::NotFound)?;
+            if !ids.contains(id) {
+                ids.push(id.clone());
+            }
+        }
+        for id in &ids {
+            self.entries.get_mut(id).expect("found").pending = true;
+        }
+        let first = ids.remove(0);
+        self.entries.get_mut(&first).expect("found").companions = ids;
+        Ok(Output::Retained { transfer_id: first })
+    }
     pub fn commit(
         &mut self,
         store: &mut Store,
@@ -725,6 +761,53 @@ impl Transfers {
         connection: u64,
         transfer_id: &str,
     ) -> CommitOutcome {
+        // The primary lease owns every freshly prepared picture referenced by this edit.
+        // RetainImages pins this group before queuing; direct callers are grouped here too.
+        if self.entries.get(transfer_id).is_some_and(|t| {
+            t.connection == connection && !t.started && matches!(t.body, Body::Image(_))
+        }) {
+            let roots: std::collections::BTreeSet<_> = candidate
+                .configuration()
+                .data()
+                .buttons
+                .iter()
+                .flat_map(|b| b.appearance.images())
+                .collect();
+            let mut ids = vec![transfer_id.to_owned()];
+            let companions = self
+                .entries
+                .get(transfer_id)
+                .expect("checked")
+                .companions
+                .clone();
+            for (id, t) in &self.entries {
+                if id != transfer_id
+                    && t.connection == connection
+                    && !t.started
+                    && (!t.pending || companions.contains(id))
+                    && matches!(&t.body,Body::Image(image) if companions.contains(id) || roots.contains(&rad_store::media_key(image)))
+                {
+                    ids.push(id.clone());
+                }
+            }
+            self.entries
+                .get_mut(transfer_id)
+                .expect("checked")
+                .companions = ids[1..].to_vec();
+            let images = ids
+                .iter()
+                .map(|id| {
+                    let t = self.entries.get_mut(id).expect("found");
+                    t.pending = true;
+                    t.started = true;
+                    let Body::Image(image) = &t.body else {
+                        unreachable!()
+                    };
+                    image.clone()
+                })
+                .collect::<Vec<_>>();
+            return store.commit_with_media(candidate, &images);
+        }
         let Ok(t) = self.lookup(transfer_id, connection) else {
             return CommitOutcome::NotApplied(StoreError::Invalid);
         };
@@ -765,6 +848,30 @@ impl Transfers {
         t.started = true;
         Store::create_from_media(path, candidate, media)
     }
+    /// A typed view conflict rejected the edit before persistence began. Restore
+    /// the entire image group to its original prepared lease, never extend expiry.
+    pub fn unretain_images(&mut self, transfer_id: &str) -> Result<(), Error> {
+        let primary = self.entries.get(transfer_id).ok_or(Error::NotFound)?;
+        let ids: Vec<_> = std::iter::once(transfer_id.to_owned())
+            .chain(primary.companions.iter().cloned())
+            .collect();
+        if ids.iter().any(|id| {
+            self.entries.get(id).is_none_or(|t| {
+                t.connection != primary.connection
+                    || !t.pending
+                    || t.started
+                    || !matches!(t.body, Body::Image(_))
+            })
+        }) {
+            return Err(Error::Busy);
+        }
+        for id in ids {
+            let transfer = self.entries.get_mut(&id).expect("validated group");
+            transfer.pending = false;
+            transfer.companions.clear();
+        }
+        self.reap()
+    }
     pub fn resolved(&mut self, transfer_id: &str, outcome: &CommitOutcome) -> Result<(), Error> {
         let t = self.entries.get_mut(transfer_id).ok_or(Error::NotFound)?;
         if matches!(outcome, CommitOutcome::Uncertain { .. }) {
@@ -772,6 +879,13 @@ impl Transfers {
             return Ok(());
         }
         t.pending = false;
+        let companions = std::mem::take(&mut t.companions);
+        for id in companions {
+            if let Some(t) = self.entries.get_mut(&id) {
+                t.pending = false;
+            }
+            self.release(&id)?;
+        }
         self.release(transfer_id)
     }
 }

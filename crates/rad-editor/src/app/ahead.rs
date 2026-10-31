@@ -106,12 +106,20 @@ pub(super) fn board_pictures(board: &Board) -> Vec<PictureRead> {
     board
         .buttons
         .iter()
-        .filter_map(|key| {
-            Some(PictureRead {
+        .flat_map(|key| {
+            let refs = key.appearance["image"].as_str().into_iter().chain(
+                key.appearance["states"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|s| s.values())
+                    .filter_map(|f| f["image"].as_str()),
+            );
+            refs.map(|reference| PictureRead {
                 button: string(&key.entity["id"]),
-                reference: key.appearance["image"].as_str()?.to_owned(),
+                reference: reference.to_owned(),
                 revision: string(&key.entity["view_revision"]),
             })
+            .collect::<Vec<_>>()
         })
         .collect()
 }

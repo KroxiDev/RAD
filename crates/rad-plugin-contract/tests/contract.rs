@@ -53,6 +53,7 @@ fn framed_protocol_roundtrips_and_rejects_wrong_generation() {
         values: serde_json::Map::new(),
     };
     let content = VisualContent {
+        state: None,
         text: Some("42".into()),
         png_hex: None,
         jpeg_hex: None,
@@ -149,6 +150,8 @@ fn public_dtos_cannot_bypass_resource_and_schema_limits() {
     use rad_plugin_contract::*;
     let mut definition = Definition {
         gestures: vec![Gesture::Press],
+        states: vec![],
+        visual: None,
         response_timeout: None,
         id: "run".into(),
         label: "Run".into(),

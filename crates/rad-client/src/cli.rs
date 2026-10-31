@@ -65,6 +65,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, InvalidArguments> {
             let edit = serde_json::from_value(serde_json::json!({"field":field,"value":value}))
                 .map_err(|_| InvalidArguments)?;
             R::Edit {
+                expected_revision: None,
                 changes: vec![Change::Set {
                     id: (*id).into(),
                     edit,
@@ -72,6 +73,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, InvalidArguments> {
             }
         }
         ["move", id, position] if entity_id(id) && id.starts_with('b') => R::Edit {
+            expected_revision: None,
             changes: vec![Change::Move {
                 id: (*id).into(),
                 position: decimal(position)
@@ -94,6 +96,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, InvalidArguments> {
                 return Err(InvalidArguments);
             }
             R::Edit {
+                expected_revision: None,
                 changes: vec![Change::Order {
                     id: (*id).into(),
                     indices,

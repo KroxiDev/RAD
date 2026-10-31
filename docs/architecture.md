@@ -247,3 +247,4 @@ Estas piezas parecen simplificables y no lo son:
 | [0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md) | Paquete Arch y actualizador independiente; confianza en GitHub oficial por HTTPS |
 | [0019](adr/0019-brightness-persistente-y-documento-v5.md) | Acción Brightness con publicación durable y documento v5; brillo configurable 10–100 |
 | [0020](adr/0020-textos-de-plugins-y-plazo-fijo.md) | Textos de los plugins traducidos en su manifest, opciones con texto propio y plazo fijo de respuesta |
+| [0021](adr/0021-estados-de-visuales-y-documento-v6.md) | Dos estados observados por visual, vínculo declarativo con acciones y documento v6 |

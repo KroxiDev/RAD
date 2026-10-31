@@ -51,6 +51,7 @@ fn probe_state(shared: &Shared) -> Message {
         valid_for_ms: 1000,
         state: VisualState::Current {
             content: VisualContent {
+                state: None,
                 text: Some(
                     shared
                         .settings_text

@@ -121,6 +121,7 @@ fn main() {
                 {
                     VisualState::Current {
                         content: VisualContent {
+                            state: None,
                             text: Some(format!("rev{revision}")),
                             png_hex: None,
                             jpeg_hex: None,

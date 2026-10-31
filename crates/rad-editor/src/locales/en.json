@@ -566,5 +566,11 @@
   "Could not draw the icon": "Could not draw the icon",
   "Try again": "Try again",
   "No matching icons": "No matching icons",
-  "Custom color": "Custom color"
+  "Custom color": "Custom color",
+  "The key changed. Your changes are still here. Click Apply to try again.": "The key changed. Your changes are still here. Click Apply to try again.",
+  "The key changed. Checking its appearance…": "The key changed. Checking its appearance…",
+  "The key changed. Your appearance changes are still here. Save again.": "The key changed. Your appearance changes are still here. Save again.",
+  "The appearance changed and your edit was not saved. Check the key and try again.": "The appearance changed and your edit was not saved. Check the key and try again.",
+  "The key changed. The imported image was not used; choose it again if you still need it.": "The key changed. The imported image was not used; choose it again if you still need it.",
+  "The image could not be discarded. Your text is still here; choose the image again.": "The image could not be discarded. Your text is still here; choose the image again."
 }

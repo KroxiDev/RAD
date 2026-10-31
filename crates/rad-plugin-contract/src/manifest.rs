@@ -51,6 +51,10 @@ pub struct Manifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<VisualStateDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual: Option<String>,
     #[serde(default = "default_gestures")]
     pub gestures: Vec<Gesture>,
     pub id: String,
@@ -59,6 +63,49 @@ pub struct Definition {
     pub credential_slots: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_timeout: Option<ResponseTimeout>,
+}
+/// Ordered binary states; the second is shown when the source is unavailable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisualStateDefinition {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+fn valid_icon(hex: &str) -> bool {
+    if hex.is_empty()
+        || hex.len() > 16384
+        || !hex.len().is_multiple_of(2)
+        || !hex
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return false;
+    }
+    let bytes: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("checked hex"))
+        .collect();
+    let decoder = png::Decoder::new_with_limits(
+        std::io::Cursor::new(bytes),
+        png::Limits { bytes: 1024 * 1024 },
+    );
+    let Ok(mut reader) = decoder.read_info() else {
+        return false;
+    };
+    let info = reader.info();
+    if info.width == 0
+        || info.width > 256
+        || info.width != info.height
+        || info.animation_control.is_some()
+    {
+        return false;
+    }
+    let Some(size) = reader.output_buffer_size().filter(|n| *n <= 1024 * 1024) else {
+        return false;
+    };
+    reader.next_frame(&mut vec![0; size]).is_ok() && reader.finish().is_ok()
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -180,6 +227,37 @@ impl Manifest {
         {
             return Err(Error::InvalidManifest);
         }
+        if self.actions.iter().any(|d| !d.states.is_empty())
+            || self.visuals.iter().any(|d| d.visual.is_some())
+            || (!crate::supports(&self.capabilities, crate::VISUAL_STATES)
+                && self
+                    .actions
+                    .iter()
+                    .chain(&self.visuals)
+                    .any(|d| d.visual.is_some() || !d.states.is_empty()))
+        {
+            return Err(Error::InvalidManifest);
+        }
+        for action in &self.actions {
+            if let Some(id) = &action.visual {
+                let visual = self
+                    .visuals
+                    .iter()
+                    .find(|v| &v.id == id)
+                    .ok_or(Error::InvalidManifest)?;
+                if visual.states.len() != 2
+                    || visual.schema.fields.iter().any(|field| {
+                        !action.schema.fields.iter().any(|a| {
+                            a.id == field.id
+                                && a.kind == field.kind
+                                && (!field.required || a.required)
+                        })
+                    })
+                {
+                    return Err(Error::InvalidManifest);
+                }
+            }
+        }
         let slots = self.credential_slots();
         if slots.len() > 32
             || (!slots.is_empty() && !crate::supports(&self.capabilities, crate::CREDENTIALS))
@@ -209,6 +287,8 @@ impl Manifest {
                 schema: schema.clone(),
                 gestures: default_gestures(),
                 credential_slots: vec![],
+                states: vec![],
+                visual: None,
                 response_timeout: None,
             }
             .validate()?;
@@ -335,7 +415,31 @@ impl Definition {
         }
         Ok(())
     }
+    /// Whether a reply names a state declared by this visual (legacy replies may omit it).
+    pub fn accepts_state(&self, state: &crate::VisualState) -> bool {
+        match state {
+            crate::VisualState::Unavailable => true,
+            crate::VisualState::Current { content } | crate::VisualState::Stale { content } => {
+                content
+                    .state
+                    .as_ref()
+                    .is_none_or(|id| self.states.iter().any(|s| &s.id == id))
+            }
+        }
+    }
     pub fn validate(&self) -> Result<(), Error> {
+        if self.visual.as_deref().is_some_and(|id| !identifier(id))
+            || (!self.states.is_empty()
+                && (self.states.len() != 2
+                    || !unique(self.states.iter().map(|s| s.id.as_str()))
+                    || self.states.iter().any(|s| {
+                        !identifier(&s.id)
+                            || !label(&s.label)
+                            || s.icon.as_deref().is_some_and(|icon| !valid_icon(icon))
+                    })))
+        {
+            return Err(Error::InvalidManifest);
+        }
         if self.gestures.is_empty()
             || self.gestures.len() > 3
             || self

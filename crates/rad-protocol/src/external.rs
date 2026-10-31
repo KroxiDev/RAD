@@ -201,7 +201,11 @@ pub(super) fn parse(
                 cursor: cursor.as_deref().map(token).transpose()?,
             })
         }
-        R::MediaRead { id, offset } => {
+        R::MediaRead {
+            id,
+            offset,
+            media_ref,
+        } => {
             if !caps.media {
                 return Err("executor_unavailable");
             };
@@ -210,10 +214,14 @@ pub(super) fn parse(
             if offset > 512 * 1024 {
                 return Err("invalid_request");
             };
-            let media_ref = a
-                .appearance(c.origin, id)
-                .and_then(|v| v.appearance.image)
-                .ok_or("not_found")?;
+            let appearance = a.appearance(c.origin, id).ok_or("not_found")?.appearance;
+            let media_ref = match media_ref {
+                Some(reference) if appearance.images().any(|image| image == reference) => {
+                    reference.clone()
+                }
+                Some(_) => return Err("not_found"),
+                None => appearance.image.ok_or("not_found")?,
+            };
             Ok(External::MediaRead {
                 id,
                 media_ref,

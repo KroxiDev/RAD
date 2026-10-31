@@ -124,3 +124,40 @@ fn wait_connection_loss_preserves_known_execution_id_for_manual_result_query() {
     assert!(!o.stderr.is_empty());
     worker.join().unwrap();
 }
+
+#[test]
+fn cli_appearance_keeps_omission_distinct_from_an_explicit_empty_states_map() {
+    for states in [None, Some(json!({}))] {
+        let f = Fixture::new();
+        let listener = f.listener("automation.sock");
+        let mut value = json!({"text":"New base","image":null});
+        if let Some(states) = states {
+            value["states"] = states;
+        }
+        let expected = value.clone();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            hello(&mut stream);
+            let request = receive(&mut stream);
+            assert_eq!(request["args"]["changes"][0]["value"], expected);
+            let response = json!({"v":1,"id":"2","session_id":SESSION,"status":"applied","data":{"changed":true,"revision":"2"},"error":null});
+            let bytes = serde_json::to_vec(&response).unwrap();
+            stream
+                .write_all(&(bytes.len() as u32).to_be_bytes())
+                .unwrap();
+            stream.write_all(&bytes).unwrap();
+        });
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_rad-cli"))
+            .env_clear()
+            .env("XDG_RUNTIME_DIR", &f.path)
+            .args(["--json", "set", "b1", "appearance", &value.to_string()])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        worker.join().unwrap();
+    }
+}

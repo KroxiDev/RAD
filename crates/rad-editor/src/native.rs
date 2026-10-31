@@ -27,6 +27,7 @@ pub enum TransferKind {
 #[derive(Debug)]
 pub enum Job {
     PluginApply(Request),
+    LinkedAction(crate::linked_actions::LinkedAction),
     PluginCatalog,
     Plugins,
     PluginForm {
@@ -52,6 +53,7 @@ pub enum Job {
     FolderBoard(String),
     Request(Request),
     SaveIcon {
+        state: Option<String>,
         button: String,
         ticket: u64,
         png: std::sync::Arc<Vec<u8>>,
@@ -60,6 +62,10 @@ pub enum Job {
         choice: crate::icon_library::Choice,
     },
     Theme,
+    DropImages {
+        tokens: Vec<String>,
+        attempt: u8,
+    },
     Transfer {
         path: PathBuf,
         kind: TransferKind,
@@ -91,7 +97,9 @@ pub enum Reply {
         revision: String,
         visuals: Vec<crate::plugins::Visual>,
     },
+    ImagesDropped(crate::icon_save::Cleanup),
     IconSaved {
+        cleanup: crate::icon_save::Cleanup,
         button: String,
         ticket: u64,
         result: Result<Response, Error>,
@@ -112,6 +120,7 @@ pub enum Reply {
     FolderBoard(Board),
     TransferProgress(u64),
     TransferFinished {
+        image_token: Option<String>,
         kind: TransferKind,
         data: Value,
         path: Option<PathBuf>,
@@ -135,7 +144,7 @@ fn read_pictures<P: crate::session::Port>(
     let mut read = Vec::with_capacity(pictures.len());
     for picture in pictures {
         let pixels = s
-            .media_bytes(&picture.button, &picture.revision)
+            .media_bytes_for(&picture.button, &picture.revision, Some(&picture.reference))
             .and_then(|bytes| crate::preview::decode(&bytes));
         match pixels {
             Ok(pixels) => read.push((picture.reference, Some(pixels))),
@@ -262,8 +271,9 @@ fn app_icon(
         Err(_) if s.is_open() => return Ok(Reply::NoAppIcon),
         Err(error) => return Err(error),
     };
-    let appearance = json!({"text":inspection.appearance["text"],"image":image});
+    let appearance = application_appearance(&inspection.appearance, image);
     s.request(crate::Request::Edit {
+        expected_revision: None,
         changes: vec![rad_api::Change::Set {
             id: button.into(),
             edit: rad_api::FieldEdit::Appearance(
@@ -293,17 +303,26 @@ fn step(active: &mut Option<Transfer>, s: &mut Session<Client>) -> Result<Reply,
             Ok(Progress::Chunk(n)) => offset = n,
             Ok(Progress::Finished(data)) => {
                 let transfer = active.take().unwrap();
-                let (kind, path) = match transfer {
-                    Transfer::Upload(kind, _) => (kind, None),
+                let (kind, path, image_token) = match transfer {
+                    Transfer::Upload(kind, upload) => (
+                        kind,
+                        None,
+                        (kind == TransferKind::Image).then(|| upload.id().to_owned()),
+                    ),
                     Transfer::Download(download) => {
                         let path = download
                             .into_inner()
                             .finish()
                             .map_err(|_| transfer::io_error())?;
-                        (TransferKind::Export, Some(path))
+                        (TransferKind::Export, Some(path), None)
                     }
                 };
-                return Ok(Reply::TransferFinished { kind, data, path });
+                return Ok(Reply::TransferFinished {
+                    kind,
+                    data,
+                    path,
+                    image_token,
+                });
             }
         }
         if started.elapsed() >= Duration::from_millis(20) {
@@ -329,7 +348,7 @@ pub fn start_with_clock(
     let mut visual_epoch = String::new();
     let mut visual_revisions = std::collections::BTreeMap::new();
     Worker::spawn(move |job| {
-        let plugin_apply = matches!(&job, Job::PluginApply(_));
+        let plugin_apply = matches!(&job, Job::PluginApply(_) | Job::LinkedAction(_));
         let plugin_admin = matches!(&job,Job::Request(r) if r.operation().as_str()=="plugin_admin");
         let plugin_manifest = matches!(&job, Job::Request(Request::PluginManifest { .. }));
         let plugin_dependencies =
@@ -418,6 +437,7 @@ pub fn start_with_clock(
                 }),
                 Some(s) => match other {
                     Job::PluginApply(request) => s.request(request).map(Reply::PluginApplied),
+                    Job::LinkedAction(action) => action.publish(s).map(Reply::PluginApplied),
                     Job::PluginCatalog => s.plugin_catalog().map(Reply::PluginCatalog),
                     Job::Plugins => s.plugin_catalog().and_then(|catalog| {
                         s.request(crate::Request::PluginStatus {})
@@ -481,6 +501,7 @@ pub fn start_with_clock(
                     Job::FolderBoard(folder) => s.folder_board(&folder).map(Reply::FolderBoard),
                     Job::Pictures(pictures) => read_pictures(pictures, s),
                     Job::SaveIcon {
+                        state,
                         button,
                         ticket,
                         png,
@@ -488,14 +509,20 @@ pub fn start_with_clock(
                         choice,
                     } => {
                         let result = if active.is_some() {
-                            Err(Error {
+                            Err(crate::icon_save::Failed::from(Error {
                                 code: "busy".into(),
                                 cause: None,
                                 source_change: None,
                                 unknown: false,
-                            })
+                            }))
                         } else {
-                            crate::icon_save::save(s, &button, &png, request)
+                            crate::icon_save::save_to_state(
+                                s,
+                                &button,
+                                state.as_deref(),
+                                &png,
+                                request,
+                            )
                         };
                         // A convenience for reopening the library: failing to remember
                         // never changes the outcome of the save.
@@ -507,10 +534,27 @@ pub fn start_with_clock(
                             eprintln!("RAD icon choice not remembered: {error}");
                         }
                         Ok(Reply::IconSaved {
+                            cleanup: result
+                                .as_ref()
+                                .err()
+                                .map(|failure| failure.cleanup.clone())
+                                .unwrap_or_default(),
                             button,
                             ticket,
-                            result: result.map(|saved| saved.response),
+                            result: result
+                                .map(|saved| saved.response)
+                                .map_err(|failure| *failure.error),
                         })
+                    }
+                    Job::DropImages { tokens, attempt } => {
+                        Ok(Reply::ImagesDropped(if attempt >= 4 {
+                            crate::icon_save::Cleanup {
+                                disconnect: true,
+                                ..Default::default()
+                            }
+                        } else {
+                            crate::icon_save::drop_images(s, tokens)
+                        }))
                     }
                     Job::Request(request) => {
                         let operation = request.operation().as_str().to_owned();
@@ -560,6 +604,18 @@ pub fn start_with_clock(
                 },
             },
         });
+        // Every call above has returned: the worker's single-flight socket has no
+        // pending request. Dropping only this session delegates lease cleanup to Disconnect.
+        let cleanup_disconnect = match &result {
+            Ok(Reply::ImagesDropped(cleanup)) | Ok(Reply::IconSaved { cleanup, .. }) => {
+                cleanup.disconnect
+            }
+            _ => false,
+        };
+        if cleanup_disconnect {
+            session = None;
+            active = None;
+        }
         let result = match result {
             Err(error) if recovery_aware && error.code == "recovery_required" => {
                 Ok(Reply::RecoveryRequired)
@@ -636,4 +692,22 @@ fn options_session<'a>(
     let (session, used) = connection.as_mut().expect("connected above");
     *used = Instant::now();
     Ok(session)
+}
+
+fn application_appearance(
+    appearance: &serde_json::Value,
+    image: serde_json::Value,
+) -> serde_json::Value {
+    json!({"text":appearance["text"],"image":image,"states":appearance.get("states").cloned().unwrap_or_else(|| json!({}))})
+}
+#[cfg(test)]
+mod state_tests {
+    use super::*;
+    #[test]
+    fn application_icon_keeps_state_faces() {
+        let appearance = json!({"text":"Base","image":null,"states":{"muted":{"text":"Quiet","image":"state-image"}}});
+        let changed = application_appearance(&appearance, json!("application-image"));
+        assert_eq!(changed["states"], appearance["states"]);
+        assert_eq!(changed["image"], "application-image");
+    }
 }

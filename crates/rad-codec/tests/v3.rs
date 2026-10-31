@@ -26,7 +26,7 @@ fn v3_golden_import_keeps_nondefault_gesture_and_long_threshold() {
         encode(&Configuration::from_data(data, &registry).unwrap()).unwrap(),
         String::from_utf8(bytes.to_vec())
             .unwrap()
-            .replacen("\"version\":3", "\"version\":5", 1)
+            .replacen("\"version\":3", "\"version\":6", 1)
             .as_bytes()
     );
 }

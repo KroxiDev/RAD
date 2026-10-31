@@ -490,6 +490,7 @@ impl Protocol {
                     Rejection::Expired => "deadline_exceeded",
                     Rejection::Capacity => "resource_exhausted",
                     Rejection::PublicationPending => "publication_pending",
+                    Rejection::ViewChanged => "cursor_expired",
                 };
                 (
                     *request,

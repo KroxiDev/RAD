@@ -7,13 +7,14 @@ Las decisiones están en [ADR 0002](adr/0002-identidades-sobre-lo-vigente.md),
 [0005](adr/0005-tres-tipos-de-ajustes.md) y
 [0006](adr/0006-dispositivo-por-modelo.md) y
 [0017](adr/0017-accion-nativa-sleep-y-documento-v4.md) y
-[0019](adr/0019-brightness-persistente-y-documento-v5.md).
+[0019](adr/0019-brightness-persistente-y-documento-v5.md) y
+[0021](adr/0021-estados-de-visuales-y-documento-v6.md).
 
 ## Versiones y compatibilidad
 
 | Formato | Escritor actual | Lectores |
 |---|---|---|
-| Documento JSON del deck | 5 | 1, 2, 3 y 4 mediante importadores, 5 |
+| Documento JSON del deck | 6 | 1–5 mediante importadores cerrados, 6 |
 | Store SQLite | 2 | Migración única de 1, 2 |
 | Copia RADPKG | 2 | 1, 2 |
 | Preferencias del editor | 1 | 1 |
@@ -24,13 +25,13 @@ RAD para abrirlas. Un documento desconocido no se reemplaza por valores de fábr
 El lector heredado vive únicamente en `rad-codec`; Store y restauración lo
 reutilizan. El codec trabaja con bytes acotados, sin acceder al sistema de archivos.
 
-## Documento del deck v5
+## Documento del deck v6
 
 JSON UTF-8 de hasta **1 MiB**; el escritor canónico es `rad_codec::encode` y el
 lector es `rad_codec::decode_data`. La reconstrucción del dominio valida el árbol,
 las referencias, las identidades y los valores. Los campos desconocidos se rechazan.
 
-- `version`: `5`.
+- `version`: `6`.
 - `grid`: `[8,4]` (columnas, filas). Solo se admite el XL; guardar una rejilla no
   implementa otros modelos. `Grid::XL` reúne sus constantes en el dominio.
 - `settings`: brillo, reposo y umbral de pulsación. No contiene idioma ni opciones
@@ -64,7 +65,7 @@ compacto; el lector no exige el orden de sus propiedades ni ausencia de espacios
 | Permisos locales | `"inherit"` o `{"own":{...}}` con objeto completo de permisos. Un botón hereda del global y una acción del botón; `own` reemplaza el conjunto, no lo combina. |
 | Carpeta | `binding` de clase folder, `parent` identidad o `null`, `slots` array de exactamente 32 identidades de botón o `null`, en orden de posiciones 0–31. `parent` omitido se lee como `null`; el escritor siempre lo emite. |
 | Botón | `binding` de clase button, `name` cadena, `appearance` objeto, `visual` variante, `permissions` locales, `mode` (`"sequential"` o `"parallel"`), `gesture` (`"press"`, `"hold"` o `"long_press"`; omitido equivale a `"press"`, que el escritor omite), `actions` array ordenado de 0–20 acciones. |
-| Apariencia | `text` cadena; `image` digest SHA-256 de 64 dígitos hexadecimales minúsculos o `null` (omitido también se lee como `null`); `text_position` opcional: `"top"`, `"middle"`, `"bottom"`, `"above_image"`, `"below_image"` o `null`. Ausente/null sigue la colocación automática según la imagen; el escritor lo omite en ese caso. |
+| Apariencia | `states` opcional (omitido equivale a vacío): mapa de hasta dos identificadores de estado a `{text, image}`; cada texto tiene el mismo límite de escalar y cada imagen es un digest o `null`. Identificadores de 1–96 caracteres ASCII minúsculos, dígitos, `.`, `_`, `-`, empezando por letra o dígito. `text` cadena; `image` digest SHA-256 de 64 dígitos hexadecimales minúsculos o `null` (omitido también se lee como `null`); `text_position` opcional: `"top"`, `"middle"`, `"bottom"`, `"above_image"`, `"below_image"` o `null`. Ausente/null sigue la colocación automática según la imagen; el escritor lo omite en ese caso. |
 | Acción | `binding` de clase action, `kind` variante de la tabla siguiente, `permissions` locales. |
 | Tipo externo | `{"plugin":"id","name":"tipo"}`: ambas cadenas no vacías y sin caracteres de control. |
 | Dependencia de plugin | `version`: `null` o `{"major":1,"minor":2,"patch":3}`, cada componente número entero `u32` (0–4294967295); `origin`: cadena no vacía sin controles o `null`. Campos omitidos se leen como `null`; el escritor emite ambos. |
@@ -95,6 +96,12 @@ Al importar documentos v1–v4, los porcentajes válidos de brillo 0–9 pasan a
 valores mayores de 100 siguen siendo inválidos. Se conservan gesto, umbral,
 identidades y acciones anteriores. El [golden v4](fixtures/v4/README.md) se generó
 con el escritor anterior, no con el escritor v5.
+
+Las caras por estado existen solo desde v6. El importador cerrado v5 deja `states`
+vacío y rechaza el campo bajo la etiqueta antigua. El [golden v5](fixtures/v5/README.md)
+se obtuvo del escritor v5 antes del cambio. La posición del texto es compartida;
+las imágenes de todas las caras son raíces de medios para GC, historial y copias,
+no solo la que esté mostrando el plugin.
 
 ### Relaciones del árbol
 
@@ -300,8 +307,8 @@ Un candidato con contadores menores que los persistidos se rechaza.
 
 ### Apertura de un Store v2 con documento antiguo
 
-Antes de convertir documentos v4 se conserva el archivo completo como
-`.document-v4-backup`; con documentos v3 se conserva `.document-v3-backup`;
+Antes de convertir documentos v5 se conserva el archivo completo como
+`.document-v5-backup`; con documentos v4, `.document-v4-backup`; con documentos v3 se conserva `.document-v3-backup`;
 si solo hay documentos v1/v2, se conserva `.document-v2-backup`. Ninguno sobrescribe un respaldo distinto. Las revisiones
 válidas se convierten atómicamente, incluidos sus digests, sin cambiar IDs,
 heads, contadores, medios ni el esquema SQLite v2. Evidencia corrupta permanece

@@ -172,6 +172,7 @@ fn media_is_owned_deduplicated_and_committed_with_configuration() {
             Edit::SetAppearance {
                 button: button.configuration().data().buttons[0].binding.identity(),
                 appearance: Appearance {
+                    states: Default::default(),
                     text: "".into(),
                     image: Some(key.clone()),
                     text_position: None,
@@ -264,6 +265,7 @@ fn shared_corrupt_media_makes_both_revisions_unrecoverable_without_empty_reset()
             Edit::SetAppearance {
                 button: button.configuration().data().buttons[0].binding.identity(),
                 appearance: Appearance {
+                    states: Default::default(),
                     text: "".into(),
                     image: Some(key),
                     text_position: None,
