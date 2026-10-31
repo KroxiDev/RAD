@@ -41,6 +41,29 @@ fn definition() -> Definition {
     }
 }
 #[test]
+fn a_fresh_required_choice_starts_on_its_first_option() {
+    let mut def = definition();
+    def.schema.fields[3].required = true;
+    def.schema.fields[3].kind = FieldKind::Choice {
+        options: vec![
+            rad_plugin_contract::ChoiceOption {
+                value: "toggle".into(),
+                label: "Toggle".into(),
+            },
+            "start".into(),
+        ],
+    };
+    let mut fresh = FormDraft::new(def);
+    assert_eq!(fresh.fields[3].as_deref(), Some("toggle"));
+    fresh.set(0, Some("2".into()));
+    assert_eq!(
+        fresh.publish().unwrap().unwrap()["values"]["choice"],
+        "toggle"
+    );
+    // An optional choice stays unset until the user sets it.
+    assert_eq!(FormDraft::new(definition()).fields[3], None);
+}
+#[test]
 fn drafts_preserve_opaque_until_explicit_valid_edit_and_share_contract_validation() {
     let bytes = br#"{ "schema_version":1, "values":{"count":2} }"#.to_vec();
     let mut f = FormDraft::load(definition(), bytes.clone());
@@ -425,4 +448,40 @@ mod source_change {
             SourceChange::between(Some(REGISTERED), "https://github.com/other/repo")
         );
     }
+}
+
+#[test]
+fn catalog_entries_read_their_plugin_texts_in_the_user_language() {
+    use rad_editor::preferences::Language;
+    let manifest = json!({"contract":1,"capabilities":["labels","visual_freshness"],"id":"org.rad.fixture",
+        "version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,
+        "targets":["x86_64-unknown-linux-gnu"],
+        "actions":[{"id":"record","label":"Recording","schema":{"version":1,"fields":[]},"credential_slots":[]}],
+        "visuals":[],"translations":{"es":{"Recording":"Grabación","Toggle":"Alternar"}}});
+    let item = |key: &str, plugin_version: Value| json!({"type":key,"kind":"action","label":"Recording","version":plugin_version,"ready":true});
+    let version = json!({"major":1,"minor":0,"patch":0});
+    let mut session = Session::new(Script(
+        [
+            (
+                "plugin_catalog",
+                json!({"items":[item("org.rad.fixture:record", version.clone()),
+                    item("org.rad.other:run", version)],"next_cursor":null}),
+            ),
+            (
+                "plugin_manifest",
+                json!({"plugin_id":"org.rad.fixture","document":manifest}),
+            ),
+            (
+                "plugin_manifest",
+                json!({"plugin_id":"org.rad.other","document":{"not":"a manifest"}}),
+            ),
+        ]
+        .into(),
+    ));
+    let catalog = session.plugin_catalog().unwrap();
+    assert_eq!(catalog[0].shown(Language::Es), "Grabación");
+    assert_eq!(catalog[0].texts.get(Language::Es, "Toggle"), "Alternar");
+    assert_eq!(catalog[0].shown(Language::En), "Recording");
+    // A plugin without readable translations keeps its own texts.
+    assert_eq!(catalog[1].shown(Language::Es), "Recording");
 }

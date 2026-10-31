@@ -543,7 +543,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rad-plugin-audio"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
  "rad-plugin-sdk",
@@ -563,7 +563,7 @@ dependencies = [
 
 [[package]]
 name = "rad-plugin-media"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gio",
  "glib",
@@ -575,7 +575,7 @@ dependencies = [
 
 [[package]]
 name = "rad-plugin-metrics"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
  "rad-plugin-sdk",
@@ -584,7 +584,7 @@ dependencies = [
 
 [[package]]
 name = "rad-plugin-obs"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "libc",

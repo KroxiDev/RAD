@@ -80,11 +80,23 @@ impl PluginUi {
         self.form = None;
         self.form_load_current = false;
     }
-    pub fn accept_form(&mut self, target: FormTarget, loaded: LoadedForm) {
+    pub fn accept_form(&mut self, target: FormTarget, mut loaded: LoadedForm) {
         self.form_loading = false;
         if std::mem::take(&mut self.form_load_current) {
+            if let Some(form) = loaded.form.as_mut() {
+                form.texts = self.texts(&loaded.type_key);
+            }
             self.form = Some((target, loaded));
         }
+    }
+    /// The texts of the plugin that owns `type_key` (an action or visual key, or a plugin id).
+    pub fn texts(&self, type_key: &str) -> crate::plugins::PluginTexts {
+        let plugin = crate::plugins::plugin_id(type_key).unwrap_or(type_key);
+        self.catalog
+            .iter()
+            .find(|entry| crate::plugins::plugin_id(&entry.type_key) == Some(plugin))
+            .map(|entry| entry.texts.clone())
+            .unwrap_or_default()
     }
     /// The worker died with these requests unanswered. None is repeated: whatever depended on
     /// an answer stops waiting for it, and the state is read again.
@@ -1010,7 +1022,7 @@ impl App {
             .catalog
             .iter()
             .find(|entry| entry.type_key == type_key)
-            .map(|entry| entry.label.clone())
+            .map(|entry| entry.shown(self.es).to_owned())
             .unwrap_or_else(|| type_key.to_owned())
     }
     fn current_visual(&self) -> Option<String> {
@@ -1063,7 +1075,7 @@ impl App {
                     .filter(|entry| entry.visual && entry.ready)
                 {
                     let chosen = current.as_deref() == Some(entry.type_key.as_str());
-                    if ui.selectable_label(chosen, &entry.label).clicked() {
+                    if ui.selectable_label(chosen, entry.shown(self.es)).clicked() {
                         self.open_plugin_form(&entry.type_key, None, FormTarget::Visual(id.into()));
                     }
                 }
@@ -1334,6 +1346,7 @@ pub(super) fn form_ui(
     es: impl Into<crate::preferences::Language> + Copy,
 ) {
     use rad_plugin_contract::FieldKind;
+    let language = es.into();
     // Labels share one column so the controls line up.
     const LABEL: f32 = 120.;
     for (index, field) in form.definition.schema.fields.clone().iter().enumerate() {
@@ -1354,7 +1367,7 @@ pub(super) fn form_ui(
                         ui.set_min_width(LABEL);
                         ui.label(look.muted_text(format!(
                             "{}{}",
-                            field.label,
+                            form.texts.get(language, &field.label),
                             if field.required { " *" } else { "" }
                         )));
                     },
@@ -1384,15 +1397,23 @@ pub(super) fn form_ui(
                         }
                         FieldKind::Choice { options } => {
                             let old = value.clone();
+                            let texts = form.texts.clone();
+                            // The user reads each option's text; its value is what is stored.
+                            let shown = match options.iter().find(|o| o.value == value) {
+                                _ if value.is_empty() => tr(es, "Choose…"),
+                                Some(option) => texts.get(language, &option.label),
+                                None => &value,
+                            }
+                            .to_owned();
                             egui::ComboBox::from_id_salt("choice")
-                                .selected_text(if value.is_empty() {
-                                    tr(es, "Choose…")
-                                } else {
-                                    &value
-                                })
+                                .selected_text(shown)
                                 .show_ui(ui, |ui| {
                                     for option in options {
-                                        ui.selectable_value(&mut value, option.clone(), option);
+                                        ui.selectable_value(
+                                            &mut value,
+                                            option.value.clone(),
+                                            texts.get(language, &option.label),
+                                        );
                                     }
                                 });
                             old != value

@@ -87,11 +87,14 @@ def run(name, out):
                 executable = BIN/'obs-fixture'
                 args = [str(port)]
                 settings = params(port=port)
+                # Manifest order: the recording starts before its pause toggles.
                 values = dict(scene=dict(scene=target('Live')),
                     filter=dict(source=target('Camera','input'), filter='Blur', operation='on'),
                     item=dict(scene=target('Root'), item=target('G','group',8,'Camera'), operation='show'),
-                    record=dict(operation='start'), stream=dict(operation='start'), wait=dict(timeout_seconds=2))
-                visual_values = {k:{f:v for f,v in values[k].items() if f not in ('operation','timeout_seconds')} for k in ['scene','filter','item','record','stream']}
+                    record=dict(operation='start'), pause=dict(operation='toggle'), stream=dict(operation='start'),
+                    mute=dict(input=target('Camera','input'), operation='toggle'),
+                    virtualcam=dict(operation='toggle'), replay=dict(operation='start'))
+                visual_values = {k:{f:v for f,v in values[k].items() if f != 'operation'} for k in values}
             elif name == 'metrics':
                 executable = BIN/'metrics-fixture'
                 visual_values = {k:{} for k in ['cpu','ram','gpu','vram']}

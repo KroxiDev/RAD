@@ -34,6 +34,10 @@ detalle.
 - Cada texto visible se pide por clave a un catálogo por idioma, embebido; hoy,
   inglés y español, con el inglés como respaldo. Añadir un idioma es añadir un
   catálogo.
+- Los textos de un plugin (acciones, visuales, campos y opciones) vienen de su
+  manifest con sus traducciones; sin traducción se muestra el texto del plugin
+  ([ADR 0020](adr/0020-textos-de-plugins-y-plazo-fijo.md)). El editor nunca
+  traduce a un plugin con claves propias.
 - El idioma por defecto es el del sistema; se cambia en las preferencias del editor.
 - La API entrega códigos y el editor los traduce por catálogo. Un código desconocido
   se muestra como «Algo salió mal» con «Ver detalles».
@@ -105,6 +109,9 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   cada ejecución cambia el brillo vigente en diez puntos porcentuales, con
   saturación en 10% y 100%. El valor se guarda y se refleja en Ajustes; no hay
   cantidad ni paso configurables, y alcanzar un límite no genera otra escritura.
+- **Opciones de los plugins.** Cada opción se muestra con su nombre, nunca con
+  su valor interno. Una opción obligatoria empieza en la primera, que el plugin
+  pone como recomendada; en OBS y Audio es «Alternar».
 - **Gestos.** El editor ofrece pulsar, mantener o pulsación larga solo si la acción
   los admite.
 - **Pantallas.** Ajustes y los formularios ocupan la ventana o el panel de la tecla,
@@ -152,4 +159,5 @@ confianza en GitHub oficial y sus límites están en
 - [ ] Cada error dice qué pasó en lenguaje llano y ofrece una acción (S3).
 - [ ] Al usuario solo se le pide lo que el sistema no puede decidir (S4).
 - [ ] Cada control aparece solo cuando se puede usar (S5).
-- [ ] Todo texto visible sale del catálogo y existe en todos los idiomas disponibles.
+- [ ] Todo texto visible sale del catálogo, o del manifest si es de un plugin, y
+      existe en todos los idiomas disponibles.

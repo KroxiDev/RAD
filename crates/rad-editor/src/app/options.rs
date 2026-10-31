@@ -120,9 +120,12 @@ pub(super) fn dynamic_choice(
     };
     let unlisted = form.is_unavailable(index);
     let mark = |value: &str| format!("{value} — {}", tr(es, "unavailable"));
+    // A plugin may translate the fixed texts of its lists, such as its default device.
+    let texts = form.texts.clone();
+    let language = es.into();
     let shown = match options.iter().find(|option| option.value == *value) {
         _ if value.is_empty() => tr(es, "Choose…").to_owned(),
-        Some(option) => option.label.clone(),
+        Some(option) => texts.get(language, &option.label).to_owned(),
         None if unlisted => mark(value),
         None => value.clone(),
     };
@@ -137,7 +140,11 @@ pub(super) fn dynamic_choice(
                     ui.selectable_value(value, before.clone(), mark(&before));
                 }
                 for option in options {
-                    ui.selectable_value(value, option.value.clone(), &option.label);
+                    ui.selectable_value(
+                        value,
+                        option.value.clone(),
+                        texts.get(language, &option.label),
+                    );
                 }
             });
     });
@@ -188,7 +195,8 @@ pub(super) fn list_status(
     };
     // Before anything is asked, say what the list is waiting for: not a state to worry about.
     if let Some(dependency) = form.waiting_for(index) {
-        let text = tr(es, "Choose {field} first").replace("{field}", dependency);
+        let text = tr(es, "Choose {field} first")
+            .replace("{field}", form.texts.get(es.into(), dependency));
         line(ui, egui::RichText::new(text).size(12.).color(look.muted));
         return;
     }
@@ -521,6 +529,8 @@ mod tests {
         ] {
             let mut screen = Screen::new();
             let mut form = FormDraft::new(pick());
+            // A fresh choice starts on its first option; one saved without a value still waits.
+            form.fields[0] = Some(String::new());
             form.set(2, Some(String::new())); // the user sets the optional member as well
             let texts = screen.settle(&mut form, es);
             assert!(drawn(&texts, line), "{line}");

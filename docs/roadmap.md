@@ -24,6 +24,18 @@ el manejo de `Reply::TransferProgress` en [`App`](../crates/rad-editor/src/app.r
 El diseño se contrasta con el [checklist de UX](ux.md#checklist-para-cambios-en-la-interfaz)
 y se verifica con la [política de pruebas](testing.md).
 
+## Publicación de los plugins oficiales 0.3.0
+
+Los plugins Audio, Media, Metrics y OBS 0.3.0 usan la capacidad `labels` y, OBS,
+el plazo fijo de respuesta ([ADR 0020](adr/0020-textos-de-plugins-y-plazo-fijo.md)).
+Pendiente, con encargo y autorización de escritura remota:
+
+- Describir ambas ampliaciones en la especificación y la guía para autores de
+  `KroxiDev/rad-plugins`.
+- Publicar allí las releases 0.3.0 después de una release de RAD que entienda el
+  contrato, y actualizar entonces sus entradas en
+  [official.rs](../crates/rad-editor/src/official.rs).
+
 ## Distribución y actualizaciones
 
 Implementada según [ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md)

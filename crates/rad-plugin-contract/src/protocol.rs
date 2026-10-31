@@ -112,6 +112,15 @@ pub struct ChoiceOption {
     pub value: String,
     pub label: String,
 }
+/// A plain fixed option: its value is also the text the user reads.
+impl From<&str> for ChoiceOption {
+    fn from(value: &str) -> Self {
+        Self {
+            value: value.to_owned(),
+            label: value.to_owned(),
+        }
+    }
+}
 impl std::fmt::Debug for ChoiceOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("ChoiceOption([redacted])")

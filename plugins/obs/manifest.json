@@ -3,7 +3,7 @@
   "id": "org.rad.obs",
   "version": {
     "major": 0,
-    "minor": 2,
+    "minor": 3,
     "patch": 0
   },
   "host_min": 1,
@@ -14,13 +14,13 @@
   "actions": [
     {
       "id": "scene",
-      "label": "Change Program scene",
+      "label": "Scene",
       "schema": {
         "version": 1,
         "fields": [
           {
             "id": "scene",
-            "label": "Program scene",
+            "label": "Scene",
             "required": true,
             "kind": {
               "type": "dynamic_choice",
@@ -32,6 +32,238 @@
       "credential_slots": [
         "password"
       ],
+      "response_timeout": {
+        "default_seconds": 20
+      },
+      "gestures": [
+        "press"
+      ]
+    },
+    {
+      "id": "record",
+      "label": "Recording",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "operation",
+            "label": "When pressed",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": [
+                {
+                  "value": "toggle",
+                  "label": "Toggle"
+                },
+                {
+                  "value": "start",
+                  "label": "Start"
+                },
+                {
+                  "value": "stop",
+                  "label": "Stop"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "credential_slots": [
+        "password"
+      ],
+      "response_timeout": {
+        "default_seconds": 20
+      },
+      "gestures": [
+        "press"
+      ]
+    },
+    {
+      "id": "pause",
+      "label": "Pause recording",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "operation",
+            "label": "When pressed",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": [
+                {
+                  "value": "toggle",
+                  "label": "Toggle"
+                },
+                {
+                  "value": "pause",
+                  "label": "Pause"
+                },
+                {
+                  "value": "resume",
+                  "label": "Resume"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "credential_slots": [
+        "password"
+      ],
+      "response_timeout": {
+        "default_seconds": 20
+      },
+      "gestures": [
+        "press"
+      ]
+    },
+    {
+      "id": "stream",
+      "label": "Streaming",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "operation",
+            "label": "When pressed",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": [
+                {
+                  "value": "toggle",
+                  "label": "Toggle"
+                },
+                {
+                  "value": "start",
+                  "label": "Start"
+                },
+                {
+                  "value": "stop",
+                  "label": "Stop"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "credential_slots": [
+        "password"
+      ],
+      "response_timeout": {
+        "default_seconds": 20
+      },
+      "gestures": [
+        "press"
+      ]
+    },
+    {
+      "id": "mute",
+      "label": "Mute OBS audio",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "input",
+            "label": "Source",
+            "required": true,
+            "kind": {
+              "type": "dynamic_choice",
+              "depends_on": []
+            }
+          },
+          {
+            "id": "operation",
+            "label": "When pressed",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": [
+                {
+                  "value": "toggle",
+                  "label": "Toggle"
+                },
+                {
+                  "value": "mute",
+                  "label": "Mute"
+                },
+                {
+                  "value": "unmute",
+                  "label": "Unmute"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "credential_slots": [
+        "password"
+      ],
+      "response_timeout": {
+        "default_seconds": 20
+      },
+      "gestures": [
+        "press"
+      ]
+    },
+    {
+      "id": "item",
+      "label": "Show or hide source",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "scene",
+            "label": "Scene",
+            "required": true,
+            "kind": {
+              "type": "dynamic_choice",
+              "depends_on": []
+            }
+          },
+          {
+            "id": "item",
+            "label": "Source",
+            "required": true,
+            "kind": {
+              "type": "dynamic_choice",
+              "depends_on": [
+                "scene"
+              ]
+            }
+          },
+          {
+            "id": "operation",
+            "label": "When pressed",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": [
+                {
+                  "value": "toggle",
+                  "label": "Toggle"
+                },
+                {
+                  "value": "show",
+                  "label": "Show"
+                },
+                {
+                  "value": "hide",
+                  "label": "Hide"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "credential_slots": [
+        "password"
+      ],
+      "response_timeout": {
+        "default_seconds": 20
+      },
       "gestures": [
         "press"
       ]
@@ -64,143 +296,24 @@
           },
           {
             "id": "operation",
-            "label": "Operation",
+            "label": "When pressed",
             "required": true,
             "kind": {
               "type": "choice",
               "options": [
-                "on",
-                "off",
-                "toggle"
+                {
+                  "value": "toggle",
+                  "label": "Toggle"
+                },
+                {
+                  "value": "on",
+                  "label": "Turn on"
+                },
+                {
+                  "value": "off",
+                  "label": "Turn off"
+                }
               ]
-            }
-          }
-        ]
-      },
-      "credential_slots": [
-        "password"
-      ],
-      "gestures": [
-        "press"
-      ]
-    },
-    {
-      "id": "item",
-      "label": "Scene element",
-      "schema": {
-        "version": 1,
-        "fields": [
-          {
-            "id": "scene",
-            "label": "Scene",
-            "required": true,
-            "kind": {
-              "type": "dynamic_choice",
-              "depends_on": []
-            }
-          },
-          {
-            "id": "item",
-            "label": "Scene element",
-            "required": true,
-            "kind": {
-              "type": "dynamic_choice",
-              "depends_on": [
-                "scene"
-              ]
-            }
-          },
-          {
-            "id": "operation",
-            "label": "Operation",
-            "required": true,
-            "kind": {
-              "type": "choice",
-              "options": [
-                "show",
-                "hide"
-              ]
-            }
-          }
-        ]
-      },
-      "credential_slots": [
-        "password"
-      ],
-      "gestures": [
-        "press"
-      ]
-    },
-    {
-      "id": "record",
-      "label": "Recording",
-      "schema": {
-        "version": 1,
-        "fields": [
-          {
-            "id": "operation",
-            "label": "Operation",
-            "required": true,
-            "kind": {
-              "type": "choice",
-              "options": [
-                "start",
-                "stop",
-                "pause",
-                "resume"
-              ]
-            }
-          }
-        ]
-      },
-      "credential_slots": [
-        "password"
-      ],
-      "gestures": [
-        "press"
-      ]
-    },
-    {
-      "id": "stream",
-      "label": "Streaming",
-      "schema": {
-        "version": 1,
-        "fields": [
-          {
-            "id": "operation",
-            "label": "Operation",
-            "required": true,
-            "kind": {
-              "type": "choice",
-              "options": [
-                "start",
-                "stop"
-              ]
-            }
-          }
-        ]
-      },
-      "credential_slots": [
-        "password"
-      ],
-      "gestures": [
-        "press"
-      ]
-    },
-    {
-      "id": "wait",
-      "label": "Wait for OBS connection",
-      "schema": {
-        "version": 1,
-        "fields": [
-          {
-            "id": "timeout_seconds",
-            "label": "Timeout (seconds; default 30)",
-            "required": false,
-            "kind": {
-              "type": "integer",
-              "min": 1,
-              "max": 120
             }
           }
         ]
@@ -209,8 +322,91 @@
         "password"
       ],
       "response_timeout": {
-        "field": "timeout_seconds",
-        "default_seconds": 30
+        "default_seconds": 20
+      },
+      "gestures": [
+        "press"
+      ]
+    },
+    {
+      "id": "virtualcam",
+      "label": "Virtual camera",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "operation",
+            "label": "When pressed",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": [
+                {
+                  "value": "toggle",
+                  "label": "Toggle"
+                },
+                {
+                  "value": "start",
+                  "label": "Start"
+                },
+                {
+                  "value": "stop",
+                  "label": "Stop"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "credential_slots": [
+        "password"
+      ],
+      "response_timeout": {
+        "default_seconds": 20
+      },
+      "gestures": [
+        "press"
+      ]
+    },
+    {
+      "id": "replay",
+      "label": "Replay buffer",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "operation",
+            "label": "When pressed",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": [
+                {
+                  "value": "save",
+                  "label": "Save replay"
+                },
+                {
+                  "value": "toggle",
+                  "label": "Toggle"
+                },
+                {
+                  "value": "start",
+                  "label": "Start"
+                },
+                {
+                  "value": "stop",
+                  "label": "Stop"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "credential_slots": [
+        "password"
+      ],
+      "response_timeout": {
+        "default_seconds": 20
       },
       "gestures": [
         "press"
@@ -226,11 +422,97 @@
         "fields": [
           {
             "id": "scene",
-            "label": "Program scene",
+            "label": "Scene",
             "required": true,
             "kind": {
               "type": "dynamic_choice",
               "depends_on": []
+            }
+          }
+        ]
+      },
+      "credential_slots": [
+        "password"
+      ]
+    },
+    {
+      "id": "record",
+      "label": "Recording state",
+      "schema": {
+        "version": 1,
+        "fields": []
+      },
+      "credential_slots": [
+        "password"
+      ]
+    },
+    {
+      "id": "pause",
+      "label": "Pause state",
+      "schema": {
+        "version": 1,
+        "fields": []
+      },
+      "credential_slots": [
+        "password"
+      ]
+    },
+    {
+      "id": "stream",
+      "label": "Streaming state",
+      "schema": {
+        "version": 1,
+        "fields": []
+      },
+      "credential_slots": [
+        "password"
+      ]
+    },
+    {
+      "id": "mute",
+      "label": "OBS audio state",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "input",
+            "label": "Source",
+            "required": true,
+            "kind": {
+              "type": "dynamic_choice",
+              "depends_on": []
+            }
+          }
+        ]
+      },
+      "credential_slots": [
+        "password"
+      ]
+    },
+    {
+      "id": "item",
+      "label": "Source state",
+      "schema": {
+        "version": 1,
+        "fields": [
+          {
+            "id": "scene",
+            "label": "Scene",
+            "required": true,
+            "kind": {
+              "type": "dynamic_choice",
+              "depends_on": []
+            }
+          },
+          {
+            "id": "item",
+            "label": "Source",
+            "required": true,
+            "kind": {
+              "type": "dynamic_choice",
+              "depends_on": [
+                "scene"
+              ]
             }
           }
         ]
@@ -272,40 +554,8 @@
       ]
     },
     {
-      "id": "item",
-      "label": "Item state",
-      "schema": {
-        "version": 1,
-        "fields": [
-          {
-            "id": "scene",
-            "label": "Scene",
-            "required": true,
-            "kind": {
-              "type": "dynamic_choice",
-              "depends_on": []
-            }
-          },
-          {
-            "id": "item",
-            "label": "Scene element",
-            "required": true,
-            "kind": {
-              "type": "dynamic_choice",
-              "depends_on": [
-                "scene"
-              ]
-            }
-          }
-        ]
-      },
-      "credential_slots": [
-        "password"
-      ]
-    },
-    {
-      "id": "record",
-      "label": "Record state",
+      "id": "virtualcam",
+      "label": "Virtual camera state",
       "schema": {
         "version": 1,
         "fields": []
@@ -315,8 +565,8 @@
       ]
     },
     {
-      "id": "stream",
-      "label": "Stream state",
+      "id": "replay",
+      "label": "Replay buffer state",
       "schema": {
         "version": 1,
         "fields": []
@@ -329,6 +579,7 @@
   "capabilities": [
     "credentials",
     "dynamic_options",
+    "labels",
     "response_timeout",
     "visual_freshness",
     "settings"
@@ -347,5 +598,42 @@
         }
       }
     ]
+  },
+  "translations": {
+    "es": {
+      "Scene": "Escena",
+      "Recording": "Grabación",
+      "Pause recording": "Pausar grabación",
+      "Streaming": "Transmisión",
+      "Mute OBS audio": "Silenciar audio de OBS",
+      "Show or hide source": "Mostrar u ocultar fuente",
+      "Filter": "Filtro",
+      "Virtual camera": "Cámara virtual",
+      "Replay buffer": "Repetición",
+      "Source": "Fuente",
+      "When pressed": "Al pulsar",
+      "Toggle": "Alternar",
+      "Start": "Iniciar",
+      "Stop": "Detener",
+      "Pause": "Pausar",
+      "Resume": "Reanudar",
+      "Mute": "Silenciar",
+      "Unmute": "Activar sonido",
+      "Show": "Mostrar",
+      "Hide": "Ocultar",
+      "Turn on": "Activar",
+      "Turn off": "Desactivar",
+      "Save replay": "Guardar repetición",
+      "Scene state": "Estado de la escena",
+      "Recording state": "Estado de la grabación",
+      "Pause state": "Estado de la pausa",
+      "Streaming state": "Estado de la transmisión",
+      "OBS audio state": "Estado del audio de OBS",
+      "Source state": "Estado de la fuente",
+      "Filter state": "Estado del filtro",
+      "Virtual camera state": "Estado de la cámara virtual",
+      "Replay buffer state": "Estado de la repetición",
+      "WebSocket port": "Puerto WebSocket"
+    }
   }
 }

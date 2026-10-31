@@ -14,7 +14,7 @@ pub fn config() -> Config {
         "org.rad.obs",
         Version {
             major: 0,
-            minor: 2,
+            minor: 3,
             patch: 0,
         },
         1..=1,
@@ -23,16 +23,26 @@ pub fn config() -> Config {
         "credentials".into(),
         "settings".into(),
         "dynamic_options".into(),
+        "labels".into(),
         "response_timeout".into(),
         "visual_freshness".into(),
     ])
     .credential_slots(vec!["password".into()])
 }
+/// How long an action waits for OBS to accept connections, as when OBS is still opening.
+const CONNECT_SECONDS: u64 = 15;
+/// Whole budget of an action, inside the 20 seconds its manifest declares to the host.
+const ACTION_SECONDS: u64 = 18;
 struct Wait {
     credentials: Option<Credentials>,
     reply: Reply<Outcome>,
+    /// Until then a missing connection is waited for; afterwards OBS is not there.
+    connect_by: Instant,
     deadline: Instant,
-    flow: Option<crate::workflow::Workflow>,
+    flow: crate::workflow::Workflow,
+    /// Some request of this action reached OBS: a lost connection now fails it, because
+    /// nothing is replayed on another one.
+    started: bool,
     sent: Option<String>,
     outcome: Option<Outcome>,
     next: Instant,
@@ -154,18 +164,6 @@ impl Drop for ObsPlugin {
         }
     }
 }
-fn action_timeout(action: &str, parameters: &Parameters) -> Result<u64, FailureCode> {
-    if action != "wait" {
-        return Ok(5);
-    }
-    let seconds = parameters
-        .values
-        .get("timeout_seconds")
-        .map_or(Some(30), Value::as_u64);
-    seconds
-        .filter(|n| (1..=120).contains(n))
-        .ok_or(FailureCode::InvalidParameters)
-}
 impl Plugin for ObsPlugin {
     fn invoke(&self, call: Invoke, reply: Reply<Outcome>) {
         let Some(credentials) = call.credentials else {
@@ -174,24 +172,12 @@ impl Plugin for ObsPlugin {
             });
             return;
         };
-        let seconds = match action_timeout(&call.action, &call.parameters) {
-            Ok(seconds) => seconds,
+        let flow = match crate::workflow::Workflow::action(&call.action, &call.parameters) {
+            Ok(flow) => flow,
             Err(code) => {
                 drop(credentials);
                 reply.send(Outcome::Failure { code });
                 return;
-            }
-        };
-        let flow = if call.action == "wait" {
-            None
-        } else {
-            match crate::workflow::Workflow::action(&call.action, &call.parameters) {
-                Ok(f) => Some(f),
-                Err(code) => {
-                    drop(credentials);
-                    reply.send(Outcome::Failure { code });
-                    return;
-                }
             }
         };
         let endpoint = match self.shared.endpoint_for(call.settings.as_ref()) {
@@ -235,9 +221,8 @@ impl Plugin for ObsPlugin {
             pending_text: None,
             backoff: Duration::from_millis(250),
         });
-        if flow.is_some()
-            && (session.blocked || (session.transport.is_none() && now < session.retry))
-        {
+        // A scene collection is changing: its targets are not known to exist.
+        if session.blocked {
             drop(inner);
             drop(credentials);
             reply.send(Outcome::Failure {
@@ -248,8 +233,10 @@ impl Plugin for ObsPlugin {
         session.waits.push(Wait {
             credentials: Some(credentials),
             reply,
-            deadline: now + Duration::from_secs(seconds),
+            connect_by: now + Duration::from_secs(CONNECT_SECONDS),
+            deadline: now + Duration::from_secs(ACTION_SECONDS),
             flow,
+            started: false,
             sent: None,
             outcome: None,
             next: now,
@@ -420,25 +407,19 @@ fn worker_turn(shared: &Shared, now: Instant) -> bool {
                 })
             } else if wait.outcome.is_some() {
                 wait.outcome
-            } else if ready && wait.flow.is_none() {
-                Some(if protocol::supports(&session.capabilities) {
-                    Outcome::Success
-                } else {
-                    Outcome::Failure {
-                        code: FailureCode::Incompatible,
-                    }
-                })
-            } else if let Err(code) = result {
-                if wait.flow.is_some()
+            } else if let Err(code) = result
+                && (wait.started
                     || matches!(
                         code,
                         FailureCode::CredentialsUnavailable | FailureCode::Incompatible
-                    )
-                {
-                    Some(Outcome::Failure { code })
-                } else {
-                    None
-                }
+                    ))
+            {
+                Some(Outcome::Failure { code })
+            } else if !wait.started && !ready && now >= wait.connect_by {
+                // OBS never accepted the connection: it is closed or not listening.
+                Some(Outcome::Failure {
+                    code: FailureCode::Unavailable,
+                })
             } else {
                 None
             };
@@ -494,13 +475,11 @@ impl Session {
         if event == "CurrentSceneCollectionChanging" {
             self.blocked = true;
             for w in &mut self.waits {
-                if w.flow.is_some() {
-                    w.outcome = Some(Outcome::Failure {
-                        code: FailureCode::Unavailable,
-                    });
-                    if let Some(sent) = w.sent.take() {
-                        self.discarded = Some((sent, w.deadline));
-                    }
+                w.outcome = Some(Outcome::Failure {
+                    code: FailureCode::Unavailable,
+                });
+                if let Some(sent) = w.sent.take() {
+                    self.discarded = Some((sent, w.deadline));
                 }
             }
         }
@@ -511,7 +490,13 @@ impl Session {
             || event.starts_with("Input")
             || event.starts_with("SourceFilter")
             || event.starts_with("Current")
-            || matches!(event, "RecordStateChanged" | "StreamStateChanged");
+            || matches!(
+                event,
+                "RecordStateChanged"
+                    | "StreamStateChanged"
+                    | "VirtualcamStateChanged"
+                    | "ReplayBufferStateChanged"
+            );
         if relevant {
             for q in &mut self.queries {
                 q.result = Some(ChoiceList::Unavailable);
@@ -732,27 +717,20 @@ impl Session {
                         {
                             job.sent = None;
                             job.next = now + Duration::from_millis(100);
-                            let result = if message["d"]["requestStatus"]["result"] != true
-                                || job
-                                    .flow
-                                    .as_ref()
-                                    .and_then(|f| f.request())
-                                    .is_none_or(|(r, _)| message["d"]["requestType"] != r)
+                            let result = if job
+                                .flow
+                                .request()
+                                .is_none_or(|(r, _)| message["d"]["requestType"] != r)
                             {
                                 Err(FailureCode::Failed)
+                            } else if message["d"]["requestStatus"]["result"] != true {
+                                job.flow.reject()
                             } else {
-                                job.flow
-                                    .as_mut()
-                                    .ok_or(FailureCode::Failed)?
-                                    .accept(message["d"]["responseData"].clone())
+                                job.flow.accept(message["d"]["responseData"].clone())
                             };
                             job.outcome = match result {
                                 Err(code) => Some(Outcome::Failure { code }),
-                                Ok(())
-                                    if job.flow.as_ref().is_some_and(|f| f.request().is_none()) =>
-                                {
-                                    Some(Outcome::Success)
-                                }
+                                Ok(()) if job.flow.request().is_none() => Some(Outcome::Success),
                                 _ => None,
                             };
                         }
@@ -765,10 +743,17 @@ impl Session {
             && !self.waits.iter().any(|w| w.sent.is_some())
             && !self.queries.iter().any(|q| q.sent.is_some())
             && !self.watches.iter().any(|w| w.sent.is_some())
-            && let Some(job) = self.waits.iter_mut().find(|w| {
-                w.outcome.is_none() && w.flow.is_some() && now < w.deadline && now >= w.next
-            })
-            && let Some((request, data)) = job.flow.as_ref().unwrap().request()
+            && let Some(job) = {
+                // One action at a time, in order: the next reads the state the last one left.
+                let running = self.waits.iter().any(|w| w.started && w.outcome.is_none());
+                self.waits.iter_mut().find(|w| {
+                    w.outcome.is_none()
+                        && now < w.deadline
+                        && now >= w.next
+                        && (w.started || !running)
+                })
+            }
+            && let Some((request, data)) = job.flow.request()
         {
             if !self.capabilities.iter().any(|v| v == request) {
                 job.outcome = Some(Outcome::Failure {
@@ -783,6 +768,7 @@ impl Session {
                     .to_string(),
             )?;
             job.sent = Some(id);
+            job.started = true;
         }
         if self.ready()
             && self.discarded.is_none()
@@ -860,6 +846,24 @@ fn visual_state(source: &str, params: &Parameters, data: &Value) -> VisualState 
             Some(false) => "Stopped",
             _ => return VisualState::Unavailable,
         },
+        "pause" => match (
+            data["outputActive"].as_bool(),
+            data["outputPaused"].as_bool(),
+        ) {
+            (Some(true), Some(true)) => "Paused",
+            (Some(_), Some(_)) => "Not paused",
+            _ => return VisualState::Unavailable,
+        },
+        "virtualcam" | "replay" => match data["outputActive"].as_bool() {
+            Some(true) => "On",
+            Some(false) => "Off",
+            _ => return VisualState::Unavailable,
+        },
+        "mute" => match data["inputMuted"].as_bool() {
+            Some(true) => "Muted",
+            Some(false) => "On",
+            _ => return VisualState::Unavailable,
+        },
         "filter" => match data["filterEnabled"].as_bool() {
             Some(true) => "Enabled",
             Some(false) => "Disabled",
@@ -893,30 +897,5 @@ fn visual_state(source: &str, params: &Parameters, data: &Value) -> VisualState 
         },
     }
 }
-pub(crate) const REQUIRED: &[&str] = &[
-    "GetVersion",
-    "GetSceneCollectionList",
-    "GetSceneList",
-    "GetGroupList",
-    "GetInputList",
-    "GetCurrentProgramScene",
-    "SetCurrentProgramScene",
-    "GetSceneItemList",
-    "GetGroupSceneItemList",
-    "GetSceneItemEnabled",
-    "SetSceneItemEnabled",
-    "GetSourceFilterList",
-    "GetSourceFilter",
-    "SetSourceFilterEnabled",
-    "GetRecordStatus",
-    "StartRecord",
-    "StopRecord",
-    "PauseRecord",
-    "ResumeRecord",
-    "GetStreamStatus",
-    "StartStream",
-    "StopStream",
-];
-
 #[cfg(test)]
 mod tests;

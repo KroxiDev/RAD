@@ -246,3 +246,4 @@ Estas piezas parecen simplificables y no lo son:
 | [0017](adr/0017-accion-nativa-sleep-y-documento-v4.md) | Acción nativa Sleep, transición compartida con inactividad y documento v4 |
 | [0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md) | Paquete Arch y actualizador independiente; confianza en GitHub oficial por HTTPS |
 | [0019](adr/0019-brightness-persistente-y-documento-v5.md) | Acción Brightness con publicación durable y documento v5; brillo configurable 10–100 |
+| [0020](adr/0020-textos-de-plugins-y-plazo-fijo.md) | Textos de los plugins traducidos en su manifest, opciones con texto propio y plazo fijo de respuesta |

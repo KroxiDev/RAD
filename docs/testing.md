@@ -103,7 +103,7 @@ Casos que se conservan, o se añaden si falta cobertura.
 | Contrato | Casos |
 |---|---|
 | Cliente y UI | Desconexión tras el envío, worker muerto, sin replay, crédito único, vistas coherentes por revisión, avisos coalescidos, Unknown resuelto releyendo, cursor inválido o parcial, salida JSON de `rad-cli` |
-| Textos | Todas las claves existen en cada catálogo; ningún código en bruto en la UI; respaldo en inglés |
+| Textos | Todas las claves existen en cada catálogo; ningún código en bruto en la UI; respaldo en inglés; cada texto de los plugins oficiales tiene traducción al español |
 | Publicación y Store | Fallos de escritura, sync o rollback; before/after; reinicio; hold de evidencia corrupta; medios cambiados en la segunda pasada |
 | Formatos | Golden real de cada versión; importadores de v1, v2, v3 y v4 en el Store y en la restauración; rechazo de versiones futuras; brillo histórico 0–9 normalizado a 10 sin aceptar valores mayores de 100 |
 | Brillo | Ajuste 10–100 y acción nativa subir/bajar diez puntos sobre el valor vigente, con saturación, sin escritura en el límite; publicación solo tras Applied, fallo e incertidumbre sin doble delta; cola vencida sin efecto tardío; Ajustes actualizado sin descartar borradores |

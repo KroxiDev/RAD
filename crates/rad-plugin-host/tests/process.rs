@@ -25,6 +25,7 @@ fn manifest(major: u32) -> Manifest {
         targets: vec!["x86_64-unknown-linux-gnu".into()],
         actions: vec![definition("run")],
         visuals: vec![definition("status")],
+        translations: Default::default(),
     }
 }
 fn definition(id: &str) -> Definition {
@@ -51,7 +52,7 @@ fn definition(id: &str) -> Definition {
                         "child",
                         "child_exit",
                     ]
-                    .map(String::from)
+                    .map(Into::into)
                     .to_vec(),
                 },
             }],

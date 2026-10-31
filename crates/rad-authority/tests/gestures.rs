@@ -97,6 +97,7 @@ fn setup(mode: Mode) -> Authority {
             gestures: vec![rad_plugin_contract::Gesture::Hold],
         }],
         visuals: vec![],
+        translations: Default::default(),
     };
     a.install_plugin(manifest, 1, "x86_64-unknown-linux-gnu")
         .unwrap();

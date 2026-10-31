@@ -1,8 +1,9 @@
 # Plugin de OBS para RAD
 
 Referencia de la integración oficial para desarrolladores y agentes. Plugin
-independiente `org.rad.obs` (`rad-plugin-obs`), versión 0.2.0, contrato de plugins v1
-con capacidades negociadas de credenciales, ajustes, opciones y plazo de respuesta.
+independiente `org.rad.obs` (`rad-plugin-obs`), versión 0.3.0, contrato de plugins v1
+con capacidades negociadas de credenciales, ajustes, opciones, textos traducidos y
+plazo de respuesta ([ADR 0020](../../docs/adr/0020-textos-de-plugins-y-plazo-fijo.md)).
 Consultar el [contrato y la guía para autores](../README.md).
 
 Se conecta únicamente a **127.0.0.1** mediante obs-websocket 5.x, RPC 1 y WebSocket
@@ -21,26 +22,44 @@ autenticar trabajos antiguos.
 
 ## Controles y visuales
 
-| Control | Operaciones | Texto visual |
-|---|---|---|
-| Escena de programa | Seleccionar escena existente | Program / Inactive (escena seleccionada) |
-| Filtro | On / Off / Toggle | Enabled / Disabled |
-| Elemento de escena | Show / Hide | Visible / Hidden |
-| Grabación | Start / Stop / Pause / Resume | Recording / Paused / Stopped |
-| Emisión | Start / Stop | Streaming / Stopped |
-| Esperar conexión | `timeout_seconds` opcional: entero 1–120, predeterminado 30 | Ninguno |
+Cada acción tiene un visual con el mismo ID que muestra su estado. Las
+operaciones se muestran con su texto («Alternar», «Iniciar»…) y la primera es la
+predeterminada.
 
-Las demás acciones tienen un timeout del host de cinco segundos. Los visuales
-observan también los cambios hechos fuera de RAD. Una selección desconectada,
-incompatible, ausente o desactualizada se declara no disponible en vez de
-adivinarla. La respuesta de una acción se confirma leyendo el estado real de OBS;
-aceptar una orden no basta para indicar éxito. Una acción ordinaria puede hacer
-un intento inicial de conexión (hasta dos segundos dentro de su timeout), pero
-falla durante la espera entre reintentos y nunca espera un intento posterior.
-Las órdenes nunca se repiten tras reconectar. La reconexión refresca observaciones.
+| Acción (`id`) | Campos | Operaciones | Texto visual |
+|---|---|---|---|
+| Escena (`scene`) | escena | Pasa la escena al programa | Program / Inactive |
+| Grabación (`record`) | — | `toggle`, `start`, `stop` | Recording / Paused / Stopped |
+| Pausar grabación (`pause`) | — | `toggle`, `pause`, `resume`; requiere grabar | Paused / Not paused |
+| Transmisión (`stream`) | — | `toggle`, `start`, `stop` | Streaming / Stopped |
+| Silenciar audio de OBS (`mute`) | fuente | `toggle`, `mute`, `unmute` | Muted / On |
+| Mostrar u ocultar fuente (`item`) | escena, fuente | `toggle`, `show`, `hide` | Visible / Hidden |
+| Filtro (`filter`) | fuente, filtro | `toggle`, `on`, `off` | Enabled / Disabled |
+| Cámara virtual (`virtualcam`) | — | `toggle`, `start`, `stop` | On / Off |
+| Repetición (`replay`) | — | `save`, `toggle`, `start`, `stop` | On / Off |
 
-Las opciones dinámicas enumeran fuentes y filtros, escenas y elementos de escena
-existentes, incluidos los hijos de grupos. La identidad del elemento incluye su
+Cada acción lee primero el estado de OBS y decide a partir de él: alternar
+invierte lo leído; iniciar lo que ya está activo, o detener lo detenido, termina
+con éxito sin enviar nada. El éxito se confirma leyendo el estado real de OBS
+después del cambio; aceptar una orden no basta. «Guardar repetición» exige el
+búfer activo y se confirma cuando OBS informa una repetición guardada distinta
+de la anterior.
+
+Las acciones declaran 20 segundos de plazo al host. Si OBS no acepta la conexión,
+como mientras se está abriendo, cada acción lo espera hasta 15 segundos; después
+falla con `unavailable`. Así «Abrir aplicación OBS» seguida de una acción de OBS
+funciona en una sola tecla. Las acciones sobre un mismo OBS se ejecutan de a una
+y en orden, de modo que cada una lee el estado que dejó la anterior. Una orden
+que ya llegó a OBS nunca se repite tras reconectar: si la conexión se pierde
+durante la acción, esta falla. La reconexión refresca observaciones. Los
+visuales observan también los cambios hechos fuera de RAD. Una selección
+desconectada, incompatible, ausente o desactualizada se declara no disponible en
+vez de adivinarla.
+
+Las opciones dinámicas enumeran fuentes y filtros, escenas, entradas y elementos
+de escena existentes, incluidos los hijos de grupos. Se muestran por su nombre en
+OBS; un hijo de grupo antepone el grupo y una fuente repetida en la misma escena
+añade su número. La identidad del elemento incluye su
 contenedor y su ID numérico, no solo el nombre de la fuente. Las selecciones
 guardadas incluyen también colección y nombres: renombrar o reemplazar objetos
 puede exigir seleccionarlos otra vez. No se redirigen selecciones entre

@@ -583,7 +583,7 @@ impl App {
             NewAction::Wait => tr(self.es, "Wait").into(),
             NewAction::Sleep => tr(self.es, "Sleep").into(),
             NewAction::Brightness => tr(self.es, "Brightness").into(),
-            NewAction::Plugin(entry) => entry.label.clone(),
+            NewAction::Plugin(entry) => entry.shown(self.es).to_owned(),
         }
     }
     /// An action lands on a key: added to an existing one, or a key is created for it.

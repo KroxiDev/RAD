@@ -229,6 +229,7 @@ fn installed_type_is_admission_gate_but_visual_and_dynamic_service_are_not() {
                 credential_slots: vec![],
             }],
             visuals: vec![],
+            translations: Default::default(),
         },
         1,
         "x86_64-unknown-linux-gnu",

@@ -39,7 +39,7 @@ impl Admin {
                                 rad_plugin_manager::Operation::Reinstall(_) => Selection::Reinstall,
                                 _ => Selection::Rollback,
                             },
-                            manifest: m.clone(),
+                            manifest: Box::new(m.clone()),
                         },
                         None => PluginChange::Uninstall { id: id.clone() },
                     };

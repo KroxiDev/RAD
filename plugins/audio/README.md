@@ -2,7 +2,7 @@
 
 Referencia de la integración oficial para desarrolladores y agentes. Silencia,
 reactiva y alterna el **micrófono** y la **salida de audio**, y muestra si cada uno
-está silenciado. ID `org.rad.audio`, versión 0.2.0, Linux x86_64, contrato de plugins
+está silenciado. ID `org.rad.audio`, versión 0.3.0, Linux x86_64, contrato de plugins
 v1. Las capacidades negociadas están en el [contrato y la guía para autores](../README.md).
 
 ## Requisitos
@@ -20,8 +20,13 @@ disponible hasta que vuelva el servidor.
 
 | Acción | Operaciones | Dispositivo |
 | --- | --- | --- |
-| Salida de audio | toggle, mute, unmute | una salida (sink) |
-| Micrófono | toggle, mute, unmute | una entrada (source), excluidos los monitores |
+| Salida de audio | `toggle` (predeterminada), `mute`, `unmute` | una salida (sink) |
+| Micrófono | `toggle` (predeterminada), `mute`, `unmute` | una entrada (source), excluidos los monitores |
+
+El editor muestra las operaciones como «Alternar», «Silenciar» y «Activar
+sonido», con el resto de los textos traducidos en el manifest
+([ADR 0020](../../docs/adr/0020-textos-de-plugins-y-plazo-fijo.md)). El
+dispositivo se elige primero.
 
 | Estado | Muestra |
 | --- | --- |

@@ -3,7 +3,7 @@
   "id": "org.rad.audio",
   "version": {
     "major": 0,
-    "minor": 2,
+    "minor": 3,
     "patch": 0
   },
   "host_min": 1,
@@ -19,25 +19,34 @@
         "version": 1,
         "fields": [
           {
-            "id": "operation",
-            "label": "Operation",
-            "required": true,
-            "kind": {
-              "type": "choice",
-              "options": [
-                "toggle",
-                "mute",
-                "unmute"
-              ]
-            }
-          },
-          {
             "id": "device",
             "label": "Device",
             "required": true,
             "kind": {
               "type": "dynamic_choice",
               "depends_on": []
+            }
+          },
+          {
+            "id": "operation",
+            "label": "When pressed",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": [
+                {
+                  "value": "toggle",
+                  "label": "Toggle"
+                },
+                {
+                  "value": "mute",
+                  "label": "Mute"
+                },
+                {
+                  "value": "unmute",
+                  "label": "Unmute"
+                }
+              ]
             }
           }
         ]
@@ -54,25 +63,34 @@
         "version": 1,
         "fields": [
           {
-            "id": "operation",
-            "label": "Operation",
-            "required": true,
-            "kind": {
-              "type": "choice",
-              "options": [
-                "toggle",
-                "mute",
-                "unmute"
-              ]
-            }
-          },
-          {
             "id": "device",
             "label": "Device",
             "required": true,
             "kind": {
               "type": "dynamic_choice",
               "depends_on": []
+            }
+          },
+          {
+            "id": "operation",
+            "label": "When pressed",
+            "required": true,
+            "kind": {
+              "type": "choice",
+              "options": [
+                {
+                  "value": "toggle",
+                  "label": "Toggle"
+                },
+                {
+                  "value": "mute",
+                  "label": "Mute"
+                },
+                {
+                  "value": "unmute",
+                  "label": "Unmute"
+                }
+              ]
             }
           }
         ]
@@ -125,6 +143,21 @@
   ],
   "capabilities": [
     "dynamic_options",
+    "labels",
     "visual_freshness"
-  ]
+  ],
+  "translations": {
+    "es": {
+      "Audio output": "Salida de audio",
+      "Microphone": "Micrófono",
+      "Device": "Dispositivo",
+      "When pressed": "Al pulsar",
+      "Toggle": "Alternar",
+      "Mute": "Silenciar",
+      "Unmute": "Activar sonido",
+      "Audio output state": "Estado de la salida de audio",
+      "Microphone state": "Estado del micrófono",
+      "Default device (follows changes)": "Dispositivo predeterminado (sigue los cambios)"
+    }
+  }
 }

@@ -243,7 +243,7 @@ impl Authority {
             .validate(rad_plugin_contract::HOST_API, target)
             .map_err(|_| PluginError::Incompatible)?;
         let selected = self.plugin_activation && self.plugin_barrier.as_ref().is_some_and(|b|
-            matches!(&b.change, PluginChange::Select { manifest: candidate, .. } if candidate == manifest));
+            matches!(&b.change, PluginChange::Select { manifest: candidate, .. } if **candidate == *manifest));
         if !selected {
             self.plugin_change_allowed(&manifest.id)?;
         }
@@ -526,7 +526,7 @@ impl Authority {
 pub enum PluginChange {
     Select {
         operation: Selection,
-        manifest: Manifest,
+        manifest: Box<Manifest>,
     },
     Uninstall {
         id: String,

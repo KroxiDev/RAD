@@ -36,7 +36,7 @@ fn pick() -> Definition {
                     "scenario",
                     true,
                     FieldKind::Choice {
-                        options: scenario.map(String::from).to_vec(),
+                        options: scenario.map(Into::into).to_vec(),
                     },
                 ),
                 field(
@@ -96,7 +96,7 @@ fn editing_asks_by_entity_with_the_draft_values_of_the_dependencies() {
 /// A list that depends on a required choice (`kind`) and on an optional one (`tag`).
 fn mixed() -> Definition {
     let choice = |options: &[&str]| FieldKind::Choice {
-        options: options.iter().map(|o| o.to_string()).collect(),
+        options: options.iter().map(|o| (*o).into()).collect(),
     };
     Definition {
         gestures: rad_plugin_contract::default_gestures(),
@@ -180,6 +180,12 @@ fn a_saved_optional_dependency_cleared_in_the_draft_is_asked_by_type_so_the_save
 #[test]
 fn a_list_is_not_asked_while_a_required_dependency_has_no_value_and_it_says_which() {
     let mut form = FormDraft::new(pick());
+    assert_eq!(
+        form.fields[0].as_deref(),
+        Some("normal"),
+        "starts on its first option"
+    );
+    form.fields[0] = Some(String::new()); // as a draft saved without one
     assert_eq!(form.next_query(adding(), 1), None, "scenario is not chosen");
     assert_eq!(form.waiting_for(1), Some("scenario"));
     assert_eq!(

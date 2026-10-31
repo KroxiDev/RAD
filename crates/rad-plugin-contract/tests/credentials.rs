@@ -93,7 +93,7 @@ fn declared_budget_uses_seconds_and_legacy_default_without_widening_schema() {
         kind: FieldKind::Integer { min: 1, max: 120 },
     });
     m.actions[0].response_timeout = Some(ResponseTimeout {
-        field: "seconds".into(),
+        field: Some("seconds".into()),
         default_seconds: 30,
     });
     assert_eq!(m.actions[0].response_budget_ms(&p), Ok(30000));

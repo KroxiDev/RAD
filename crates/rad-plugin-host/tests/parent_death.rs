@@ -39,6 +39,7 @@ fn manifest() -> Manifest {
             credential_slots: vec![],
         }],
         visuals: vec![],
+        translations: Default::default(),
     }
 }
 

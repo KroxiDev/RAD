@@ -32,6 +32,7 @@ fn manifest(major: u32) -> Manifest {
             credential_slots: vec![],
         }],
         visuals: vec![],
+        translations: Default::default(),
     }
 }
 fn edit(c: Candidate, e: Edit) -> Candidate {
@@ -260,7 +261,7 @@ fn administrative_barrier_is_owner_bound_and_blocks_only_affected_runs_until_exp
     let mut b = Authority::new(c, 1, std::num::NonZeroU128::new(7).unwrap());
     let change = PluginChange::Select {
         operation: Selection::Update,
-        manifest: manifest(2),
+        manifest: Box::new(manifest(2)),
     };
     for actor in [&mut a, &mut b] {
         actor
@@ -365,7 +366,7 @@ fn durable_selection_stays_guarded_through_activation_without_config_or_history_
             Origin::Editor,
             PluginChange::Select {
                 operation: Selection::Update,
-                manifest: manifest(2),
+                manifest: Box::new(manifest(2)),
             },
             "x86_64-unknown-linux-gnu",
         )
@@ -445,7 +446,7 @@ fn admission_captures_declared_response_budget_before_wait_and_parameter_edit() 
         kind: rad_plugin_contract::FieldKind::Integer { min: 1, max: 120 },
     });
     m.actions[0].response_timeout = Some(rad_plugin_contract::ResponseTimeout {
-        field: "timeout_seconds".into(),
+        field: Some("timeout_seconds".into()),
         default_seconds: 30,
     });
     a.install_plugin(m, 1, "x86_64-unknown-linux-gnu").unwrap();

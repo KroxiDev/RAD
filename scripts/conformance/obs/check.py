@@ -96,11 +96,12 @@ def scenario(w):
     folder=e.call('status')['active_folder_id']
     definitions=[('scene',dict(scene=target('Live'))),('filter',dict(source=target('Camera','input'),filter='Blur',operation='on')),
       ('item',dict(scene=target('Root'),item=target('G','group',8,'Camera'),operation='show')),
-      ('record',dict(operation='start')),('stream',dict(operation='start')),('wait',dict())]
+      ('record',dict(operation='start')),('stream',dict(operation='start')),('scene',dict(scene=target('Root'))),
+      ('mute',dict(input=target('Camera','input'),operation='toggle')),('virtualcam',dict(operation='toggle')),
+      ('replay',dict(operation='start')),('replay',dict(operation='save'))]
     for i,(kind,values) in enumerate(definitions):
         e.call('create_button',folder_id=folder,position=i,name=kind)
         e.call('add_action',button_id=f'b{i+1}',type='org.rad.obs:'+kind,parameters=parameters(**values))
-    e.call('add_action',button_id='b6',type='org.rad.obs:scene',parameters=parameters(scene=target('Root')))
     until(lambda:e.call('plugin_status'),lambda v:v['items'][0]['host']=='ready')
     e.call('set_permissions',target='global',value=dict(own=dict(consult=True,modify=True,execute=True)))
     a=Peer(w.root,'automation');w.peers.append(a)
@@ -136,18 +137,24 @@ def scenario(w):
     equal('reconnect never replays prior actions',w.control('snapshot')['effects'],effects)
     w.control('offline')
     until(lambda:e.call('plugin_visual',id='b1'),lambda v:v['availability']=='unavailable')
-    # Deliberately hold this controlled outage beyond the ordinary 5s budget.
+    # An ordinary action waits for OBS to come back, beyond the former 5s budget.
     # Repeated operations below are observations, never retries of run/effects.
     admitted=e.call('run',id='b6'); started=time.monotonic()
     while time.monotonic()-started<5.25:
-        equal('wait remains running during controlled outage',e.call('result',execution_id=admitted['execution_id'])['state'],'running')
+        equal('action remains running during controlled outage',e.call('result',execution_id=admitted['execution_id'])['state'],'running')
         time.sleep(.25)
-    equal('offline wait has zero scene effects',w.control('snapshot')['effects'],effects)
+    equal('offline action has zero scene effects',w.control('snapshot')['effects'],effects)
     w.control('online')
     until(lambda:e.call('plugin_visual',id='b1'),lambda v:v['availability']=='current')
     until(lambda:w.control('snapshot'),lambda v:len(v['effects'])==6)
-    equal('wait execution terminal success',until(lambda:e.call('result',execution_id=admitted['execution_id']),lambda v:v['state']!='running')['state'],'succeeded')
-    equal('wait then scene single effect',w.control('snapshot')['effects'],effects+[dict(request='SetCurrentProgramScene',data=dict(sceneName='Root'))])
+    equal('waiting action terminal success',until(lambda:e.call('result',execution_id=admitted['execution_id']),lambda v:v['state']!='running')['state'],'succeeded')
+    equal('waiting action single effect',w.control('snapshot')['effects'],effects+[dict(request='SetCurrentProgramScene',data=dict(sceneName='Root'))])
+    effects=w.control('snapshot')['effects']
+    for i in range(7,11):equal('action succeeded',w.cli('run',f'a{i}','--wait')['data']['state'],'succeeded')
+    equal('mute, virtual camera and replay effects',w.control('snapshot')['effects'],effects+[
+      dict(request='SetInputMute',data=dict(inputName='Camera',inputMuted=True)),
+      dict(request='StartVirtualCam',data={}),dict(request='StartReplayBuffer',data={}),
+      dict(request='SaveReplayBuffer',data={})])
     for peer in w.peers: peer.close()
     w.peers.clear()
     w.runtime.terminate(); equal('runtime orderly stop',w.runtime.wait(timeout=8),0)

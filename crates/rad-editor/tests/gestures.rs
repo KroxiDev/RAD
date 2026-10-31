@@ -8,6 +8,7 @@ fn entry(gestures: Vec<Gesture>) -> CatalogEntry {
         visual: false,
         ready: true,
         gestures,
+        texts: Default::default(),
     }
 }
 #[test]
