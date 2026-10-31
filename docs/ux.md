@@ -140,6 +140,18 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
 - **Pantallas.** Ajustes y los formularios ocupan la ventana o el panel de la tecla,
   sin ventanas flotantes; «Volver» y Esc regresan. Con cambios sin aplicar, la
   pantalla se queda y ofrece «Descartar».
+- **Cambios sin recarga visible.** Lo que cambia se reemplaza de una vez, sin
+  «Cargando…» ni huecos intermedios: el panel de la tecla, sus imágenes y las caras
+  de plugins siguen visibles hasta que llega su versión nueva. Al cambiar de
+  carpeta, la nueva se muestra al instante. El editor y el runtime conservan las
+  imágenes de las carpetas visitadas y precargan las de la carpeta superior y las
+  subcarpetas, con un tope de 8 MB cada uno fuera de la carpeta visible. Una imagen
+  que aún no llegó aparece en el editor con un fundido de 0,15 s, junto con las
+  demás; en el Stream Deck, todas a la vez y nunca marcadas como no disponibles
+  mientras cargan. Al seleccionar una tecla, su panel aparece con un fundido corto
+  y dice «Cargando…» solo si tarda más de 0,4 s.
+- **Borrar.** La papelera del panel o Supr borran la tecla seleccionada, o la
+  carpeta a la que entra, sin confirmación; Ctrl+Z la recupera.
 - **Progreso.** Las transferencias muestran una barra.
 - **Puesta en marcha.** El editor arranca RAD y ofrece «Iniciar RAD con el equipo»;
   el usuario nunca usa la terminal ([ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md)).

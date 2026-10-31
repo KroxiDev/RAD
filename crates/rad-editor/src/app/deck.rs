@@ -45,14 +45,15 @@ pub(super) fn native_icon(appearance: &serde_json::Value) -> Option<rad_api::Nat
 
 /// Paints one key face the way the deck does. Text at the top, in the middle or at the
 /// bottom lies over the picture, which is dimmed behind it; text above or below the
-/// picture gets a band of its own and the picture shrinks to make room.
+/// picture gets a band of its own and the picture shrinks to make room. The picture comes
+/// with how far it has faded in, from 0 to 1.
 pub(super) fn paint_key(
     ui: &egui::Ui,
     look: &Look,
     rect: egui::Rect,
     label: &str,
     text_position: &str,
-    texture: Option<&egui::TextureHandle>,
+    picture: Option<(&egui::TextureHandle, f32)>,
     native_icon: Option<rad_api::NativeIcon>,
 ) {
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
@@ -60,25 +61,26 @@ pub(super) fn paint_key(
     painter.rect_filled(rect, radius, look.key);
     // Same proportions as the 96 px key the deck paints.
     let unit = rect.height() / 96.;
-    let picture = match (label.is_empty(), text_position) {
+    let area = match (label.is_empty(), text_position) {
         (false, "above_image") => rect.with_min_y(rect.top() + 34. * unit),
         (false, "below_image") => rect.with_max_y(rect.top() + 62. * unit),
         _ => rect,
     };
-    if let Some(texture) = texture {
+    if let Some((texture, shown)) = picture {
         let size = texture.size_vec2();
-        let fitted = size * (picture.width() / size.x).min(picture.height() / size.y);
+        let fitted = size * (area.width() / size.x).min(area.height() / size.y);
         egui::Image::from_texture((texture.id(), fitted))
             .corner_radius(radius)
-            .paint_at(ui, egui::Rect::from_center_size(picture.center(), fitted));
+            .tint(egui::Color32::WHITE.gamma_multiply(shown))
+            .paint_at(ui, egui::Rect::from_center_size(area.center(), fitted));
     }
-    if texture.is_none() {
+    if picture.is_none() {
         match native_icon {
             Some(rad_api::NativeIcon::Sleep) => {
-                super::look::paint_moon(&painter, picture.center(), 22. * unit, look.text);
+                super::look::paint_moon(&painter, area.center(), 22. * unit, look.text);
             }
             Some(rad_api::NativeIcon::Brightness) => {
-                super::look::paint_sun(&painter, picture.center(), 22. * unit, look.text);
+                super::look::paint_sun(&painter, area.center(), 22. * unit, look.text);
             }
             None => {}
         }
@@ -113,7 +115,9 @@ pub(super) fn paint_key(
             (top, Some((top - 3., top + height + 3.)))
         }
     };
-    if let (Some((from, to)), true) = (band, texture.is_some() || native_icon.is_some()) {
+    // The band dims what it lies over, so it comes in with the picture.
+    let behind = picture.map_or(native_icon.map(|_| 1.), |(_, shown)| Some(shown));
+    if let (Some((from, to)), Some(behind)) = (band, behind) {
         let band =
             egui::Rect::from_min_max(egui::pos2(rect.left(), from), egui::pos2(rect.right(), to));
         // Square corners would poke out of the key where the band reaches its edge.
@@ -123,7 +127,11 @@ pub(super) fn paint_key(
             sw: if to >= rect.bottom() { KEY_RADIUS } else { 0 },
             se: if to >= rect.bottom() { KEY_RADIUS } else { 0 },
         };
-        painter.rect_filled(band, corners, egui::Color32::from_black_alpha(153));
+        painter.rect_filled(
+            band,
+            corners,
+            egui::Color32::from_black_alpha((153. * behind) as u8),
+        );
     }
     painter.galley(egui::pos2(rect.center().x, top), galley, look.text);
 }
@@ -197,6 +205,9 @@ impl App {
                 self.key(ui, look, position, key_rect);
             }
         });
+        if self.pictures.fading(ui.input(|i| i.time)) {
+            ui.ctx().request_repaint();
+        }
     }
     fn key(&mut self, ui: &mut egui::Ui, look: &Look, position: usize, rect: egui::Rect) {
         let id = self.slot_id(position);
@@ -240,9 +251,10 @@ impl App {
             let painter = ui.painter();
             let radius = CornerRadius::same(KEY_RADIUS);
             if let Some(view) = view {
-                let texture = view.appearance["image"]
+                let now = ui.input(|i| i.time);
+                let picture = view.appearance["image"]
                     .as_str()
-                    .and_then(|reference| self.textures.get(reference));
+                    .and_then(|reference| self.pictures.get(reference, now));
                 let position = string(&view.appearance["text_position"]);
                 if !self.plugin_face(ui, look, id.as_deref().unwrap_or(""), rect) {
                     paint_key(
@@ -251,7 +263,7 @@ impl App {
                         rect,
                         &label,
                         &position,
-                        texture,
+                        picture,
                         native_icon(&view.appearance),
                     );
                 }

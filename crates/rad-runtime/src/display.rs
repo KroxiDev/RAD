@@ -2,7 +2,6 @@
 use rad_authority::{ActionType, Authority, EntityView, Visible, VisualView};
 use rad_core::configuration::{Origin, TextPosition};
 use rad_deck::{Desired, KeyVisual, TextPlacement};
-use std::{collections::BTreeMap, sync::Arc};
 pub trait DeckPort {
     fn next_event(&mut self) -> Option<rad_deck::Event>;
     fn set_desired(&mut self, desired: Desired) -> Result<(), rad_deck::DeckError>;
@@ -23,17 +22,11 @@ impl DeckPort for rad_deck::Deck {
         rad_deck::Deck::is_stopped(self)
     }
 }
-pub fn project(
+/// What the deck shows now. A picture still loading leaves its key plain; only one that
+/// could not be loaded marks the key unavailable.
+pub(crate) fn project(
     actor: &Authority,
-    images: &BTreeMap<String, Arc<rad_media::NormalizedImage>>,
-    brightness: u8,
-    asleep: bool,
-) -> Desired {
-    project_with_plugins(actor, images, brightness, asleep, None)
-}
-pub(crate) fn project_with_plugins(
-    actor: &Authority,
-    images: &BTreeMap<String, Arc<rad_media::NormalizedImage>>,
+    pictures: &crate::pictures::Pictures,
     brightness: u8,
     asleep: bool,
     visuals: Option<&crate::plugin_visuals::Visuals>,
@@ -57,9 +50,8 @@ pub(crate) fn project_with_plugins(
         let mut image = view
             .appearance
             .image
-            .as_ref()
-            .and_then(|key| images.get(key))
-            .cloned();
+            .as_deref()
+            .and_then(|key| pictures.get(key));
         let external = matches!(view.visual, VisualView::External(_));
         let plugin = if external {
             visuals.map(|v| v.resolved(actor, binding.short()))
@@ -72,7 +64,12 @@ pub(crate) fn project_with_plugins(
         let unavailable = plugin.as_ref().is_some_and(|v| {
             v.view.availability == crate::plugin_visuals::Availability::Unavailable
         }) || (external && plugin.is_none())
-            || (!external && view.appearance.image.is_some() && image.is_none())
+            || (!external
+                && view
+                    .appearance
+                    .image
+                    .as_deref()
+                    .is_some_and(|key| pictures.failed(key)))
             || button
                 .actions
                 .iter()

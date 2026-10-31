@@ -518,6 +518,7 @@ mod backup_tests {
                 plugin_dependencies: false,
                 plugin_form: false,
                 plugin_visual: false,
+                background: false,
                 connected: true,
                 transfer_job: true,
                 result: Ok(crate::native::Reply::TransferProgress(0)),

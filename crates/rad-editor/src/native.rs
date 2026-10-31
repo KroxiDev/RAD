@@ -3,7 +3,7 @@ use crate::{
     Request,
     backups::ExportFile,
     icons::Icons,
-    session::{Error, Inspection, Refresh, Session},
+    session::{Board, Error, Inspection, Refresh, Selected, Session},
     theme::Palette,
     transfer::{self, Download, Progress, Upload},
     worker::Worker,
@@ -42,8 +42,14 @@ pub enum Job {
     Refresh {
         board: bool,
         overview: bool,
+        /// Read with a board of a newer revision, so both change together.
+        selected: Option<Selected>,
     },
     Inspect(String),
+    /// A key's inspector read before it is selected.
+    InspectAhead(String),
+    /// A folder one press away from the one on show.
+    FolderBoard(String),
     Request(Request),
     SaveIcon {
         button: String,
@@ -61,11 +67,8 @@ pub enum Job {
     /// Export to the private default backup folder, resolved on this worker.
     ExportBackup,
     TransferStep,
-    Image {
-        id: String,
-        reference: String,
-        revision: String,
-    },
+    /// Key pictures, read in the order given.
+    Pictures(Vec<PictureRead>),
     /// Give `button` the icon of the application its top action opens, if it has no image.
     /// With `application`, only when that desktop entry is the one on top.
     AppIcon {
@@ -98,15 +101,15 @@ pub enum Reply {
     RecoveryRequired,
     Refresh(Refresh),
     Inspection(Inspection),
+    InspectedAhead(Inspection),
     Response {
         operation: String,
         response: Response,
     },
     Theme,
-    Image {
-        reference: String,
-        pixels: crate::preview::Pixels,
-    },
+    /// Each picture asked for, with its pixels unless it could not be read.
+    Pictures(Vec<(String, Option<crate::preview::Pixels>)>),
+    FolderBoard(Board),
     TransferProgress(u64),
     TransferFinished {
         kind: TransferKind,
@@ -115,6 +118,32 @@ pub enum Reply {
     },
     /// The key keeps its look: it has an image, or its application ships no usable icon.
     NoAppIcon,
+}
+/// The picture of a key: the key, its media reference and the revision it was seen at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PictureRead {
+    pub button: String,
+    pub reference: String,
+    pub revision: String,
+}
+/// Reads pictures one after another. One that cannot be read is reported missing; a lost
+/// connection fails the whole read.
+fn read_pictures<P: crate::session::Port>(
+    pictures: Vec<PictureRead>,
+    s: &mut Session<P>,
+) -> Result<Reply, Error> {
+    let mut read = Vec::with_capacity(pictures.len());
+    for picture in pictures {
+        let pixels = s
+            .media_bytes(&picture.button, &picture.revision)
+            .and_then(|bytes| crate::preview::decode(&bytes));
+        match pixels {
+            Ok(pixels) => read.push((picture.reference, Some(pixels))),
+            Err(error) if !s.is_open() => return Err(error),
+            Err(_) => read.push((picture.reference, None)),
+        }
+    }
+    Ok(Reply::Pictures(read))
 }
 /// One question to the runtime about the options of a plugin field.
 #[derive(Debug)]
@@ -134,6 +163,8 @@ pub struct Event {
     pub plugin_dependencies: bool,
     pub plugin_form: bool,
     pub plugin_visual: bool,
+    /// A read ahead or a picture: its failure is not the user's business.
+    pub background: bool,
     pub connected: bool,
     pub transfer_job: bool,
     pub result: Result<Reply, Error>,
@@ -305,6 +336,10 @@ pub fn start_with_clock(
             matches!(&job,Job::Request(r) if r.operation().as_str()=="plugin_dependencies");
         let plugin_form = matches!(&job, Job::PluginForm { .. });
         let plugin_visual = matches!(&job, Job::PluginVisuals { .. });
+        let background = matches!(
+            &job,
+            Job::InspectAhead(_) | Job::FolderBoard(_) | Job::Pictures(_)
+        );
         let transfer_job = matches!(
             job,
             Job::Transfer { .. } | Job::ExportBackup | Job::TransferStep
@@ -315,7 +350,9 @@ pub fn start_with_clock(
             Job::Request(request) => !request.operation().as_str().starts_with("plugin"),
             Job::Refresh { .. }
             | Job::Inspect(_)
-            | Job::Image { .. }
+            | Job::InspectAhead(_)
+            | Job::FolderBoard(_)
+            | Job::Pictures(_)
             | Job::AppIcon { .. }
             | Job::Transfer { .. }
             | Job::ExportBackup
@@ -432,18 +469,17 @@ pub fn start_with_clock(
                                 Reply::PluginVisuals { revision, visuals }
                             })
                     }
-                    Job::Refresh { board, overview } => {
-                        s.refresh_views(board, overview).map(Reply::Refresh)
-                    }
-                    Job::Inspect(id) => s.inspect(&id).map(Reply::Inspection),
-                    Job::Image {
-                        id,
-                        reference,
-                        revision,
+                    Job::Refresh {
+                        board,
+                        overview,
+                        selected,
                     } => s
-                        .media_bytes(&id, &revision)
-                        .and_then(|bytes| crate::preview::decode(&bytes))
-                        .map(|pixels| Reply::Image { reference, pixels }),
+                        .refresh_views(board, overview, selected.as_ref())
+                        .map(Reply::Refresh),
+                    Job::Inspect(id) => s.inspect(&id).map(Reply::Inspection),
+                    Job::InspectAhead(id) => s.inspect(&id).map(Reply::InspectedAhead),
+                    Job::FolderBoard(folder) => s.folder_board(&folder).map(Reply::FolderBoard),
+                    Job::Pictures(pictures) => read_pictures(pictures, s),
                     Job::SaveIcon {
                         button,
                         ticket,
@@ -537,6 +573,7 @@ pub fn start_with_clock(
             plugin_dependencies,
             plugin_form,
             plugin_visual,
+            background,
             connected: session.as_ref().is_some_and(Session::is_open),
             transfer_job,
             result,

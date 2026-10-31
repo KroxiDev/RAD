@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use std::{path::PathBuf, time::Instant};
 
 mod actions;
+mod ahead;
 mod bar;
 mod credentials;
 mod deck;
@@ -23,6 +24,7 @@ mod look;
 mod machine;
 mod options;
 mod pacing;
+mod pictures;
 mod plugins;
 mod recovery;
 mod service;
@@ -39,6 +41,10 @@ const SERVICE_SETTLE: std::time::Duration = std::time::Duration::from_millis(500
 
 /// Duration a wait starts with when it is put on a key.
 const DEFAULT_WAIT_MS: u64 = 1000;
+
+/// A selected key whose inspector is not read yet says so only after this long; a quicker
+/// read shows the key without a flash of "Loading…".
+const LOADING_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// Something from the list that becomes an action on a key.
 #[derive(Clone)]
@@ -138,6 +144,15 @@ impl Draft {
 fn string(v: &Value) -> String {
     v.as_str().unwrap_or_default().into()
 }
+/// The plugin visual a key of `board` shows, if any.
+fn visual_type<'a>(board: &'a Board, id: &str) -> Option<&'a Value> {
+    board
+        .buttons
+        .iter()
+        .find(|key| key.entity["id"] == id)
+        .map(|key| &key.appearance["visual_type"])
+        .filter(|visual| visual.is_string())
+}
 use crate::texts::tr;
 pub struct App {
     preferences: crate::preferences::Preferences,
@@ -218,8 +233,17 @@ pub struct App {
     icon_asked: bool,
     /// Action categories the user folded away in the list.
     folded: std::collections::BTreeSet<actions::Category>,
-    textures: std::collections::BTreeMap<String, egui::TextureHandle>,
-    image_attempts: std::collections::BTreeSet<String>,
+    /// Key pictures on the board and, within a budget, those it may show next.
+    pictures: pictures::Pictures,
+    /// Inspectors and folders read ahead at the board's revision.
+    ahead: ahead::Ahead,
+    /// When the selected key was chosen; a key still loading says so only after a while.
+    selected_at: Instant,
+    /// Counts selections, so each selected key's panel fades in on its own.
+    selection: u64,
+    /// When the board last changed revision or folder: a plugin face not read yet is shown
+    /// plain for a moment instead of as unavailable.
+    board_since: Instant,
     plugins: plugins::PluginUi,
     /// Owner of every call to systemd; absent where the editor must not touch the system.
     service_worker: Option<Worker<crate::service::Job, crate::service::Outcome>>,
@@ -339,8 +363,11 @@ impl App {
             icon_candidate: None,
             icon_asked: false,
             folded: [actions::Category::Applications].into(),
-            textures: Default::default(),
-            image_attempts: Default::default(),
+            pictures: Default::default(),
+            ahead: Default::default(),
+            selected_at: Instant::now(),
+            selection: 0,
+            board_since: Instant::now(),
             plugins: Default::default(),
             service_worker: None,
             service: Default::default(),
@@ -487,9 +514,34 @@ impl App {
         self.plugins.clear_form();
         self.selected_slot = Some(position);
         self.control.select(id);
-        self.inspection = None;
-        self.draft = Draft::default();
-        self.inspect_needed = self.control.selected().is_some();
+        self.selected_at = Instant::now();
+        self.selection += 1;
+        // A key whose inspector was read ahead shows at once.
+        let ready = self
+            .control
+            .selected()
+            .zip(self.board.as_ref())
+            .and_then(|(id, board)| self.ahead.inspection(board, id))
+            .cloned();
+        self.draft = ready.as_ref().map(Draft::load).unwrap_or_default();
+        self.inspection = ready;
+        self.inspect_needed = self.control.selected().is_some() && self.inspection.is_none();
+    }
+    /// Deletes the selected key, or the folder it enters, with no question: undo, a
+    /// keystroke away, is the safety net. Its inspector must be read to tell which.
+    fn delete_selected(&mut self) {
+        let Some(inspection) = self
+            .inspection
+            .as_ref()
+            .filter(|inspection| inspection.button["id"].as_str() == self.control.selected())
+        else {
+            return;
+        };
+        let request = crate::commands::delete_selection(
+            &string(&inspection.button["id"]),
+            &inspection.actions,
+        );
+        self.send(request);
     }
     /// Keeps the selection on what the runtime just published: it follows a moved key,
     /// falls back to the slot when the key is gone, and adopts a key created in the slot.
@@ -647,7 +699,8 @@ impl App {
                         self.plugins.visual_due = true;
                     }
                     rad_api::NoticeKind::Inspector => {
-                        self.inspect_needed = self.selected().is_some()
+                        self.inspect_needed = self.selected().is_some();
+                        self.ahead.forget_inspections();
                     }
                     rad_api::NoticeKind::Overview => self.overview_due = true,
                     rad_api::NoticeKind::Execution => self.result_due = true,
@@ -723,6 +776,8 @@ impl App {
                 Ok(Reply::PluginVisuals { revision, visuals }) => {
                     self.accept_plugin_visuals(ctx, &revision, visuals);
                 }
+                // A read ahead that was refused is not asked again until the board changes.
+                Err(_) if event.background && event.connected => {}
                 Err(e) => {
                     // The runtime did not explain: nothing is retried until something changes.
                     self.recovery_due = false;
@@ -864,20 +919,32 @@ impl App {
                             .board
                             .as_ref()
                             .is_none_or(|old| old.folder["id"] != board.folder["id"]);
-                        let refs: std::collections::BTreeSet<_> = board
-                            .buttons
-                            .iter()
-                            .filter_map(|b| b.appearance["image"].as_str())
-                            .map(str::to_owned)
-                            .collect();
-                        self.textures.retain(|key, _| refs.contains(key));
-                        self.image_attempts.clear();
-                        if self.board.as_ref().is_none_or(|old| {
+                        let changed_revision = self.board.as_ref().is_none_or(|old| {
                             old.folder["view_revision"] != board.folder["view_revision"]
-                        }) {
-                            self.plugins.visuals.clear();
+                        });
+                        self.pictures.changed();
+                        if changed_revision || changed_folder {
+                            self.board_since = Instant::now();
+                            // A face stays until its new one arrives, while its key still
+                            // shows the same visual.
+                            let old = self.board.as_ref();
+                            self.plugins.visuals.retain(|id, _| {
+                                old.is_some_and(|old| {
+                                    visual_type(old, id) == visual_type(&board, id)
+                                })
+                            });
                         }
-                        if self
+                        self.ahead.follow(&board);
+                        // The selected key's inspector came with the board: both change at once.
+                        let fresh = r.inspection.filter(|inspection| {
+                            self.ahead.keep_inspection(&board, inspection);
+                            crate::session::coherent(&board, inspection)
+                                && inspection.button["id"].as_str() == self.control.selected()
+                        });
+                        if let Some(inspection) = fresh {
+                            self.draft = Draft::load(&inspection);
+                            self.inspection = Some(inspection);
+                        } else if self
                             .inspection
                             .as_ref()
                             .is_some_and(|inspection| !crate::session::coherent(&board, inspection))
@@ -905,20 +972,35 @@ impl App {
                     }
                 }
                 Ok(Reply::Inspection(v)) => {
-                    if self
-                        .board
-                        .as_ref()
-                        .is_some_and(|board| !crate::session::coherent(board, &v))
-                    {
+                    let Some(board) = self.board.as_ref() else {
+                        return;
+                    };
+                    if !crate::session::coherent(board, &v) {
+                        // Newer than the board: the two are read again together, and the
+                        // pair on screen stays until then.
                         self.force = true;
-                        self.inspect_needed = self.selected().is_some();
-                        self.inspection = None;
                         return;
                     }
+                    self.ahead.keep_inspection(board, &v);
                     if v.button["id"].as_str() == self.control.selected() {
                         self.adopt_inspection(v);
                     }
                 }
+                Ok(Reply::InspectedAhead(v)) => {
+                    if let Some(board) = &self.board {
+                        self.ahead.keep_inspection(board, &v);
+                        // A key selected while it was being read takes it at once.
+                        if self.inspection.is_none()
+                            && crate::session::coherent(board, &v)
+                            && v.button["id"].as_str() == self.control.selected()
+                        {
+                            self.draft = Draft::load(&v);
+                            self.inspection = Some(v);
+                            self.inspect_needed = false;
+                        }
+                    }
+                }
+                Ok(Reply::FolderBoard(folder)) => self.ahead.keep_folder(folder),
                 Ok(Reply::Response { operation, .. }) if operation == "launcher_catalog" => {} // Handled by finish_application_catalog.
                 Ok(Reply::Response {
                     operation,
@@ -1029,16 +1111,25 @@ impl App {
                     self.force = true;
                     self.inspect_needed = self.selected().is_some();
                 }
-                Ok(Reply::Image { reference, pixels }) => {
-                    if self.board.as_ref().is_some_and(|b| {
-                        b.buttons.iter().any(|b| b.appearance["image"] == reference)
-                    }) {
+                Ok(Reply::Pictures(read)) => {
+                    let now = ctx.input(|i| i.time);
+                    for (reference, pixels) in read {
+                        let Some(pixels) = pixels else {
+                            continue;
+                        };
+                        // One that arrives with its key on screen fades in.
+                        let on_show = self.board.as_ref().is_some_and(|board| {
+                            board
+                                .buttons
+                                .iter()
+                                .any(|key| key.appearance["image"] == reference.as_str())
+                        });
                         let image =
                             egui::ColorImage::from_rgba_unmultiplied(pixels.size, &pixels.rgba);
-                        self.textures.insert(
-                            reference.clone(),
-                            ctx.load_texture(reference, image, Default::default()),
-                        );
+                        let texture =
+                            ctx.load_texture(reference.clone(), image, Default::default());
+                        self.pictures
+                            .arrived(reference, texture, on_show.then_some(now));
                     }
                 }
                 Ok(Reply::IconSaved {
@@ -1103,21 +1194,22 @@ impl App {
         self.pump_service(ctx);
         if !self.worker.busy() && self.connected {
             let now = self.now_ms();
-            let next_image = self.board.as_ref().and_then(|b| {
-                b.buttons.iter().find_map(|button| {
-                    let reference = button.appearance["image"].as_str()?;
-                    if self.textures.contains_key(reference)
-                        || self.image_attempts.contains(reference)
-                    {
-                        return None;
-                    }
-                    Some((
-                        string(&button.entity["id"]),
-                        reference.to_owned(),
-                        string(&button.entity["view_revision"]),
-                    ))
-                })
-            });
+            let pictures = match &self.board {
+                Some(board) => self.pictures.next(
+                    &ahead::board_pictures(board),
+                    &self.ahead.nearby_pictures(board),
+                ),
+                None => Vec::new(),
+            };
+            let selected = self.selected();
+            let inspect_ahead = self
+                .board
+                .as_ref()
+                .and_then(|board| self.ahead.due_inspection(board, selected.as_deref()));
+            let folder_ahead = self
+                .board
+                .as_ref()
+                .and_then(|board| self.ahead.due_folder(board));
             let normal = self.recovery.is_normal();
             match self.schedule.choose([
                 normal && (self.force || self.overview_due),
@@ -1126,19 +1218,33 @@ impl App {
                 normal && self.inspect_needed,
                 normal && self.catalog_due.is_some_and(|due| now >= due),
                 normal && self.plugins.has_work(),
-                normal && next_image.is_some(),
+                normal && !pictures.is_empty(),
                 normal && self.machine_due,
                 self.recovery_due,
                 normal && self.app_picker.is_due(now),
+                normal && inspect_ahead.is_some(),
+                normal && folder_ahead.is_some(),
             ]) {
                 Some(0) => {
                     let force = std::mem::take(&mut self.force);
                     let overview = std::mem::take(&mut self.overview_due)
                         || self.status.is_null()
                         || self.resolving_unknown;
+                    // A board of a newer revision brings the selected key's inspector along.
+                    let selected = force.then(|| self.selected()).flatten().map(|id| {
+                        crate::session::Selected {
+                            id,
+                            revision: self
+                                .inspection
+                                .as_ref()
+                                .and_then(|i| i.button["view_revision"].as_str())
+                                .map(str::to_owned),
+                        }
+                    });
                     let _ = self.worker.submit(Job::Refresh {
                         board: force,
                         overview,
+                        selected,
                     });
                 }
                 Some(1) => {
@@ -1164,13 +1270,8 @@ impl App {
                     self.poll_plugins();
                 }
                 Some(6) => {
-                    let (id, reference, revision) = next_image.unwrap();
-                    self.image_attempts.insert(reference.clone());
-                    let _ = self.worker.submit(Job::Image {
-                        id,
-                        reference,
-                        revision,
-                    });
+                    self.pictures.asked(&pictures);
+                    let _ = self.worker.submit(Job::Pictures(pictures));
                 }
                 Some(7) => {
                     self.machine_due = false;
@@ -1184,6 +1285,16 @@ impl App {
                 }
                 Some(9) => {
                     self.request_application_catalog(launcher::CatalogTarget::Picker);
+                }
+                Some(10) => {
+                    let id = inspect_ahead.expect("ready");
+                    self.ahead.asked_inspection(&id);
+                    let _ = self.worker.submit(Job::InspectAhead(id));
+                }
+                Some(11) => {
+                    let id = folder_ahead.expect("ready");
+                    self.ahead.asked_folder(&id);
+                    let _ = self.worker.submit(Job::FolderBoard(id));
                 }
                 _ => {}
             }
@@ -1238,7 +1349,8 @@ impl App {
             Pulse::Quiet => {}
         }
     }
-    /// Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) reach the runtime unless a text field wants them.
+    /// Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) reach the runtime unless a text field wants them;
+    /// Delete removes the selected key.
     fn shortcuts(&mut self, ctx: &egui::Context) {
         if !self.connected
             || !self.recovery.is_normal()
@@ -1256,6 +1368,12 @@ impl App {
             self.send(Request::Redo {});
         } else if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Z)) {
             self.send(Request::Undo {});
+        } else if self.navigation.screen() == crate::screens::Screen::Keys
+            && !self.key_form_open()
+            && !egui::Popup::is_any_open(ctx)
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete))
+        {
+            self.delete_selected();
         }
     }
     /// The keys, the actions to drop on them and the panel of the selected one.
@@ -1436,5 +1554,7 @@ impl eframe::App for App {
     }
 }
 
+#[cfg(test)]
+mod reload_tests;
 #[cfg(test)]
 mod worker_loss_tests;

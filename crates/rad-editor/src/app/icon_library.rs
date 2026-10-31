@@ -685,6 +685,7 @@ mod tests {
                 plugin_dependencies: false,
                 plugin_form: false,
                 plugin_visual: false,
+                background: false,
                 transfer_job: false,
                 connected: true,
                 palette: Default::default(),
