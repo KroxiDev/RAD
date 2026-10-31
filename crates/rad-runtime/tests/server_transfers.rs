@@ -53,10 +53,53 @@ fn editor_image_export_and_confirmed_restore_cross_the_real_store_lane() {
             json!({"transfer_id":token,"offset":"0","base64":png}),
         );
         let key = ok(&mut c, "transfer_finish", json!({"transfer_id":token}))["media_ref"].clone();
+        // A second synthetic pixel proves the whole retained group is retryable.
+        let green = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg==";
+        let green_token = ok(
+            &mut c,
+            "transfer_begin",
+            json!({"kind":"image_import","size":"70"}),
+        )["transfer_id"]
+            .clone();
+        ok(
+            &mut c,
+            "transfer_write",
+            json!({"transfer_id":green_token,"offset":"0","base64":green}),
+        );
+        let green_key = ok(
+            &mut c,
+            "transfer_finish",
+            json!({"transfer_id":green_token}),
+        )["media_ref"]
+            .clone();
+        let stale = ok(&mut c, "inspector", json!({"id":"b1"}))["view_revision"].clone();
         ok(
             &mut c,
             "edit",
-            json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":{"text":"Red","image":key}}]}),
+            json!({"changes":[{"kind":"set","id":"b1","field":"name","value":"Concurrent"}]}),
+        );
+        let rejected = c
+            .request(
+                "edit",
+                json!({"expected_revision":stale,"changes":[
+                    {"kind":"set","id":"b1","field":"appearance","value":{"text":"Red","image":key,"states":{"off":{"text":"Green","image":green_key}}}}
+                ]}),
+            )
+            .unwrap();
+        assert_eq!(rejected.error.unwrap().code, "cursor_expired");
+        let fresh = ok(&mut c, "inspector", json!({"id":"b1"}))["view_revision"].clone();
+        ok(
+            &mut c,
+            "edit",
+            json!({"expected_revision":fresh,"changes":[
+                {"kind":"set","id":"b1","field":"appearance","value":{"text":"Red","image":key,"states":{"off":{"text":"Green","image":green_key}}}},
+                {"kind":"set","id":"b1","field":"name","value":"Original"}
+            ]}),
+        );
+        ok(
+            &mut c,
+            "edit",
+            json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":{"text":"Red","image":key,"states":{}}}]}),
         );
         // Re-importing the same normalized image is a legitimate no-op, not a leaked lease.
         let second = ok(
@@ -92,7 +135,7 @@ fn editor_image_export_and_confirmed_restore_cross_the_real_store_lane() {
         ok(
             &mut c,
             "edit",
-            json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":{"text":"Red","image":key,"states":{"muted":{"text":"Quiet","image":key}}}}]}),
+            json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":{"text":"Red","image":null,"states":{"muted":{"text":"Quiet","image":key}}}}]}),
         );
         assert_eq!(
             ok(
@@ -192,10 +235,65 @@ fn editor_image_export_and_confirmed_restore_cross_the_real_store_lane() {
             ok(
                 &mut automation,
                 "media_read",
-                json!({"id":"b1","offset":"0"})
+                json!({"id":"b1","media_ref":key,"offset":"0"})
             ),
             image
         );
+        // Closing only this editor connection releases both unpublished leases.
+        // The server and automation client remain live; a new editor can prepare
+        // another full pair without waiting for the original 60-second expiry.
+        for pixel in [png, green] {
+            let token = ok(
+                &mut c,
+                "transfer_begin",
+                json!({"kind":"image_import","size":"70"}),
+            )["transfer_id"]
+                .clone();
+            ok(
+                &mut c,
+                "transfer_write",
+                json!({"transfer_id":token,"offset":"0","base64":pixel}),
+            );
+            ok(&mut c, "transfer_finish", json!({"transfer_id":token}));
+        }
+        drop(c);
+        let mut replacement = Client::connect(&path, Endpoint::Editor).unwrap();
+        for pixel in [png, green] {
+            let end = Instant::now() + Duration::from_secs(1);
+            let token = loop {
+                let response = replacement
+                    .request("transfer_begin", json!({"kind":"image_import","size":"70"}))
+                    .unwrap();
+                match response.error {
+                    None => {
+                        break serde_json::to_value(response.data).unwrap()["transfer_id"].clone();
+                    }
+                    Some(error) => {
+                        assert_eq!(error.code, "resource_exhausted");
+                        assert!(
+                            Instant::now() < end,
+                            "disconnect did not release the image quota"
+                        );
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+            };
+            ok(
+                &mut replacement,
+                "transfer_write",
+                json!({"transfer_id":token,"offset":"0","base64":pixel}),
+            );
+            ok(
+                &mut replacement,
+                "transfer_finish",
+                json!({"transfer_id":token}),
+            );
+        }
+        assert_eq!(
+            ok(&mut automation, "get", json!({"id":"b1"}))["fields"]["name"],
+            "Original"
+        );
+        drop(replacement);
         send.send(()).unwrap();
     });
     let end = Instant::now() + Duration::from_secs(6);

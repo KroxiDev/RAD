@@ -603,6 +603,24 @@ fn both_state_images_are_copy_restore_and_gc_roots_even_without_base_image() {
         .prepare_edit(
             c.registry(),
             Origin::Editor,
+            Edit::SetVisual {
+                button: c.configuration().data().buttons[0].binding.identity(),
+                visual: rad_core::configuration::VisualSource::External {
+                    type_key: rad_core::configuration::ExternalType::new(
+                        "org.example.source".into(),
+                        "mute".into(),
+                    )
+                    .unwrap(),
+                    configuration: b"{}".to_vec(),
+                },
+            },
+        )
+        .unwrap();
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
             Edit::SetAppearance {
                 button: c.configuration().data().buttons[0].binding.identity(),
                 appearance: Appearance {
@@ -653,13 +671,69 @@ fn both_state_images_are_copy_restore_and_gc_roots_even_without_base_image() {
     }
     drop(media);
     drop(store);
-    let reopened = Store::open(&path).unwrap();
+    let mut reopened = Store::open(&path).unwrap();
     assert_eq!(
         reopened.load().unwrap().configuration.data().buttons[0]
             .appearance
             .states,
         c.configuration().data().buttons[0].appearance.states
     );
+    let cleared = candidate
+        .configuration()
+        .prepare_edit(
+            candidate.registry(),
+            Origin::Editor,
+            Edit::SetVisual {
+                button: candidate.configuration().data().buttons[0]
+                    .binding
+                    .identity(),
+                visual: rad_core::configuration::VisualSource::Manual,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        reopened.commit(&cleared),
+        CommitOutcome::Applied { .. }
+    ));
+    reopened.collect(&[2, 3]).unwrap();
+    for image in &images {
+        assert!(
+            reopened.image(&rad_store::media_key(image)).is_ok(),
+            "undo history keeps old faces"
+        );
+    }
+    let copy = bytes(&cleared, &[]);
+    let prepared = prepare(&mut copy.as_slice(), &area).unwrap();
+    assert_eq!(
+        prepared.summary().media_count,
+        0,
+        "current copy excludes old visual's faces"
+    );
+    drop(prepared);
+    // Store also retains the previous durable head for recovery. Advance once
+    // more before releasing the old visual from all history/recovery roots.
+    let next = cleared
+        .configuration()
+        .prepare_edit(
+            cleared.registry(),
+            Origin::Editor,
+            Edit::SetName {
+                button: cleared.configuration().data().buttons[0].binding.identity(),
+                name: "After cleanup".into(),
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        reopened.commit(&next),
+        CommitOutcome::Applied { .. }
+    ));
+    reopened.collect(&[3, 4]).unwrap();
+    for image in &images {
+        assert!(
+            reopened.image(&rad_store::media_key(image)).is_err(),
+            "retired faces collect after history releases them"
+        );
+    }
     drop(reopened);
     std::fs::remove_file(path).unwrap();
     std::fs::remove_dir(root).unwrap();

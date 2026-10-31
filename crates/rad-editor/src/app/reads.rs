@@ -1,6 +1,7 @@
 //! Choose the next read for the main worker, preserving its rotating order.
 use super::{App, ahead, launcher};
 use crate::{Request, native::Job};
+use std::time::Instant;
 
 #[derive(Clone, Copy)]
 enum Read {
@@ -21,6 +22,19 @@ enum Read {
 impl App {
     pub(super) fn pump_reads(&mut self) {
         if !self.worker.busy() && self.connected {
+            if (self.image_cleanup_disconnect || !self.discarded_imports.is_empty())
+                && Instant::now() >= self.image_cleanup_due
+            {
+                let _ = self.worker.submit(Job::DropImages {
+                    tokens: self.discarded_imports.clone(),
+                    attempt: if self.image_cleanup_disconnect {
+                        4
+                    } else {
+                        self.image_cleanup_attempt
+                    },
+                });
+                return;
+            }
             let now = self.now_ms();
             let pictures = match &self.board {
                 Some(board) => self.pictures.next(

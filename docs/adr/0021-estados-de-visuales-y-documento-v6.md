@@ -22,7 +22,12 @@ marca roja; la vigencia vencida mantiene la marca ámbar. La decodificación de 
 iconos pertenece a la selección del plugin, no al frame ni a cada reinicio.
 
 `Appearance.states` contiene hasta dos `StateFace`, cada uno con texto e imagen;
-la posición del texto sigue siendo compartida. Documento **v6**, importador cerrado
+la posición del texto sigue siendo compartida. Las caras pertenecen al tipo/plugin
+visual actual: cambiar esa identidad o pasar a Manual las elimina en el candidato
+atómico, y deshacer las recupera. Cambiar solo parámetros las conserva. En la API,
+`states` omitido conserva las caras, `{}` las borra y `null` se rechaza; un mapa
+explícito reemplaza las caras. Cada cambio del lote ve el candidato anterior.
+Documento **v6**, importador cerrado
 de v5 y golden histórico: Store conserva `.document-v5-backup` antes de convertir
 revisiones. Los lectores previos requieren actualizar; no interpretan v6 como
 corrupción ni aceptan estados bajo una etiqueta anterior. RADPKG y Store conservan
@@ -51,4 +56,26 @@ antes de preparar candidatos, IDs o persistencia. No es el número durable de
 SQLite: un cambio visible también puede rechazar con `cursor_expired` sin efecto.
 Clientes sin precondición conservan su comportamiento; no hay CAS para otras
 operaciones ni replay automático. El formulario queda disponible para Aplicar
-otra vez y releer.
+otra vez y releer. Guardar una cara o una imagen de biblioteca también captura
+esa revisión antes de preparar la imagen: una respuesta tardía no publica caras
+de otro visual. El editor invalida pestaña, receta e importación al cambiar de
+tipo/plugin, por cualquiera de sus rutas de lectura.
+
+Ante un rechazo conocido de esa comparación, la apariencia se relee sin repetir
+la escritura. Si sigue siendo el mismo tipo/plugin, se conservan las caras editadas
+localmente por campo (texto e imagen independientes) y se actualizan los intactos; si cambió, se descarta el destino obsoleto
+y se informa que no se guardó. Una respuesta incierta nunca activa ese reintento.
+
+Excepción acotada: un rechazo tipado `ViewChanged` antes de iniciar persistencia
+devuelve el grupo de imágenes a preparado en la misma conexión, sin renovar el
+vencimiento original de 60 s ni ampliar la cuota de dos. Así, guardar explícitamente
+otra vez tras releer puede usar los mismos medios. Un fallo de escritura los libera
+como antes; la incertidumbre mantiene el grupo retenido y no permite replay.
+El editor cancela con `transfer_drop` los tokens conocidos de importaciones al
+abandonar la tecla o cambiar de tipo/plugin; una importación tardía también se
+descarta. Conserva cada token hasta confirmar la cancelación o su inexistencia;
+solo esa limpieza admite reintentos acotados ante ocupación, sin impedir lecturas
+ni repetir la edición. Si no puede completarla, cierra únicamente su conexión IPC
+cuando no hay otra petición pendiente y reconecta: descarta las imágenes aún no
+publicadas de esa conexión, conserva el texto y pide elegirlas otra vez. Cancelar,
+desconectar o vencer libera las imágenes preparadas.

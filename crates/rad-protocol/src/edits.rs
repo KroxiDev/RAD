@@ -164,7 +164,7 @@ enum Change {
     Visual(ShortId, VisualSource),
     /// Text and image always; the text position only when the edit names it.
     Appearance {
-        states: std::collections::BTreeMap<String, rad_core::configuration::StateFace>,
+        states: Option<std::collections::BTreeMap<String, rad_core::configuration::StateFace>>,
         id: ShortId,
         text: String,
         image: Option<String>,
@@ -242,19 +242,20 @@ fn convert_change(change: &rad_api::Change) -> Checked<Change> {
                     },
                 ),
                 F::Appearance(v) => Change::Appearance {
-                    states: v
-                        .states
-                        .iter()
-                        .map(|(id, f)| {
-                            (
-                                id.clone(),
-                                rad_core::configuration::StateFace {
-                                    text: f.text.clone(),
-                                    image: f.image.clone(),
-                                },
-                            )
-                        })
-                        .collect(),
+                    states: v.states.as_ref().map(|states| {
+                        states
+                            .iter()
+                            .map(|(id, f)| {
+                                (
+                                    id.clone(),
+                                    rad_core::configuration::StateFace {
+                                        text: f.text.clone(),
+                                        image: f.image.clone(),
+                                    },
+                                )
+                            })
+                            .collect()
+                    }),
                     id: target,
                     text: v.text.clone(),
                     image: v.image.clone(),
@@ -312,7 +313,7 @@ impl Change {
                 Edit::SetAppearance {
                     button: b.binding.identity(),
                     appearance: Appearance {
-                        states,
+                        states: states.unwrap_or_else(|| b.appearance.states.clone()),
                         text,
                         image,
                         text_position: text_position.unwrap_or(b.appearance.text_position),

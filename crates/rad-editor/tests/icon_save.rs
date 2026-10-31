@@ -170,7 +170,7 @@ fn upload_failures_and_malformed_finish_cannot_publish_and_unknown_edit_is_not_r
         let error =
             rad_editor::icon_save::save(&mut session, "b7", b"\x89PNG\r\n\x1a\n", edit("b7"))
                 .unwrap_err();
-        assert_eq!(error.unknown, !malformed);
+        assert_eq!(error.error.unknown, !malformed);
         assert_eq!(
             calls
                 .borrow()
@@ -193,7 +193,12 @@ fn icon_save_captures_one_state_and_preserves_the_other_face_and_base() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let mut session = Session::new(Server(calls.clone()));
     let mut request = edit("b7");
-    if let Request::Edit { changes, .. } = &mut request {
+    if let Request::Edit {
+        changes,
+        expected_revision,
+    } = &mut request
+    {
+        *expected_revision = Some("7".into());
         for change in changes {
             if let rad_api::Change::Set {
                 edit: rad_api::FieldEdit::Appearance(a),
@@ -201,14 +206,14 @@ fn icon_save_captures_one_state_and_preserves_the_other_face_and_base() {
             } = change
             {
                 a.image = Some("base-image".into());
-                a.states.insert(
+                a.states.get_or_insert_with(Default::default).insert(
                     "muted".into(),
                     rad_api::StateFace {
                         text: "Quiet".into(),
                         image: None,
                     },
                 );
-                a.states.insert(
+                a.states.get_or_insert_with(Default::default).insert(
                     "unmuted".into(),
                     rad_api::StateFace {
                         text: "Live".into(),
@@ -227,9 +232,18 @@ fn icon_save_captures_one_state_and_preserves_the_other_face_and_base() {
     )
     .unwrap();
     let requests = calls.borrow();
-    let Request::Edit { changes, .. } = requests.last().unwrap() else {
+    let Request::Edit {
+        changes,
+        expected_revision,
+    } = requests.last().unwrap()
+    else {
         panic!()
     };
+    assert_eq!(
+        expected_revision.as_deref(),
+        Some("7"),
+        "upload preserves destination revision"
+    );
     let a = changes
         .iter()
         .find_map(|c| match c {
@@ -241,7 +255,13 @@ fn icon_save_captures_one_state_and_preserves_the_other_face_and_base() {
         })
         .unwrap();
     assert_eq!(a.image.as_deref(), Some("base-image"));
-    assert_eq!(a.states["muted"].image.as_deref(), Some("prepared-image"));
-    assert_eq!(a.states["muted"].text, "Quiet");
-    assert_eq!(a.states["unmuted"].image.as_deref(), Some("other-image"));
+    assert_eq!(
+        a.states.as_ref().unwrap()["muted"].image.as_deref(),
+        Some("prepared-image")
+    );
+    assert_eq!(a.states.as_ref().unwrap()["muted"].text, "Quiet");
+    assert_eq!(
+        a.states.as_ref().unwrap()["unmuted"].image.as_deref(),
+        Some("other-image")
+    );
 }

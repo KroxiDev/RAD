@@ -16,6 +16,9 @@ pub struct Upload<R> {
     offset: u64,
 }
 impl<R: Read> Upload<R> {
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
     pub fn new(reader: R, id: String, size: u64) -> Self {
         Self {
             reader,

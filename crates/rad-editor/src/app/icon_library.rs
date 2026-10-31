@@ -498,22 +498,156 @@ fn color_row(ui: &mut egui::Ui, look: &Look, language: Language, label: &str, co
     });
 }
 impl App {
+    pub(super) fn abandon_appearance(&mut self) {
+        self.discard_imports();
+        self.image_target = None;
+        self.appearance_retry = None;
+        self.icon_library.reset();
+        self.draft = super::Draft::default();
+        self.inspection = None;
+    }
+    pub(super) fn queue_image_cleanup(&mut self, tokens: impl IntoIterator<Item = String>) {
+        if self.discarded_imports.is_empty() {
+            self.image_cleanup_due = std::time::Instant::now();
+        }
+        for token in tokens {
+            if !self.discarded_imports.contains(&token) {
+                if self.discarded_imports.len() < 2 {
+                    self.discarded_imports.push(token);
+                } else {
+                    self.image_cleanup_disconnect = true;
+                    self.image_cleanup_due = std::time::Instant::now();
+                }
+            }
+        }
+    }
+    pub(super) fn discard_imports(&mut self) {
+        let tokens: Vec<_> = self
+            .prepared_imports
+            .drain(..)
+            .map(|(token, _)| token)
+            .collect();
+        self.queue_image_cleanup(tokens);
+    }
+    pub(super) fn discard_unused_imports(&mut self) {
+        let states = self.draft.state_faces();
+        let mut unused = vec![];
+        self.prepared_imports.retain(|(token, image)| {
+            let used = self.draft.image == *image
+                || states
+                    .values()
+                    .any(|face| face.image.as_ref() == Some(image));
+            if !used {
+                unused.push(token.clone());
+            }
+            used
+        });
+        self.queue_image_cleanup(unused);
+    }
+    pub(super) fn image_cleanup_result(&mut self, result: crate::icon_save::Cleanup) {
+        self.discarded_imports
+            .retain(|token| !result.released.contains(token));
+        self.queue_image_cleanup(result.retry.iter().cloned());
+        if result.disconnect {
+            // Only unpublished imported digests depend on this connection. Recipes
+            // can regenerate; published pictures and all locally edited text survive.
+            let images: Vec<_> = self
+                .prepared_imports
+                .drain(..)
+                .map(|(_, image)| image)
+                .collect();
+            if images.contains(&self.draft.image) {
+                self.draft.image = self.draft.published_image.clone();
+            }
+            for (id, face) in &mut self.draft.states {
+                if face
+                    .image
+                    .as_ref()
+                    .is_some_and(|image| images.contains(image))
+                {
+                    face.image = self
+                        .inspection
+                        .as_ref()
+                        .and_then(|view| view.appearance["states"][id]["image"].as_str())
+                        .map(str::to_owned);
+                }
+            }
+            self.image_target = None;
+            self.transfer_active = false;
+            self.discarded_imports.clear();
+            self.image_cleanup_disconnect = false;
+            self.appearance_retry = self.inspection.clone();
+            self.reconnect_needed = true;
+            self.warn(tr(self.es, "The image could not be discarded. Your text is still here; choose the image again."));
+        }
+        if result.retry.is_empty() || result.disconnect {
+            self.image_cleanup_attempt = 0;
+        } else {
+            self.image_cleanup_attempt = self.image_cleanup_attempt.saturating_add(1);
+            self.image_cleanup_due = std::time::Instant::now()
+                + std::time::Duration::from_millis(100 << self.image_cleanup_attempt.min(3));
+        }
+    }
+    pub(super) fn reread_appearance(&mut self) {
+        self.appearance_retry = self.inspection.clone();
+        self.force = true;
+        self.inspect_needed = self.selected().is_some();
+        self.warn(tr(self.es, "The key changed. Checking its appearance…"));
+    }
     pub(super) fn adopt_inspection(&mut self, view: crate::session::Inspection) {
+        self.inspect_needed = false;
+        if self.inspection.as_ref().is_some_and(|old| {
+            old.button == view.button
+                && old.appearance == view.appearance
+                && old.actions == view.actions
+        }) {
+            self.appearance_retry = None;
+            return;
+        }
         let mut fresh = super::Draft::load(&view);
-        if fresh.id == self.draft.id
+        let same_visual = fresh.id == self.draft.id && fresh.visual_type == self.draft.visual_type;
+        if !same_visual {
+            self.discard_imports();
+            self.icon_library.reset();
+            self.image_target = None;
+        }
+        if same_visual
+            && fresh.visual_type.is_some()
             && let Some(state) = &self.draft.state
         {
             fresh.select_state(state.clone());
+            fresh.state_initialized = self.draft.state_initialized;
         }
-        if !self.icon_library.owns_draft(&fresh.id)
+        let retry = self.appearance_retry.take();
+        if let Some(before) = &retry {
+            if same_visual {
+                fresh.retain_appearance_edits(before, &self.draft);
+                self.warn(tr(
+                    self.es,
+                    "The key changed. Your appearance changes are still here. Save again.",
+                ));
+            } else {
+                self.warn(tr(self.es, "The appearance changed and your edit was not saved. Check the key and try again."));
+            }
+        }
+        if retry.is_some()
+            || !self.icon_library.owns_draft(&fresh.id)
             || self.draft.action_ids != fresh.action_ids
             || self.draft.published_image != fresh.published_image
             || (fresh.state.is_none() && !view.appearance["visual_type"].is_null())
         {
-            self.icon_library.reset();
+            if retry.is_none() || !same_visual {
+                self.icon_library.reset();
+            }
+            self.draft = fresh;
+        } else if let Some(before) = &self.inspection {
+            // The recipe still owns this face, not every field of the old key.
+            // Rebase untouched fields before advancing the publication revision.
+            fresh.retain_appearance_edits(before, &self.draft);
             self.draft = fresh;
         }
         self.inspection = Some(view);
+        self.inspect_needed = false;
     }
     pub(super) fn icon_library_panel(&mut self, ui: &mut egui::Ui, look: &Look, editable: bool) {
         let can_save = editable
@@ -549,7 +683,11 @@ impl App {
                     self.enter_recovery();
                     return;
                 }
-                self.warn(crate::status::describe_failure(&error, self.es));
+                if matched && error.code == "cursor_expired" && !error.unknown {
+                    self.reread_appearance();
+                } else {
+                    self.warn(crate::status::describe_failure(&error, self.es));
+                }
                 self.message_code = error.cause.as_ref().map_or_else(
                     || error.code.clone(),
                     |cause| format!("{}: {cause}", error.code),
@@ -570,12 +708,12 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("rad-icons-test-{}", std::process::id()));
         let mut app = App::with_preferences_path(root.clone(), root.join("theme"), None);
         app.adopt_inspection(crate::session::Inspection {
-            button: json!({"id":"b7","fields":{"name":"Volume","mode":"sequential","gesture":"press"}}),
+            button: json!({"id":"b7","view_revision":"1","fields":{"name":"Volume","mode":"sequential","gesture":"press"}}),
             appearance: json!({"text":"","image":null,"text_position":"bottom"}), actions: vec![],
         });
         app
@@ -638,6 +776,104 @@ mod tests {
             choice,
             Renderer::default().render(choice),
         );
+    }
+    #[test]
+    fn refreshed_other_face_and_base_survive_a_library_save_with_the_new_revision() {
+        use crate::{
+            native::{Event, Job, Reply},
+            session::{Board, Grid, KeyView, Refresh},
+        };
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.connected = true;
+        app.control.select(Some("b7".into()));
+        let mut old = app.inspection.clone().unwrap();
+        old.appearance = json!({"text":"Base", "image":null, "visual_type":"org.rad.audio#microphone",
+            "states":{"muted":{"text":"Quiet","image":null},"unmuted":{"text":"Live","image":null}}});
+        app.adopt_inspection(old.clone());
+        let make_board = |view: &crate::session::Inspection| {
+            let mut slots = vec![Value::Null; 32];
+            slots[0] = json!({"visibility":"visible","id":"b7"});
+            Board {
+                grid: Grid::XL,
+                folder: json!({"id":"f1","view_revision":view.button["view_revision"],"fields":{"name":"Main","parent_id":null,"slots":slots}}),
+                buttons: vec![KeyView {
+                    entity: view.button.clone(),
+                    appearance: view.appearance.clone(),
+                }],
+            }
+        };
+        app.board = Some(make_board(&old));
+        app.draft.select_state("muted".into());
+        app.draft.text = "My quiet label".into();
+        app.icon_library.begin("b7", None);
+        prepare(&mut app.icon_library, &ctx, Choice::default());
+        let recipe = app.icon_library.generation;
+        let mut fresh = old;
+        fresh.button["view_revision"] = json!("2");
+        fresh.appearance["states"]["unmuted"] =
+            json!({"text":"Remote live", "image":"remote-face"});
+        fresh.appearance["text"] = json!("Remote base");
+        fresh.appearance["image"] = json!("remote-base");
+        let fresh_board = make_board(&fresh);
+        let (sent, received) = std::sync::mpsc::channel();
+        app.worker = Worker::spawn(move |job| {
+            let result = if matches!(job, Job::Refresh { .. }) {
+                Ok(Reply::Refresh(Refresh {
+                    status: Value::Null,
+                    board: Some(fresh_board.clone()),
+                    inspection: Some(fresh.clone()),
+                }))
+            } else {
+                sent.send(job).unwrap();
+                Ok(Reply::Theme)
+            };
+            Event {
+                plugin_apply: false,
+                plugin_admin: false,
+                plugin_manifest: false,
+                plugin_dependencies: false,
+                plugin_form: false,
+                plugin_visual: false,
+                background: false,
+                connected: true,
+                transfer_job: false,
+                palette: Default::default(),
+                result,
+            }
+        });
+        app.force = true;
+        app.pump_reads();
+        while app.worker.busy() {
+            let _ = app.pump_replies(&ctx);
+            std::thread::yield_now();
+        }
+        assert_eq!(app.icon_library.generation, recipe);
+        assert!(app.icon_library.ready());
+        app.save();
+        let Job::SaveIcon { request, state, .. } = received
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap()
+        else {
+            panic!("library save");
+        };
+        assert_eq!(state.as_deref(), Some("muted"));
+        let args = request.arguments();
+        assert_eq!(args["expected_revision"], "2");
+        let appearance = args["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|change| change["field"] == "appearance")
+            .unwrap()["value"]
+            .clone();
+        assert_eq!(
+            appearance["states"]["unmuted"],
+            json!({"text":"Remote live","image":"remote-face"})
+        );
+        assert_eq!(appearance["states"]["muted"]["text"], "My quiet label");
+        assert_eq!(appearance["text"], "Remote base");
+        assert_eq!(appearance["image"], "remote-base");
     }
     #[test]
     fn cancel_switch_and_stale_render_never_change_the_next_key() {
@@ -721,6 +957,11 @@ mod tests {
             panic!("captured save")
         };
         assert_eq!(button, "b7");
+        assert_eq!(
+            request.arguments()["expected_revision"],
+            "1",
+            "library upload must not publish into a changed visual"
+        );
         assert!(request.arguments().to_string().contains("A draft"));
         assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
         app.select(1, Some("b9".into()));
@@ -880,5 +1121,77 @@ mod tests {
         assert!(!app.recovery.is_normal());
         assert!(!app.force, "recovery must not schedule normal refreshes");
         assert!(!app.icon_library.open);
+    }
+    #[test]
+    fn changing_visual_with_the_same_state_ids_discards_the_old_library_recipe() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let mut view = app.inspection.clone().unwrap();
+        view.appearance["visual_type"] = json!("org.rad.audio#microphone");
+        view.appearance["states"] = json!({"muted":{"text":"Old","image":null}});
+        app.adopt_inspection(view.clone());
+        app.draft.select_state("muted".into());
+        app.icon_library.begin("b7", None);
+        prepare(&mut app.icon_library, &ctx, Choice::default());
+        let generation = app.icon_library.generation;
+        view.appearance["visual_type"] = json!("org.rad.obs#mute");
+        view.appearance["states"] = json!({});
+        app.adopt_inspection(view);
+        app.icon_library.accept_preview(
+            &ctx,
+            generation,
+            Choice::default(),
+            Renderer::default().render(Choice::default()),
+        );
+        assert!(!app.icon_library.open);
+        assert!(!app.icon_library.dirty_for("b7"));
+        assert!(app.draft.state.is_none());
+        assert!(app.draft.states.is_empty());
+        app.draft.select_state("muted".into());
+        assert!(app.draft.image.is_empty());
+        assert!(app.draft.text.is_empty());
+        let mut manual = app.inspection.clone().unwrap();
+        manual.appearance["visual_type"] = serde_json::Value::Null;
+        app.adopt_inspection(manual);
+        app.draft.text = "Manual library".into();
+        app.icon_library.begin("b7", None);
+        prepare(&mut app.icon_library, &ctx, Choice::default());
+        let (sent, received) = std::sync::mpsc::channel();
+        app.worker = Worker::spawn(move |job| {
+            sent.send(job).unwrap();
+            crate::native::Event {
+                plugin_apply: false,
+                plugin_admin: false,
+                plugin_manifest: false,
+                plugin_dependencies: false,
+                plugin_form: false,
+                plugin_visual: false,
+                background: false,
+                transfer_job: false,
+                connected: true,
+                palette: Default::default(),
+                result: Ok(crate::native::Reply::Theme),
+            }
+        });
+        app.save();
+        let crate::native::Job::SaveIcon { state, request, .. } = received
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(
+            state.is_none(),
+            "new library choice targets the visible manual face"
+        );
+        let args = request.arguments();
+        let appearance = args["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["field"] == "appearance")
+            .unwrap();
+        assert_eq!(appearance["value"]["text"], "Manual library");
+        assert_eq!(appearance["value"]["states"], json!({}));
     }
 }

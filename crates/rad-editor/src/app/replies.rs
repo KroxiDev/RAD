@@ -1,5 +1,5 @@
 //! Apply replies from the main worker without changing the order of UI effects.
-use super::{App, Draft, string, tr, visual_type};
+use super::{App, string, tr, visual_type};
 use crate::{
     native::{Job, Reply, TransferKind},
     worker::Polled,
@@ -155,8 +155,13 @@ impl App {
                     } else if event.plugin_apply && e.code == "cursor_expired" {
                         self.warn(tr(
                             self.es,
-                            "Key changed; draft retained. Apply again to reread.",
+                            "The key changed. Your changes are still here. Click Apply to try again.",
                         ));
+                    } else if e.code == "cursor_expired"
+                        && !event.background
+                        && self.draft.state.is_some()
+                    {
+                        self.reread_appearance();
                     } else if e.code == "runtime_unavailable" {
                         // The bar already says so, next to the way out.
                         self.say("");
@@ -243,8 +248,7 @@ impl App {
                                 && inspection.button["id"].as_str() == self.control.selected()
                         });
                         if let Some(inspection) = fresh {
-                            self.draft = Draft::load(&inspection);
-                            self.inspection = Some(inspection);
+                            self.adopt_inspection(inspection);
                         } else if self
                             .inspection
                             .as_ref()
@@ -255,7 +259,7 @@ impl App {
                         }
                         self.board = Some(board);
                         if changed_folder {
-                            self.icon_library.reset();
+                            self.abandon_appearance();
                             self.app_picker.cancel();
                             self.plugins.clear_form();
                             self.control.select(None);
@@ -295,8 +299,7 @@ impl App {
                             && crate::session::coherent(board, &v)
                             && v.button["id"].as_str() == self.control.selected()
                         {
-                            self.draft = Draft::load(&v);
-                            self.inspection = Some(v);
+                            self.adopt_inspection(v);
                             self.inspect_needed = false;
                         }
                     }
@@ -406,7 +409,12 @@ impl App {
                                 self.say_run(&json!(data.execution_id), "running")
                             }
                         }
-                        rad_client::response::Status::Applied => self.say(tr(self.es, "Saved")),
+                        rad_client::response::Status::Applied => {
+                            if operation == "edit" {
+                                self.discard_imports();
+                            }
+                            self.say(tr(self.es, "Saved"));
+                        }
                         _ => self.say(tr(self.es, "Updated")),
                     };
                     self.force = true;
@@ -433,35 +441,54 @@ impl App {
                             .arrived(reference, texture, on_show.then_some(now));
                     }
                 }
+                Ok(Reply::ImagesDropped(result)) => self.image_cleanup_result(result),
                 Ok(Reply::IconSaved {
+                    cleanup,
                     button,
                     ticket,
                     result,
-                }) => self.icon_saved(&button, ticket, result),
+                }) => {
+                    self.icon_saved(&button, ticket, result);
+                    self.image_cleanup_result(cleanup);
+                }
                 Ok(Reply::Theme) => {}
                 Ok(Reply::TransferProgress(n)) => {
                     self.transfer_active = true;
                     self.say(format!("{} {n}", tr(self.es, "Transferred bytes:")));
                 }
-                Ok(Reply::TransferFinished { kind, data, path }) => {
+                Ok(Reply::TransferFinished {
+                    kind,
+                    data,
+                    path,
+                    image_token,
+                }) => {
                     self.transfer_active = false;
                     match kind {
                         TransferKind::Image => {
-                            if let Some((button, state)) = self
-                                .image_target
-                                .take()
-                                .or_else(|| Some((self.draft.id.clone(), self.draft.state.clone())))
+                            if let Some((button, state)) = self.image_target.take()
                                 && button == self.draft.id
                             {
                                 let image = string(&data["media_ref"]);
+                                if let Some(token) = image_token {
+                                    self.prepared_imports.push((token, image.clone()));
+                                }
                                 if state == self.draft.state {
                                     self.draft.image = image;
                                 } else if let Some(state) = state {
                                     self.draft.states.entry(state).or_default().image = Some(image);
                                 }
+                                self.discard_unused_imports();
+                                self.say(tr(self.es, "Image prepared: save within 60 seconds"));
+                            } else {
+                                if let Some(token) = image_token {
+                                    self.queue_image_cleanup([token]);
+                                }
+                                self.warn(tr(
+                                    self.es,
+                                    "The key changed. The imported image was not used.",
+                                ));
                             }
                             self.image_path.clear();
-                            self.say(tr(self.es, "Image prepared: save within 60 seconds"));
                         }
                         TransferKind::Restore => {
                             self.restore_token = data["transfer_id"].as_str().map(str::to_owned);

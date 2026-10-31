@@ -445,6 +445,10 @@ fn two_prepared_state_images_commit_together_and_survive_reload() {
         matches!(outcome, rad_store::CommitOutcome::Applied { .. }),
         "{outcome:?}"
     );
+    assert!(
+        matches!(t.unretain_images(&transfer_id), Err(Error::Busy)),
+        "started persistence cannot be returned to prepared"
+    );
     t.resolved(
         &transfer_id,
         &rad_store::CommitOutcome::Uncertain {
@@ -477,4 +481,102 @@ fn two_prepared_state_images_commit_together_and_survive_reload() {
     drop(t);
     drop(store);
     std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn view_conflict_unretains_both_images_without_extending_expiry() {
+    for finish in ["expire", "cancel", "disconnect"] {
+        let (path, mut store, mut transfers) = fixture();
+        let mut images = vec![];
+        for (index, bytes) in [
+            include_bytes!("../../../plugins/audio/icons/microphone-muted.png").as_slice(),
+            include_bytes!("../../../plugins/audio/icons/microphone-unmuted.png").as_slice(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let id = begin(
+                &mut transfers,
+                &mut store,
+                ctx(1, index as u64 * 3),
+                Kind::ImageImport,
+                Some(bytes.len() as u64),
+            );
+            transfers
+                .execute(
+                    &mut store,
+                    ctx(1, index as u64 * 3 + 1),
+                    Operation::Write {
+                        transfer_id: id.clone(),
+                        offset: 0,
+                        bytes: bytes.to_vec(),
+                    },
+                )
+                .unwrap();
+            let Output::ImagePrepared { media_ref } = transfers
+                .execute(
+                    &mut store,
+                    ctx(1, index as u64 * 3 + 2),
+                    Operation::Finish {
+                        transfer_id: id.clone(),
+                    },
+                )
+                .unwrap()
+            else {
+                panic!()
+            };
+            images.push((id, media_ref));
+        }
+        let deadline = transfers.metadata().next_deadline_ms;
+        for now in [10, 30_000, 59_000] {
+            let Output::Retained { transfer_id } = transfers
+                .execute(
+                    &mut store,
+                    ctx(1, now),
+                    Operation::RetainImages {
+                        media_refs: images.iter().map(|(_, key)| key.clone()).collect(),
+                    },
+                )
+                .unwrap()
+            else {
+                panic!()
+            };
+            transfers.unretain_images(&transfer_id).unwrap();
+            assert!(transfers.metadata().handles.iter().all(|h| !h.pending));
+            assert_eq!(
+                transfers.metadata().next_deadline_ms,
+                deadline,
+                "rejection must not renew original lease"
+            );
+        }
+        match finish {
+            "expire" => {
+                transfers
+                    .execute(&mut store, ctx(1, 60_006), Operation::Reap)
+                    .unwrap();
+            }
+            "cancel" => {
+                for (id, _) in &images {
+                    transfers
+                        .execute(
+                            &mut store,
+                            ctx(1, 59_001),
+                            Operation::Drop {
+                                transfer_id: id.clone(),
+                            },
+                        )
+                        .unwrap();
+                }
+            }
+            _ => {
+                transfers
+                    .execute(&mut store, ctx(1, 59_001), Operation::Disconnect)
+                    .unwrap();
+            }
+        }
+        assert!(transfers.metadata().handles.is_empty(), "{finish}");
+        drop(transfers);
+        drop(store);
+        std::fs::remove_dir_all(path).unwrap();
+    }
 }

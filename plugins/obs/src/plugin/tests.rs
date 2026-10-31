@@ -1209,3 +1209,23 @@ fn binary_visuals_report_observed_state_not_button_presses() {
         assert_eq!(content.state.as_deref(), Some(expected), "{source}");
     }
 }
+
+#[test]
+fn scene_visual_uses_observed_program_and_preserves_legacy_text() {
+    let p: Parameters = serde_json::from_value(json!({"schema_version":1,"values":{
+        "scene":json!({"v":1,"collection":"Studio","kind":"scene","name":"Camera"}).to_string()
+    }}))
+    .unwrap();
+    for (name, state, text) in [
+        ("Camera", "active", "Program"),
+        ("Slides", "inactive", "Inactive"),
+    ] {
+        let VisualState::Current { content } =
+            visual_state("scene", &p, &json!({"currentProgramSceneName":name}))
+        else {
+            panic!()
+        };
+        assert_eq!(content.state.as_deref(), Some(state));
+        assert_eq!(content.text.as_deref(), Some(text));
+    }
+}

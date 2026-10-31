@@ -58,8 +58,12 @@ pub enum TextPosition {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Appearance {
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub states: std::collections::BTreeMap<String, StateFace>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "state_faces"
+    )]
+    pub states: Option<std::collections::BTreeMap<String, StateFace>>,
     pub text: String,
     #[serde(deserialize_with = "required_nullable")]
     pub image: Option<String>,
@@ -69,6 +73,11 @@ pub struct Appearance {
         deserialize_with = "nullable_position"
     )]
     pub text_position: Option<Option<TextPosition>>,
+}
+fn state_faces<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<std::collections::BTreeMap<String, StateFace>>, D::Error> {
+    std::collections::BTreeMap::deserialize(d).map(Some)
 }
 fn nullable_position<'de, D: serde::Deserializer<'de>>(
     d: D,

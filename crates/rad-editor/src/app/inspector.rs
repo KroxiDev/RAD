@@ -149,14 +149,28 @@ impl App {
             launchers: &launchers,
             brightness: &brightness,
         });
-        if let crate::Request::Edit { changes, .. } = &mut request {
+        if let crate::Request::Edit {
+            changes,
+            expected_revision,
+        } = &mut request
+        {
+            if self.draft.state.is_some() || self.icon_library.dirty_for(&self.draft.id) {
+                let Some(revision) = self
+                    .inspection
+                    .as_ref()
+                    .and_then(|view| view.button["view_revision"].as_str())
+                else {
+                    return;
+                };
+                *expected_revision = Some(revision.to_owned());
+            }
             for change in changes {
                 if let rad_api::Change::Set {
                     edit: rad_api::FieldEdit::Appearance(a),
                     ..
                 } = change
                 {
-                    a.states = self.draft.state_faces();
+                    a.states = Some(self.draft.state_faces());
                     if self.draft.state.is_some() {
                         a.text = self.draft.base_face.text.clone();
                         a.image = self.draft.base_face.image.clone();
@@ -644,6 +658,7 @@ impl App {
                     {
                         self.icon_library.reset();
                         self.draft.image.clear();
+                        self.discard_unused_imports();
                         ui.close();
                     }
                 }

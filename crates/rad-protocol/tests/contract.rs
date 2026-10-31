@@ -612,3 +612,270 @@ fn conditional_edit_rejects_visible_changes_even_without_a_durable_change() {
         }]
     ));
 }
+
+#[test]
+fn changing_visual_identity_clears_faces_atomically_but_parameters_preserve_them() {
+    let mut a = actor();
+    let manifest =
+        rad_plugin_contract::Document::new(include_bytes!("../../../plugins/audio/manifest.json"))
+            .unwrap()
+            .manifest(1, "x86_64-unknown-linux-gnu")
+            .unwrap();
+    a.register_plugin(manifest, "x86_64-unknown-linux-gnu")
+        .unwrap();
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":0,"name":"Mic"}),
+    );
+    let visual = |device: &str| {
+        json!({"kind":"set","id":"b1","field":"visual","value":{
+        "type":"org.rad.audio#microphone","parameters":{"schema_version":1,"values":{"device":device}}}})
+    };
+    let faces = json!({"muted":{"text":"Quiet","image":"old-face"}});
+    apply(
+        &mut a,
+        "edit",
+        json!({"changes":[visual("@default"),
+        {"kind":"set","id":"b1","field":"appearance","value":{"text":"Base","image":null,"states":faces}}]}),
+    );
+    let same_type = apply(&mut a, "edit", json!({"changes":[visual("other-device")]}));
+    assert_eq!(
+        same_type.buttons[0].appearance.states["muted"]
+            .image
+            .as_deref(),
+        Some("old-face")
+    );
+    let manual = apply(
+        &mut a,
+        "edit",
+        json!({"changes":[
+        {"kind":"set","id":"b1","field":"visual","value":{"type":"manual"}}]}),
+    );
+    assert!(
+        manual.buttons[0].appearance.states.is_empty(),
+        "Manual must not retain hidden state media"
+    );
+}
+
+#[test]
+fn appearance_omission_preserves_faces_empty_clears_and_null_is_invalid() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":0,"name":"Faces"}),
+    );
+    let edit =
+        |value| json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":value}]});
+    apply(
+        &mut a,
+        "edit",
+        edit(json!({"text":"","image":null,"states":{"off":{"text":"Quiet","image":"face"}}})),
+    );
+    let preserved = apply(
+        &mut a,
+        "edit",
+        edit(json!({"text":"New base","image":null})),
+    );
+    assert_eq!(
+        preserved.buttons[0].appearance.states["off"]
+            .image
+            .as_deref(),
+        Some("face")
+    );
+    let cleared = apply(
+        &mut a,
+        "edit",
+        edit(json!({"text":"New base","image":null,"states":{}})),
+    );
+    assert!(cleared.buttons[0].appearance.states.is_empty());
+    let invalid = response(call(
+        &mut a,
+        Origin::Editor,
+        "edit",
+        edit(json!({"text":"","image":null,"states":null})),
+    ));
+    assert_eq!(invalid.error.unwrap().code, "invalid_request");
+}
+
+#[test]
+fn visual_change_and_omitted_faces_compose_in_both_orders_and_undo_restores_faces() {
+    for visual_first in [true, false] {
+        let mut a = actor();
+        let manifest = rad_plugin_contract::Document::new(include_bytes!(
+            "../../../plugins/audio/manifest.json"
+        ))
+        .unwrap()
+        .manifest(1, "x86_64-unknown-linux-gnu")
+        .unwrap();
+        a.register_plugin(manifest, "x86_64-unknown-linux-gnu")
+            .unwrap();
+        apply(
+            &mut a,
+            "create_button",
+            json!({"folder_id":"f1","position":0,"name":"Mic"}),
+        );
+        let before = apply(
+            &mut a,
+            "edit",
+            json!({"changes":[
+                {"kind":"set","id":"b1","field":"visual","value":{"type":"org.rad.audio#microphone","parameters":{"schema_version":1,"values":{"device":"@default"}}}},
+                {"kind":"set","id":"b1","field":"appearance","value":{"text":"Base","image":null,"states":{"muted":{"text":"Quiet","image":"old-face"}}}}
+            ]}),
+        );
+        let visual = json!({"kind":"set","id":"b1","field":"visual","value":{"type":"manual"}});
+        let appearance = json!({"kind":"set","id":"b1","field":"appearance","value":{"text":"New base","image":null}});
+        let changes = if visual_first {
+            vec![visual, appearance]
+        } else {
+            vec![appearance, visual]
+        };
+        let after = apply(&mut a, "edit", json!({"changes":changes}));
+        assert!(after.buttons[0].appearance.states.is_empty());
+        assert_eq!(after.buttons[0].appearance.text, "New base");
+        let Resolution::Command(command) = call(&mut a, Origin::Editor, "undo", json!({})) else {
+            panic!()
+        };
+        let ticket = a.reserve(4, Origin::Editor).unwrap();
+        let request = ticket.request();
+        let effects = a.submit(ticket, command);
+        let rad_authority::Effect::ReadRevision { id, .. } = effects[0] else {
+            panic!()
+        };
+        let effects = a.loaded(id, Ok(before.clone()));
+        let rad_authority::Effect::Persist {
+            id, ref candidate, ..
+        } = effects[0]
+        else {
+            panic!()
+        };
+        assert_eq!(
+            candidate.configuration().data().buttons[0].appearance,
+            before.buttons[0].appearance
+        );
+        a.complete(
+            id,
+            rad_authority::Outcome::Applied {
+                revision: 5,
+                changed: true,
+            },
+        );
+        a.finish(request);
+    }
+}
+
+#[test]
+fn captured_state_appearance_cannot_publish_after_visual_changes() {
+    let mut a = actor();
+    let manifest =
+        rad_plugin_contract::Document::new(include_bytes!("../../../plugins/audio/manifest.json"))
+            .unwrap()
+            .manifest(1, "x86_64-unknown-linux-gnu")
+            .unwrap();
+    a.register_plugin(manifest, "x86_64-unknown-linux-gnu")
+        .unwrap();
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":0,"name":"Mic"}),
+    );
+    apply(
+        &mut a,
+        "edit",
+        json!({"changes":[
+            {"kind":"set","id":"b1","field":"visual","value":{"type":"org.rad.audio#microphone","parameters":{"schema_version":1,"values":{"device":"@default"}}}}
+        ]}),
+    );
+    let revision = a.view_revision(Origin::Editor).unwrap().value().to_string();
+    let after = apply(
+        &mut a,
+        "edit",
+        json!({"changes":[{"kind":"set","id":"b1","field":"visual","value":{"type":"manual"}}]}),
+    );
+    let Resolution::Command(command) = call(
+        &mut a,
+        Origin::Editor,
+        "edit",
+        json!({"expected_revision":revision,"changes":[
+            {"kind":"set","id":"b1","field":"appearance","value":{"text":"","image":null,"states":{"muted":{"text":"old","image":"late-upload"}}}}
+        ]}),
+    ) else {
+        panic!()
+    };
+    let ticket = a.reserve(4, Origin::Editor).unwrap();
+    let request = ticket.request();
+    let effects = a.submit(ticket, command);
+    assert!(
+        !effects
+            .iter()
+            .any(|e| matches!(e, rad_authority::Effect::Persist { .. }))
+    );
+    let view = serde_json::to_value(
+        response(call(
+            &mut a,
+            Origin::Editor,
+            "inspector",
+            json!({"id":"b1"}),
+        ))
+        .data,
+    )
+    .unwrap();
+    assert!(view["appearance"]["states"].as_object().unwrap().is_empty());
+    assert!(after.buttons[0].appearance.states.is_empty());
+    a.finish(request);
+}
+
+#[test]
+fn different_plugin_or_visual_does_not_inherit_faces_even_when_state_ids_match() {
+    let mut a = actor();
+    for bytes in [
+        include_bytes!("../../../plugins/audio/manifest.json").as_slice(),
+        include_bytes!("../../../plugins/obs/manifest.json").as_slice(),
+    ] {
+        let manifest = rad_plugin_contract::Document::new(bytes)
+            .unwrap()
+            .manifest(1, "x86_64-unknown-linux-gnu")
+            .unwrap();
+        a.register_plugin(manifest, "x86_64-unknown-linux-gnu")
+            .unwrap();
+    }
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":0,"name":"Key"}),
+    );
+    for (kind, values, first, second) in [
+        (
+            "org.rad.audio#microphone",
+            json!({"device":"@default"}),
+            "muted",
+            "unmuted",
+        ),
+        (
+            "org.rad.obs#mute",
+            json!({"input":"input"}),
+            "muted",
+            "unmuted",
+        ),
+        ("org.rad.obs#record", json!({}), "recording", "stopped"),
+    ] {
+        let switched = apply(
+            &mut a,
+            "edit",
+            json!({"changes":[{"kind":"set","id":"b1","field":"visual","value":{"type":kind,"parameters":{"schema_version":1,"values":values}}}]}),
+        );
+        assert!(
+            switched.buttons[0].appearance.states.is_empty(),
+            "{kind} inherited another visual's images"
+        );
+        let saved = apply(
+            &mut a,
+            "edit",
+            json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":{"text":"","image":null,"states":{
+                (first):{"text":"First","image":"first-image"},(second):{"text":"Resting","image":"second-image"}
+            }}}]}),
+        );
+        assert_eq!(saved.buttons[0].appearance.states.len(), 2);
+    }
+}

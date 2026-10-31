@@ -848,6 +848,30 @@ impl Transfers {
         t.started = true;
         Store::create_from_media(path, candidate, media)
     }
+    /// A typed view conflict rejected the edit before persistence began. Restore
+    /// the entire image group to its original prepared lease, never extend expiry.
+    pub fn unretain_images(&mut self, transfer_id: &str) -> Result<(), Error> {
+        let primary = self.entries.get(transfer_id).ok_or(Error::NotFound)?;
+        let ids: Vec<_> = std::iter::once(transfer_id.to_owned())
+            .chain(primary.companions.iter().cloned())
+            .collect();
+        if ids.iter().any(|id| {
+            self.entries.get(id).is_none_or(|t| {
+                t.connection != primary.connection
+                    || !t.pending
+                    || t.started
+                    || !matches!(t.body, Body::Image(_))
+            })
+        }) {
+            return Err(Error::Busy);
+        }
+        for id in ids {
+            let transfer = self.entries.get_mut(&id).expect("validated group");
+            transfer.pending = false;
+            transfer.companions.clear();
+        }
+        self.reap()
+    }
     pub fn resolved(&mut self, transfer_id: &str, outcome: &CommitOutcome) -> Result<(), Error> {
         let t = self.entries.get_mut(transfer_id).ok_or(Error::NotFound)?;
         if matches!(outcome, CommitOutcome::Uncertain { .. }) {

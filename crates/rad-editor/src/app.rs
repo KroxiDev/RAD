@@ -76,10 +76,13 @@ enum Drag {
 }
 #[derive(Default)]
 struct Draft {
+    visual_type: Option<String>,
     state: Option<String>,
     state_initialized: bool,
     states: std::collections::BTreeMap<String, rad_api::StateFace>,
     base_face: rad_api::StateFace,
+    /// Only Inspection populates this baseline; switching edited tabs cannot publish media.
+    published_states: std::collections::BTreeMap<String, rad_api::StateFace>,
     id: String,
     name: String,
     text: String,
@@ -137,14 +140,78 @@ impl Draft {
         let face = self.states.get(&id).cloned().unwrap_or_default();
         self.text = face.text;
         self.image = face.image.unwrap_or_default();
-        self.published_image = self.image.clone();
+        self.published_image = self
+            .published_states
+            .get(&id)
+            .and_then(|face| face.image.clone())
+            .unwrap_or_default();
         self.state = Some(id);
+    }
+    /// Rebase only local appearance edits after a rejected publication. Untouched
+    /// faces follow the new view; unrelated fields survive only when unchanged remotely.
+    fn retain_appearance_edits(&mut self, before: &Inspection, edited: &Self) {
+        let before = Self::load(before);
+        let published_image = self.published_image.clone();
+        if let Some(state) = &edited.state {
+            let local = edited.state_faces();
+            for id in before.states.keys().chain(local.keys()) {
+                let previous = before.states.get(id).cloned().unwrap_or_default();
+                let edited = local.get(id).cloned().unwrap_or_default();
+                if previous != edited {
+                    let face = self.states.entry(id.clone()).or_default();
+                    if previous.text != edited.text {
+                        face.text = edited.text;
+                    }
+                    if previous.image != edited.image {
+                        face.image = edited.image;
+                    }
+                    if *face == rad_api::StateFace::default() && !local.contains_key(id) {
+                        self.states.remove(id);
+                    }
+                }
+            }
+            self.state = None;
+            self.select_state(state.clone());
+            self.state_initialized = edited.state_initialized;
+        } else {
+            if edited.text != before.text {
+                self.text = edited.text.clone();
+            }
+            if edited.image != before.image {
+                self.image = edited.image.clone();
+            }
+        }
+        self.published_image = published_image;
+        if edited.text_position != before.text_position {
+            self.text_position = edited.text_position.clone();
+        }
+        fn retain<T: Clone + PartialEq>(fresh: &mut T, before: &T, edited: &T) {
+            if fresh == before {
+                *fresh = edited.clone();
+            }
+        }
+        retain(&mut self.name, &before.name, &edited.name);
+        retain(&mut self.mode, &before.mode, &edited.mode);
+        retain(&mut self.gesture, &before.gesture, &edited.gesture);
+        if self.action_ids == before.action_ids {
+            retain(&mut self.order, &before.order, &edited.order);
+            retain(&mut self.waits, &before.waits, &edited.waits);
+            retain(&mut self.entries, &before.entries, &edited.entries);
+            retain(
+                &mut self.brightness_directions,
+                &before.brightness_directions,
+                &edited.brightness_directions,
+            );
+        }
     }
     fn load(v: &Inspection) -> Self {
         Self {
+            visual_type: v.appearance["visual_type"].as_str().map(str::to_owned),
             state: None,
             state_initialized: false,
             states: serde_json::from_value(v.appearance["states"].clone()).unwrap_or_default(),
+            published_states: serde_json::from_value(v.appearance["states"].clone())
+                .unwrap_or_default(),
             base_face: rad_api::StateFace {
                 text: string(&v.appearance["text"]),
                 image: v.appearance["image"].as_str().map(str::to_owned),
@@ -264,6 +331,12 @@ pub struct App {
     move_position: usize,
     transfer_active: bool,
     image_target: Option<(String, Option<String>)>,
+    appearance_retry: Option<Inspection>,
+    prepared_imports: Vec<(String, String)>,
+    discarded_imports: Vec<String>,
+    image_cleanup_attempt: u8,
+    image_cleanup_disconnect: bool,
+    image_cleanup_due: Instant,
     image_path: String,
     backup_path: String,
     restore_token: Option<String>,
@@ -404,6 +477,12 @@ impl App {
             move_position: 0,
             transfer_active: false,
             image_target: None,
+            appearance_retry: None,
+            prepared_imports: vec![],
+            discarded_imports: vec![],
+            image_cleanup_attempt: 0,
+            image_cleanup_disconnect: false,
+            image_cleanup_due: Instant::now(),
             image_path: String::new(),
             backup_path: String::new(),
             restore_token: None,
@@ -562,7 +641,7 @@ impl App {
             .map(str::to_owned)
     }
     fn select(&mut self, position: usize, id: Option<String>) {
-        self.icon_library.reset();
+        self.abandon_appearance();
         self.app_picker.cancel();
         self.credentials.clear();
         self.plugins.dependency_credentials = None;
@@ -610,10 +689,8 @@ impl App {
                 } else {
                     self.app_picker.cancel();
                     self.plugins.clear_form();
-                    self.icon_library.reset();
+                    self.abandon_appearance();
                     self.control.select(None);
-                    self.inspection = None;
-                    self.draft = Draft::default();
                 }
             }
             None => {
@@ -750,6 +827,16 @@ impl App {
         }
         self.pump_service(ctx);
         self.pump_reads();
+        if self.connected && (self.image_cleanup_disconnect || !self.discarded_imports.is_empty()) {
+            // The UI may otherwise sleep indefinitely after a busy cleanup reply.
+            // While a job is in flight its worker owns the next wake.
+            let delay = self
+                .image_cleanup_due
+                .saturating_duration_since(Instant::now());
+            if !delay.is_zero() || !self.worker.busy() {
+                ctx.request_repaint_after(delay);
+            }
+        }
         if self.styled.as_ref() != Some(&self.palette) {
             Look::new(&self.palette).apply(ctx);
             self.styled = Some(self.palette.clone());
@@ -1045,6 +1132,8 @@ impl eframe::App for App {
     }
 }
 
+#[cfg(test)]
+mod image_cleanup_tests;
 #[cfg(test)]
 mod reload_tests;
 #[cfg(test)]

@@ -62,6 +62,10 @@ pub enum Job {
         choice: crate::icon_library::Choice,
     },
     Theme,
+    DropImages {
+        tokens: Vec<String>,
+        attempt: u8,
+    },
     Transfer {
         path: PathBuf,
         kind: TransferKind,
@@ -93,7 +97,9 @@ pub enum Reply {
         revision: String,
         visuals: Vec<crate::plugins::Visual>,
     },
+    ImagesDropped(crate::icon_save::Cleanup),
     IconSaved {
+        cleanup: crate::icon_save::Cleanup,
         button: String,
         ticket: u64,
         result: Result<Response, Error>,
@@ -114,6 +120,7 @@ pub enum Reply {
     FolderBoard(Board),
     TransferProgress(u64),
     TransferFinished {
+        image_token: Option<String>,
         kind: TransferKind,
         data: Value,
         path: Option<PathBuf>,
@@ -296,17 +303,26 @@ fn step(active: &mut Option<Transfer>, s: &mut Session<Client>) -> Result<Reply,
             Ok(Progress::Chunk(n)) => offset = n,
             Ok(Progress::Finished(data)) => {
                 let transfer = active.take().unwrap();
-                let (kind, path) = match transfer {
-                    Transfer::Upload(kind, _) => (kind, None),
+                let (kind, path, image_token) = match transfer {
+                    Transfer::Upload(kind, upload) => (
+                        kind,
+                        None,
+                        (kind == TransferKind::Image).then(|| upload.id().to_owned()),
+                    ),
                     Transfer::Download(download) => {
                         let path = download
                             .into_inner()
                             .finish()
                             .map_err(|_| transfer::io_error())?;
-                        (TransferKind::Export, Some(path))
+                        (TransferKind::Export, Some(path), None)
                     }
                 };
-                return Ok(Reply::TransferFinished { kind, data, path });
+                return Ok(Reply::TransferFinished {
+                    kind,
+                    data,
+                    path,
+                    image_token,
+                });
             }
         }
         if started.elapsed() >= Duration::from_millis(20) {
@@ -493,12 +509,12 @@ pub fn start_with_clock(
                         choice,
                     } => {
                         let result = if active.is_some() {
-                            Err(Error {
+                            Err(crate::icon_save::Failed::from(Error {
                                 code: "busy".into(),
                                 cause: None,
                                 source_change: None,
                                 unknown: false,
-                            })
+                            }))
                         } else {
                             crate::icon_save::save_to_state(
                                 s,
@@ -518,10 +534,27 @@ pub fn start_with_clock(
                             eprintln!("RAD icon choice not remembered: {error}");
                         }
                         Ok(Reply::IconSaved {
+                            cleanup: result
+                                .as_ref()
+                                .err()
+                                .map(|failure| failure.cleanup.clone())
+                                .unwrap_or_default(),
                             button,
                             ticket,
-                            result: result.map(|saved| saved.response),
+                            result: result
+                                .map(|saved| saved.response)
+                                .map_err(|failure| *failure.error),
                         })
+                    }
+                    Job::DropImages { tokens, attempt } => {
+                        Ok(Reply::ImagesDropped(if attempt >= 4 {
+                            crate::icon_save::Cleanup {
+                                disconnect: true,
+                                ..Default::default()
+                            }
+                        } else {
+                            crate::icon_save::drop_images(s, tokens)
+                        }))
                     }
                     Job::Request(request) => {
                         let operation = request.operation().as_str().to_owned();
@@ -571,6 +604,18 @@ pub fn start_with_clock(
                 },
             },
         });
+        // Every call above has returned: the worker's single-flight socket has no
+        // pending request. Dropping only this session delegates lease cleanup to Disconnect.
+        let cleanup_disconnect = match &result {
+            Ok(Reply::ImagesDropped(cleanup)) | Ok(Reply::IconSaved { cleanup, .. }) => {
+                cleanup.disconnect
+            }
+            _ => false,
+        };
+        if cleanup_disconnect {
+            session = None;
+            active = None;
+        }
         let result = match result {
             Err(error) if recovery_aware && error.code == "recovery_required" => {
                 Ok(Reply::RecoveryRequired)

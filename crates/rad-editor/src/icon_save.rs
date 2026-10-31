@@ -14,6 +14,56 @@ pub struct Saved {
     pub image: String,
 }
 
+/// Only cleanup is retryable; the captured edit is never replayed.
+#[derive(Debug, Clone, Default)]
+pub struct Cleanup {
+    pub released: Vec<String>,
+    pub retry: Vec<String>,
+    pub disconnect: bool,
+}
+#[derive(Debug)]
+pub struct Failed {
+    pub error: Box<Error>,
+    pub cleanup: Cleanup,
+}
+impl From<Error> for Failed {
+    fn from(error: Error) -> Self {
+        Self {
+            error: Box::new(error),
+            cleanup: Cleanup::default(),
+        }
+    }
+}
+pub(crate) fn drop_images<P: Port>(session: &mut Session<P>, tokens: Vec<String>) -> Cleanup {
+    let tokens: std::collections::BTreeSet<_> = tokens.into_iter().collect();
+    let mut result = Cleanup::default();
+    if tokens.len() > 2 {
+        result.disconnect = true;
+        return result;
+    }
+    for token in tokens {
+        match session.request(Request::TransferDrop {
+            transfer_id: token.clone(),
+        }) {
+            Ok(_) => result.released.push(token),
+            Err(error) if !error.unknown && error.code == "not_found" => {
+                result.released.push(token)
+            }
+            Err(error)
+                if !error.unknown
+                    && matches!(error.code.as_str(), "resource_exhausted" | "busy") =>
+            {
+                result.retry.push(token)
+            }
+            Err(_) => {
+                result.disconnect = true;
+                break;
+            }
+        }
+    }
+    result
+}
+
 /// No preparation is held in the GUI: its 60-second lease starts only after Save.
 /// The captured edit owns its destination; a later UI selection cannot redirect it.
 pub fn save<P: Port>(
@@ -21,7 +71,7 @@ pub fn save<P: Port>(
     button: &str,
     png: &[u8],
     edit: Request,
-) -> Result<Saved, Error> {
+) -> Result<Saved, Failed> {
     save_to_state(session, button, None, png, edit)
 }
 pub fn save_to_state<P: Port>(
@@ -30,9 +80,9 @@ pub fn save_to_state<P: Port>(
     state: Option<&str>,
     png: &[u8],
     mut edit: Request,
-) -> Result<Saved, Error> {
+) -> Result<Saved, Failed> {
     let Request::Edit { changes, .. } = &mut edit else {
-        return Err(Error::protocol());
+        return Err(Error::protocol().into());
     };
     let appearances: Vec<_> = changes
         .iter()
@@ -50,17 +100,17 @@ pub fn save_to_state<P: Port>(
         || png.len() > 512 * 1024
         || !png.starts_with(b"\x89PNG\r\n\x1a\n")
     {
-        return Err(Error::protocol());
+        return Err(Error::protocol().into());
     }
     let response = session.request(Request::TransferBegin {
         kind: rad_api::TransferKind::ImageImport,
         size: Some(png.len().to_string()),
     })?;
     let rad_api::ResponseData::Transfer(data) = response.data else {
-        return Err(Error::protocol());
+        return Err(Error::protocol().into());
     };
     let transfer_id = data.transfer_id;
-    let result = (|| {
+    let result: Result<Saved, Error> = (|| {
         let mut upload = Upload::new(
             std::io::Cursor::new(png),
             transfer_id.clone(),
@@ -86,7 +136,12 @@ pub fn save_to_state<P: Port>(
             unreachable!()
         };
         if let Some(state) = state {
-            appearance.states.entry(state.into()).or_default().image = Some(reference.clone());
+            appearance
+                .states
+                .get_or_insert_with(Default::default)
+                .entry(state.into())
+                .or_default()
+                .image = Some(reference.clone());
         } else {
             appearance.image = Some(reference.clone());
         }
@@ -95,9 +150,15 @@ pub fn save_to_state<P: Port>(
             image: reference,
         })
     })();
-    if result.is_err() && session.is_open() {
-        // Keep the original error, including Unknown. Cancellation never repeats the edit.
-        let _ = session.request(Request::TransferDrop { transfer_id });
-    }
-    result
+    result.map_err(|error| {
+        let cleanup = if session.is_open() {
+            drop_images(session, vec![transfer_id])
+        } else {
+            Cleanup::default()
+        };
+        Failed {
+            error: Box::new(error),
+            cleanup,
+        }
+    })
 }

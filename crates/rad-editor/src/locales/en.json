@@ -567,5 +567,10 @@
   "Try again": "Try again",
   "No matching icons": "No matching icons",
   "Custom color": "Custom color",
-  "Key changed; draft retained. Apply again to reread.": "Key changed; draft retained. Apply again to reread."
+  "The key changed. Your changes are still here. Click Apply to try again.": "The key changed. Your changes are still here. Click Apply to try again.",
+  "The key changed. Checking its appearance…": "The key changed. Checking its appearance…",
+  "The key changed. Your appearance changes are still here. Save again.": "The key changed. Your appearance changes are still here. Save again.",
+  "The appearance changed and your edit was not saved. Check the key and try again.": "The appearance changed and your edit was not saved. Check the key and try again.",
+  "The key changed. The imported image was not used.": "The key changed. The imported image was not used.",
+  "The image could not be discarded. Your text is still here; choose the image again.": "The image could not be discarded. Your text is still here; choose the image again."
 }

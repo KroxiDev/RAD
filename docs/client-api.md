@@ -412,10 +412,15 @@ presentarse juntos.
 ## Caras de visuales y edición atómica
 
 `Appearance` y las vistas de apariencia incluyen `states`, mapa de hasta dos
-identificadores a `{text: string, image: string | null}`; omitido se lee vacío.
-`FieldEdit::Appearance` reemplaza texto, imagen y caras en una sola edición; la
-posición de texto continúa compartida. La sección `appearance` incluye el campo
-`states`. Un cliente que edita debe preservar las caras que no está cambiando.
+identificadores a `{text: string, image: string | null}`. En `FieldEdit::Appearance`,
+texto e imagen se reemplazan; `states` omitido conserva las caras del candidato
+vigente, `{}` las elimina y un mapa explícito las reemplaza (`null` es inválido).
+Las vistas siempre incluyen el mapa. La posición de texto continúa compartida.
+Cambiar plugin o tipo de visual, incluido pasar a Manual, elimina sus caras en la
+misma edición; cambiar solo parámetros las conserva. Deshacer recupera ambas.
+Los cambios de un lote se evalúan en orden: para configurar caras del nuevo visual,
+enviar primero el cambio de visual y después el mapa explícito. Una apariencia sin
+`states` nunca repone caras eliminadas por un cambio anterior del lote.
 
 `plugin_visual` incluye `state` opcional con el identificador observado (el segundo
 del manifest si no está disponible). Su texto está ya resuelto: sin texto propio,
@@ -466,3 +471,17 @@ incertidumbre; se resuelven juntos sin replay.
 Framing sigue en v1. Las variantes nuevas requieren actualizar lectores cerrados;
 editor y runtime se distribuyen juntos. Compatibilidad documental y decisiones:
 [ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md).
+
+Excepción acotada: un rechazo tipado `ViewChanged` antes de iniciar persistencia
+devuelve el grupo de imágenes a preparado en la misma conexión, sin renovar el
+vencimiento original de 60 s ni ampliar la cuota de dos. Así, guardar explícitamente
+otra vez tras releer puede usar los mismos medios. Un fallo de escritura los libera
+como antes; la incertidumbre mantiene el grupo retenido y no permite replay.
+El editor cancela con `transfer_drop` los tokens conocidos de importaciones al
+abandonar la tecla o cambiar de tipo/plugin; una importación tardía también se
+descarta. Conserva cada token hasta confirmar la cancelación o su inexistencia;
+solo esa limpieza admite reintentos acotados ante ocupación, sin impedir lecturas
+ni repetir la edición. Si no puede completarla, cierra únicamente su conexión IPC
+cuando no hay otra petición pendiente y reconecta: descarta las imágenes aún no
+publicadas de esa conexión, conserva el texto y pide elegirlas otra vez. Cancelar,
+desconectar o vencer libera las imágenes preparadas.
