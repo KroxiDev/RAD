@@ -20,7 +20,7 @@ no se crea otra autoridad en el editor.
 Fuentes de la situación actual:
 [`App::advanced`](../crates/rad-editor/src/app/inspector.rs),
 [`App::settings_section`](../crates/rad-editor/src/app/settings.rs) y
-el manejo de `Reply::TransferProgress` en [`App`](../crates/rad-editor/src/app.rs).
+el manejo de `Reply::TransferProgress` en [`App::pump_replies`](../crates/rad-editor/src/app/replies.rs).
 El diseño se contrasta con el [checklist de UX](ux.md#checklist-para-cambios-en-la-interfaz)
 y se verifica con la [política de pruebas](testing.md).
 

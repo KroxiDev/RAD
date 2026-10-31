@@ -6,7 +6,7 @@ use super::{
 };
 use eframe::egui::{self, CornerRadius, Stroke, StrokeKind};
 
-use crate::session::Grid;
+use crate::session::{Grid, KeyView};
 const GAP: f32 = 12.;
 const KEY_RANGE: std::ops::RangeInclusive<f32> = 52.0..=104.;
 /// Room between the keys and the edge of the deck body drawn around them.
@@ -136,34 +136,84 @@ pub(super) fn paint_key(
     painter.galley(egui::pos2(rect.center().x, top), galley, look.text);
 }
 
-/// Follows the pointer with the name of whatever is being dragged.
-pub(super) fn drag_ghost(ctx: &egui::Context, look: &Look) {
-    let (Some(payload), Some(pointer)) = (
-        egui::DragAndDrop::payload::<Drag>(ctx),
-        ctx.pointer_interact_pos(),
-    ) else {
-        return;
-    };
-    let label = match &*payload {
-        Drag::Button { label, .. } => label.clone(),
-        Drag::Add { label, .. } => label.clone(),
-        Drag::Folder => "🗀".into(),
-        Drag::Reorder(_) => return,
-    };
-    let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Tooltip,
-        egui::Id::new("drag-ghost"),
-    ));
-    let galley = painter.layout_no_wrap(label, egui::FontId::proportional(13.), look.on_accent);
-    let rect = egui::Rect::from_min_size(
-        pointer + egui::vec2(12., 12.),
-        galley.size() + egui::vec2(16., 10.),
-    );
-    painter.rect_filled(rect, CornerRadius::same(KEY_RADIUS), look.accent);
-    painter.galley(rect.min + egui::vec2(8., 5.), galley, look.on_accent);
-}
+/// How much of a key shows at its place while it is dragged away.
+const LIFTED: f32 = 0.35;
+/// How much of a dragged key's face shows under the pointer.
+const CARRIED: f32 = 0.9;
 
 impl App {
+    /// Follows the pointer with whatever is being dragged: a key with its own face, held
+    /// where it was picked up; an action or a folder by its name.
+    pub(super) fn drag_ghost(&self, ctx: &egui::Context, look: &Look) {
+        let (Some(payload), Some(pointer)) = (
+            egui::DragAndDrop::payload::<Drag>(ctx),
+            ctx.pointer_interact_pos(),
+        ) else {
+            return;
+        };
+        let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("drag-ghost"));
+        let painter = ctx.layer_painter(layer);
+        let label = match &*payload {
+            Drag::Button { id, face } => {
+                let Some(view) = self.key_view(id) else {
+                    return;
+                };
+                let rect = face.translate(pointer.to_vec2());
+                // The face is only painted, never laid out: the ghost takes no room, so
+                // the key under the pointer still gets the drop.
+                let mut ui = egui::Ui::new(
+                    ctx.clone(),
+                    layer.id.with(id),
+                    egui::UiBuilder::new().layer_id(layer).max_rect(rect),
+                );
+                painter.add(ui.style().visuals.popup_shadow.as_shape(rect, KEY_RADIUS));
+                ui.multiply_opacity(CARRIED);
+                self.key_face(&ui, look, view, rect);
+                return;
+            }
+            Drag::Add { label, .. } => label.clone(),
+            Drag::Folder => "🗀".into(),
+            Drag::Reorder(_) => return,
+        };
+        let galley = painter.layout_no_wrap(label, egui::FontId::proportional(13.), look.on_accent);
+        let rect = egui::Rect::from_min_size(
+            pointer + egui::vec2(12., 12.),
+            galley.size() + egui::vec2(16., 10.),
+        );
+        painter.rect_filled(rect, CornerRadius::same(KEY_RADIUS), look.accent);
+        painter.galley(rect.min + egui::vec2(8., 5.), galley, look.on_accent);
+    }
+    fn key_view(&self, id: &str) -> Option<&KeyView> {
+        self.board
+            .as_ref()?
+            .buttons
+            .iter()
+            .find(|b| b.entity["id"] == id)
+    }
+    /// Paints a key the way the deck shows it: its plugin's face, or its picture and text.
+    fn key_face(&self, ui: &egui::Ui, look: &Look, view: &KeyView, rect: egui::Rect) {
+        if self.plugin_face(ui, look, view.entity["id"].as_str().unwrap_or(""), rect) {
+            return;
+        }
+        let label = key_label(
+            &string(&view.appearance["text"]),
+            &string(&view.entity["fields"]["name"]),
+            view.appearance["image"].is_string() || native_icon(&view.appearance).is_some(),
+        );
+        let now = ui.input(|i| i.time);
+        let picture = view.appearance["image"]
+            .as_str()
+            .and_then(|reference| self.pictures.get(reference, now));
+        paint_key(
+            ui,
+            look,
+            rect,
+            &label,
+            &string(&view.appearance["text_position"]),
+            picture,
+            native_icon(&view.appearance),
+        );
+    }
     pub(super) fn deck(&mut self, ui: &mut egui::Ui, look: &Look) {
         let Some(model) = self.board.as_ref().map(|board| board.grid) else {
             return;
@@ -211,34 +261,22 @@ impl App {
     }
     fn key(&mut self, ui: &mut egui::Ui, look: &Look, position: usize, rect: egui::Rect) {
         let id = self.slot_id(position);
-        let view = id.as_ref().and_then(|id| {
-            self.board
-                .as_ref()?
-                .buttons
-                .iter()
-                .find(|b| b.entity["id"] == id.as_str())
-        });
-        let label = view
-            .map(|b| {
-                key_label(
-                    &string(&b.appearance["text"]),
-                    &string(&b.entity["fields"]["name"]),
-                    b.appearance["image"].is_string() || native_icon(&b.appearance).is_some(),
-                )
-            })
-            .unwrap_or_default();
+        let view = id.as_deref().and_then(|id| self.key_view(id));
         let name = view.map(|b| string(&b.entity["fields"]["name"]));
         let response = ui.interact(
             rect,
             ui.id().with(("key", position)),
             egui::Sense::click_and_drag(),
         );
-        if let Some(id) = &id {
+        if let (Some(id), Some(grab)) = (&id, ui.input(|i| i.pointer.press_origin())) {
             response.dnd_set_drag_payload(Drag::Button {
                 id: id.clone(),
-                label: label.clone(),
+                face: rect.translate(-grab.to_vec2()),
             });
         }
+        let lifted = egui::DragAndDrop::payload::<Drag>(ui.ctx()).is_some_and(
+            |drag| matches!(&*drag, Drag::Button { id: source, .. } if id.as_ref() == Some(source)),
+        );
         let accepts_drop = response
             .dnd_hover_payload::<Drag>()
             .is_some_and(|drag| match &*drag {
@@ -248,29 +286,21 @@ impl App {
                 Drag::Reorder(_) => false,
             });
         if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
             let radius = CornerRadius::same(KEY_RADIUS);
             if let Some(view) = view {
-                let now = ui.input(|i| i.time);
-                let picture = view.appearance["image"]
-                    .as_str()
-                    .and_then(|reference| self.pictures.get(reference, now));
-                let position = string(&view.appearance["text_position"]);
-                if !self.plugin_face(ui, look, id.as_deref().unwrap_or(""), rect) {
-                    paint_key(
-                        ui,
-                        look,
-                        rect,
-                        &label,
-                        &position,
-                        picture,
-                        native_icon(&view.appearance),
-                    );
+                if lifted {
+                    let mut left = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    left.multiply_opacity(LIFTED);
+                    self.key_face(&left, look, view, rect);
+                } else {
+                    self.key_face(ui, look, view, rect);
                 }
                 if response.hovered() {
-                    painter.rect_filled(rect, radius, egui::Color32::from_white_alpha(10));
+                    ui.painter()
+                        .rect_filled(rect, radius, egui::Color32::from_white_alpha(10));
                 }
             } else {
+                let painter = ui.painter();
                 painter.rect_filled(rect, radius, look.empty_key);
                 if response.hovered() || accepts_drop {
                     painter.rect_filled(rect, radius, look.raised);
@@ -281,7 +311,7 @@ impl App {
                 }
             }
             if accepts_drop || self.selected_slot == Some(position) {
-                painter.rect_stroke(
+                ui.painter().rect_stroke(
                     rect,
                     radius,
                     Stroke::new(2., look.accent),
