@@ -69,6 +69,7 @@ pub(super) fn inventory(
         targets: old.targets,
         actions: old.actions,
         visuals: old.visuals,
+        translations: Default::default(),
     };
     let normalized = serde_json::to_vec(&metadata).map_err(|_| crate::Error::CorruptState)?;
     // Reuse strict manifest/schema and ELF validation. The original bytes remain untouched.

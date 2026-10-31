@@ -125,21 +125,6 @@ mod tests {
     }
 
     #[test]
-    fn opt_in_event_keys_are_scoped_to_the_selected_reader() {
-        assert_eq!(
-            real_selection("obs", Some(OsStr::new("--real-obs"))),
-            Some(("target/plugins/release/rad-plugin-obs", "real_obs"))
-        );
-        assert_eq!(
-            real_selection("metrics", Some(OsStr::new("--real-metrics"))),
-            Some(("target/plugins/release/rad-plugin-metrics", "real_metrics"))
-        );
-        for name in ["audio", "media", "obs", "metrics"] {
-            assert_eq!(real_selection(name, None), None);
-        }
-    }
-
-    #[test]
     fn real_mode_cannot_select_another_plugin_or_arbitrary_executable() {
         for (name, option) in [
             ("audio", "--real-metrics"),

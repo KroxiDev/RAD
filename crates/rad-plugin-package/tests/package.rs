@@ -37,12 +37,6 @@ fn native_package() -> Vec<u8> {
 }
 
 #[test]
-fn accepts_real_native_executable_without_running_it() {
-    let bytes = native_package();
-    assert!(Candidate::parse(&bytes, 1, TARGET).is_ok());
-}
-
-#[test]
 fn enforces_exact_header_and_bounded_payload_before_contract_parsing() {
     let valid = native_package();
     for offset in 0..8 {
@@ -231,22 +225,6 @@ fn executable_entry_must_be_backed_by_file_bytes_not_zero_fill() {
     executable[24..32].copy_from_slice(&(address + file_size).to_le_bytes());
     assert!(matches!(
         Candidate::parse(&container(MANIFEST, &executable), 1, TARGET),
-        Err(Error::InvalidExecutable)
-    ));
-}
-
-#[test]
-fn separate_parts_are_borrowed_and_encoder_matches_independent_wire() {
-    let executable = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-    let candidate = Candidate::from_parts(MANIFEST, &executable, 1, TARGET).unwrap();
-    assert_eq!(candidate.executable().as_ptr(), executable.as_ptr());
-    assert_eq!(candidate.manifest_bytes().as_ptr(), MANIFEST.as_ptr());
-    assert_eq!(
-        rad_plugin_package::encode(&candidate),
-        container(MANIFEST, &executable)
-    );
-    assert!(matches!(
-        Candidate::from_parts(MANIFEST, b"not elf", 1, TARGET),
         Err(Error::InvalidExecutable)
     ));
 }

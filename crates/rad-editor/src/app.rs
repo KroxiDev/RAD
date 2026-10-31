@@ -3,26 +3,32 @@
 use crate::{
     Controller, Request,
     catalog::Entry,
-    native::{self, Event, Job, OptionsEvent, OptionsJob, Reply, TransferKind},
+    native::{self, Event, Job, OptionsEvent, OptionsJob, Reply},
     session::{Board, Inspection},
     theme::Palette,
-    worker::{Polled, Pulse, SubmitError, Worker},
+    worker::{Pulse, SubmitError, Worker},
 };
 use eframe::egui;
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Instant};
 
 mod actions;
+mod ahead;
 mod bar;
 mod credentials;
 mod deck;
+mod icon_library;
 mod inspector;
 mod launcher;
 mod look;
 mod machine;
 mod options;
+mod pacing;
+mod pictures;
 mod plugins;
+mod reads;
 mod recovery;
+mod replies;
 mod service;
 mod settings;
 mod updates;
@@ -38,6 +44,10 @@ const SERVICE_SETTLE: std::time::Duration = std::time::Duration::from_millis(500
 /// Duration a wait starts with when it is put on a key.
 const DEFAULT_WAIT_MS: u64 = 1000;
 
+/// A selected key whose inspector is not read yet says so only after this long; a quicker
+/// read shows the key without a flash of "Loading…".
+const LOADING_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
+
 /// Something from the list that becomes an action on a key.
 #[derive(Clone)]
 enum NewAction {
@@ -50,9 +60,10 @@ enum NewAction {
 }
 #[derive(Clone)]
 enum Drag {
+    /// A key of the board, with where it lay around the point it was picked up at.
     Button {
         id: String,
-        label: String,
+        face: egui::Rect,
     },
     /// An action from the list, with the name shown while it is dragged.
     Add {
@@ -65,10 +76,19 @@ enum Drag {
 }
 #[derive(Default)]
 struct Draft {
+    visual_type: Option<String>,
+    state: Option<String>,
+    state_initialized: bool,
+    states: std::collections::BTreeMap<String, rad_api::StateFace>,
+    base_face: rad_api::StateFace,
+    /// Only Inspection populates this baseline; switching edited tabs cannot publish media.
+    published_states: std::collections::BTreeMap<String, rad_api::StateFace>,
     id: String,
     name: String,
     text: String,
     image: String,
+    /// Published reference when this draft was read; never a local prepared image.
+    published_image: String,
     /// `top`, `middle` or `bottom`, as the runtime resolved it or as just chosen.
     text_position: String,
     mode: String,
@@ -81,14 +101,127 @@ struct Draft {
     brightness_directions: Vec<rad_api::BrightnessDirection>,
     permissions: Value,
     action_permissions: Vec<Value>,
+    action_ids: Vec<String>,
 }
 impl Draft {
+    fn initial_state(&mut self, observed: Option<&str>, resting: &str, protect: bool) {
+        let published = self.state.as_ref().and_then(|id| self.states.get(id));
+        let edited = self.text != published.map(|face| face.text.as_str()).unwrap_or_default()
+            || self.image
+                != published
+                    .and_then(|face| face.image.as_deref())
+                    .unwrap_or_default();
+        if self.state.is_some() && (protect || edited) {
+            self.state_initialized = true;
+        }
+        if self.state.is_none() || (!self.state_initialized && observed.is_some()) {
+            self.select_state(observed.unwrap_or(resting).to_owned());
+        }
+        self.state_initialized |= observed.is_some();
+    }
+    fn state_faces(&self) -> std::collections::BTreeMap<String, rad_api::StateFace> {
+        let mut states = self.states.clone();
+        if let Some(id) = &self.state {
+            let face = rad_api::StateFace {
+                text: self.text.clone(),
+                image: (!self.image.is_empty()).then(|| self.image.clone()),
+            };
+            // Preserve an explicitly empty published face; selecting it is not an edit.
+            if face == rad_api::StateFace::default() && states.get(id) != Some(&face) {
+                states.remove(id);
+            } else {
+                states.insert(id.clone(), face);
+            }
+        }
+        states
+    }
+    fn select_state(&mut self, id: String) {
+        self.states = self.state_faces();
+        let face = self.states.get(&id).cloned().unwrap_or_default();
+        self.text = face.text;
+        self.image = face.image.unwrap_or_default();
+        self.published_image = self
+            .published_states
+            .get(&id)
+            .and_then(|face| face.image.clone())
+            .unwrap_or_default();
+        self.state = Some(id);
+    }
+    /// Rebase only local appearance edits after a rejected publication. Untouched
+    /// faces follow the new view; unrelated fields survive only when unchanged remotely.
+    fn retain_appearance_edits(&mut self, before: &Inspection, edited: &Self) {
+        let before = Self::load(before);
+        let published_image = self.published_image.clone();
+        if let Some(state) = &edited.state {
+            let local = edited.state_faces();
+            for id in before.states.keys().chain(local.keys()) {
+                let previous = before.states.get(id).cloned().unwrap_or_default();
+                let edited = local.get(id).cloned().unwrap_or_default();
+                if previous != edited {
+                    let face = self.states.entry(id.clone()).or_default();
+                    if previous.text != edited.text {
+                        face.text = edited.text;
+                    }
+                    if previous.image != edited.image {
+                        face.image = edited.image;
+                    }
+                    if *face == rad_api::StateFace::default() && !local.contains_key(id) {
+                        self.states.remove(id);
+                    }
+                }
+            }
+            self.state = None;
+            self.select_state(state.clone());
+            self.state_initialized = edited.state_initialized;
+        } else {
+            if edited.text != before.text {
+                self.text = edited.text.clone();
+            }
+            if edited.image != before.image {
+                self.image = edited.image.clone();
+            }
+        }
+        self.published_image = published_image;
+        if edited.text_position != before.text_position {
+            self.text_position = edited.text_position.clone();
+        }
+        fn retain<T: Clone + PartialEq>(fresh: &mut T, before: &T, edited: &T) {
+            if fresh == before {
+                *fresh = edited.clone();
+            }
+        }
+        retain(&mut self.name, &before.name, &edited.name);
+        retain(&mut self.mode, &before.mode, &edited.mode);
+        retain(&mut self.gesture, &before.gesture, &edited.gesture);
+        if self.action_ids == before.action_ids {
+            retain(&mut self.order, &before.order, &edited.order);
+            retain(&mut self.waits, &before.waits, &edited.waits);
+            retain(&mut self.entries, &before.entries, &edited.entries);
+            retain(
+                &mut self.brightness_directions,
+                &before.brightness_directions,
+                &edited.brightness_directions,
+            );
+        }
+    }
     fn load(v: &Inspection) -> Self {
         Self {
+            visual_type: v.appearance["visual_type"].as_str().map(str::to_owned),
+            state: None,
+            state_initialized: false,
+            states: serde_json::from_value(v.appearance["states"].clone()).unwrap_or_default(),
+            published_states: serde_json::from_value(v.appearance["states"].clone())
+                .unwrap_or_default(),
+            base_face: rad_api::StateFace {
+                text: string(&v.appearance["text"]),
+                image: v.appearance["image"].as_str().map(str::to_owned),
+            },
+            action_ids: v.actions.iter().map(|a| string(&a["id"])).collect(),
             id: string(&v.button["id"]),
             name: string(&v.button["fields"]["name"]),
             text: string(&v.appearance["text"]),
             image: string(&v.appearance["image"]),
+            published_image: string(&v.appearance["image"]),
             text_position: string(&v.appearance["text_position"]),
             mode: string(&v.button["fields"]["mode"]),
             gesture: v.button["fields"]["gesture"]
@@ -131,6 +264,15 @@ impl Draft {
 fn string(v: &Value) -> String {
     v.as_str().unwrap_or_default().into()
 }
+/// The plugin visual a key of `board` shows, if any.
+fn visual_type<'a>(board: &'a Board, id: &str) -> Option<&'a Value> {
+    board
+        .buttons
+        .iter()
+        .find(|key| key.entity["id"] == id)
+        .map(|key| &key.appearance["visual_type"])
+        .filter(|visual| visual.is_string())
+}
 use crate::texts::tr;
 pub struct App {
     preferences: crate::preferences::Preferences,
@@ -148,6 +290,7 @@ pub struct App {
     credential_selection: Option<String>,
     control: Controller,
     schedule: crate::schedule::Schedule,
+    frame_pacer: pacing::FramePacer,
     result_due: bool,
     wake_registered: bool,
     search_wake: Option<crate::worker::WakeTimer>,
@@ -166,6 +309,7 @@ pub struct App {
     status: Value,
     inspection: Option<Inspection>,
     draft: Draft,
+    icon_library: icon_library::Library,
     selected_slot: Option<usize>,
     message: String,
     message_is_error: bool,
@@ -186,6 +330,13 @@ pub struct App {
     move_folder: String,
     move_position: usize,
     transfer_active: bool,
+    image_target: Option<(String, Option<String>)>,
+    appearance_retry: Option<Inspection>,
+    prepared_imports: Vec<(String, String)>,
+    discarded_imports: Vec<String>,
+    image_cleanup_attempt: u8,
+    image_cleanup_disconnect: bool,
+    image_cleanup_due: Instant,
     image_path: String,
     backup_path: String,
     restore_token: Option<String>,
@@ -209,8 +360,17 @@ pub struct App {
     icon_asked: bool,
     /// Action categories the user folded away in the list.
     folded: std::collections::BTreeSet<actions::Category>,
-    textures: std::collections::BTreeMap<String, egui::TextureHandle>,
-    image_attempts: std::collections::BTreeSet<String>,
+    /// Key pictures on the board and, within a budget, those it may show next.
+    pictures: pictures::Pictures,
+    /// Inspectors and folders read ahead at the board's revision.
+    ahead: ahead::Ahead,
+    /// When the selected key was chosen; a key still loading says so only after a while.
+    selected_at: Instant,
+    /// Counts selections, so each selected key's panel fades in on its own.
+    selection: u64,
+    /// When the board last changed revision or folder: a plugin face not read yet is shown
+    /// plain for a moment instead of as unavailable.
+    board_since: Instant,
     plugins: plugins::PluginUi,
     /// Owner of every call to systemd; absent where the editor must not touch the system.
     service_worker: Option<Worker<crate::service::Job, crate::service::Outcome>>,
@@ -280,6 +440,7 @@ impl App {
             credential_selection: None,
             control: Controller::default(),
             schedule: Default::default(),
+            frame_pacer: Default::default(),
             result_due: false,
             wake_registered: false,
             search_wake: None,
@@ -297,6 +458,7 @@ impl App {
             status: Value::Null,
             inspection: None,
             draft: Draft::default(),
+            icon_library: Default::default(),
             selected_slot: None,
             message: String::new(),
             message_is_error: false,
@@ -314,6 +476,13 @@ impl App {
             move_folder: String::new(),
             move_position: 0,
             transfer_active: false,
+            image_target: None,
+            appearance_retry: None,
+            prepared_imports: vec![],
+            discarded_imports: vec![],
+            image_cleanup_attempt: 0,
+            image_cleanup_disconnect: false,
+            image_cleanup_due: Instant::now(),
             image_path: String::new(),
             backup_path: String::new(),
             restore_token: None,
@@ -328,8 +497,11 @@ impl App {
             icon_candidate: None,
             icon_asked: false,
             folded: [actions::Category::Applications].into(),
-            textures: Default::default(),
-            image_attempts: Default::default(),
+            pictures: Default::default(),
+            ahead: Default::default(),
+            selected_at: Instant::now(),
+            selection: 0,
+            board_since: Instant::now(),
             plugins: Default::default(),
             service_worker: None,
             service: Default::default(),
@@ -417,6 +589,7 @@ impl App {
     fn worker_lost(&mut self, ctx: &egui::Context, in_flight: bool, unsent: bool) {
         ctx.request_repaint();
         self.connected = false;
+        self.icon_library.reset();
         self.attempted = true;
         self.transfer_active = false;
         self.pending_action = None;
@@ -468,15 +641,41 @@ impl App {
             .map(str::to_owned)
     }
     fn select(&mut self, position: usize, id: Option<String>) {
+        self.abandon_appearance();
         self.app_picker.cancel();
         self.credentials.clear();
         self.plugins.dependency_credentials = None;
         self.plugins.clear_form();
         self.selected_slot = Some(position);
         self.control.select(id);
-        self.inspection = None;
-        self.draft = Draft::default();
-        self.inspect_needed = self.control.selected().is_some();
+        self.selected_at = Instant::now();
+        self.selection += 1;
+        // A key whose inspector was read ahead shows at once.
+        let ready = self
+            .control
+            .selected()
+            .zip(self.board.as_ref())
+            .and_then(|(id, board)| self.ahead.inspection(board, id))
+            .cloned();
+        self.draft = ready.as_ref().map(Draft::load).unwrap_or_default();
+        self.inspection = ready;
+        self.inspect_needed = self.control.selected().is_some() && self.inspection.is_none();
+    }
+    /// Deletes the selected key, or the folder it enters, with no question: undo, a
+    /// keystroke away, is the safety net. Its inspector must be read to tell which.
+    fn delete_selected(&mut self) {
+        let Some(inspection) = self
+            .inspection
+            .as_ref()
+            .filter(|inspection| inspection.button["id"].as_str() == self.control.selected())
+        else {
+            return;
+        };
+        let request = crate::commands::delete_selection(
+            &string(&inspection.button["id"]),
+            &inspection.actions,
+        );
+        self.send(request);
     }
     /// Keeps the selection on what the runtime just published: it follows a moved key,
     /// falls back to the slot when the key is gone, and adopts a key created in the slot.
@@ -490,9 +689,8 @@ impl App {
                 } else {
                     self.app_picker.cancel();
                     self.plugins.clear_form();
+                    self.abandon_appearance();
                     self.control.select(None);
-                    self.inspection = None;
-                    self.draft = Draft::default();
                 }
             }
             None => {
@@ -580,7 +778,7 @@ impl App {
             NewAction::Wait => tr(self.es, "Wait").into(),
             NewAction::Sleep => tr(self.es, "Sleep").into(),
             NewAction::Brightness => tr(self.es, "Brightness").into(),
-            NewAction::Plugin(entry) => entry.label.clone(),
+            NewAction::Plugin(entry) => entry.shown(self.es).to_owned(),
         }
     }
     /// An action lands on a key: added to an existing one, or a key is created for it.
@@ -611,6 +809,40 @@ impl App {
         sent
     }
     fn pump(&mut self, ctx: &egui::Context) {
+        self.pump_notices();
+        if self.pump_replies(ctx).is_break() {
+            return;
+        }
+        if matches!(
+            self.updates.installation(),
+            crate::updates::Installation::Ready
+                | crate::updates::Installation::HandingOff
+                | crate::updates::Installation::Relayed
+        ) {
+            return;
+        }
+        if self.reconnect_needed && !self.worker.busy() {
+            self.reconnect_needed = false;
+            let _ = self.worker.submit(Job::Connect);
+        }
+        self.pump_service(ctx);
+        self.pump_reads();
+        if self.connected && (self.image_cleanup_disconnect || !self.discarded_imports.is_empty()) {
+            // The UI may otherwise sleep indefinitely after a busy cleanup reply.
+            // While a job is in flight its worker owns the next wake.
+            let delay = self
+                .image_cleanup_due
+                .saturating_duration_since(Instant::now());
+            if !delay.is_zero() || !self.worker.busy() {
+                ctx.request_repaint_after(delay);
+            }
+        }
+        if self.styled.as_ref() != Some(&self.palette) {
+            Look::new(&self.palette).apply(ctx);
+            self.styled = Some(self.palette.clone());
+        }
+    }
+    fn pump_notices(&mut self) {
         if let Some(notices) = &self.notices {
             let (connection, changed) = notices.take();
             if connection == Some(true) {
@@ -633,7 +865,8 @@ impl App {
                         self.plugins.visual_due = true;
                     }
                     rad_api::NoticeKind::Inspector => {
-                        self.inspect_needed = self.selected().is_some()
+                        self.inspect_needed = self.selected().is_some();
+                        self.ahead.forget_inspections();
                     }
                     rad_api::NoticeKind::Overview => self.overview_due = true,
                     rad_api::NoticeKind::Execution => self.result_due = true,
@@ -647,531 +880,6 @@ impl App {
                     rad_api::NoticeKind::Dependencies => self.plugins.dependencies.reset(),
                 }
             }
-        }
-        let polled = self.worker.poll();
-        match &polled {
-            Polled::Failed { unsent } => self.worker_lost(ctx, true, *unsent),
-            Polled::Closed { unsent } => self.worker_lost(ctx, false, *unsent),
-            Polled::Ready(_) | Polled::Pending => {}
-        }
-        if let Polled::Ready(event) = polled {
-            self.finish_application_catalog(&event.result);
-            // Some handlers finish this turn early; keep newly invalidated work runnable.
-            ctx.request_repaint();
-            self.palette = event.palette;
-            // One recovery attempt per lost RPC, including a definitely-unsent mutation.
-            // A failed Connect starts disconnected, so it cannot trigger a retry loop.
-            let connection_lost = self.connected && !event.connected;
-            // Connecting says nothing of the worker's health; any other answer does.
-            if matches!(&event.result, Ok(reply) if !matches!(reply, Reply::Connected)) {
-                self.worker_respawn.answered();
-            }
-            self.connected = event.connected;
-            match event.result {
-                Ok(Reply::PluginApplied(r)) => {
-                    self.plugins.form_pending = false;
-                    if r.status == rad_client::response::Status::Applied {
-                        self.plugins.form = None;
-                        // A plugin's settings come back with what was just saved.
-                        self.plugins.settings_asked = None;
-                        self.force = true;
-                        self.inspect_needed = self.selected().is_some();
-                        self.say(tr(self.es, "Saved"));
-                    } else {
-                        self.warn(tr(self.es, "Not confirmed — draft retained"));
-                    }
-                }
-                Ok(Reply::PluginCatalog(catalog)) => {
-                    self.plugins.catalog = catalog;
-                    self.plugins.catalog_loaded = true;
-                }
-                Ok(Reply::Plugins { catalog, status }) => {
-                    self.plugins.catalog_loaded = true;
-                    self.plugins.catalog = catalog;
-                    let selection_changed = self.plugins.status["items"] != status["items"];
-                    self.plugins.resources.retain(|id, (version, _)| {
-                        status["items"].as_array().is_some_and(|items| {
-                            items.iter().any(|item| {
-                                item["id"] == *id
-                                    && item["selected"]
-                                        == serde_json::to_value(*version).expect("version")
-                            })
-                        })
-                    });
-                    self.plugins.status = status;
-                    if selection_changed {
-                        self.plugins.dependencies.reset();
-                    }
-                }
-                Ok(Reply::PluginForm { target, loaded }) => {
-                    self.plugins.accept_form(target, loaded);
-                }
-                Ok(Reply::PluginVisuals { revision, visuals }) => {
-                    self.accept_plugin_visuals(ctx, &revision, visuals);
-                }
-                Err(e) => {
-                    // The runtime did not explain: nothing is retried until something changes.
-                    self.recovery_due = false;
-                    if matches!(self.recovery, crate::recovery::Mode::Asking) {
-                        self.recovery = Default::default();
-                    }
-                    if connection_lost {
-                        self.reconnect_needed = true;
-                        self.force = true;
-                        self.overview_due = true;
-                        self.inspect_needed = self.selected().is_some();
-                    }
-                    if event.plugin_dependencies {
-                        self.plugins.dependencies.fail(&e);
-                        if e.code == "cursor_expired" {
-                            return;
-                        }
-                    }
-                    if e.unknown {
-                        self.resolving_unknown = true;
-                        self.force = true;
-                        if !event.connected {
-                            self.reconnect_needed = true;
-                        }
-                        self.plugins.dependencies.reset();
-                        self.plugins.dependency_status_due = true;
-                    }
-                    if event.plugin_manifest {
-                        self.plugins.manifest_pending = None;
-                        self.plugins.manifest_invalidated = false;
-                    }
-                    if event.plugin_admin {
-                        self.plugins.admin_pending = false;
-                        if let Some(change) = e.source_change.clone() {
-                            self.plugins.source_refused(change);
-                        }
-                    }
-                    if event.plugin_apply {
-                        self.plugins.form_pending = false;
-                        if e.unknown
-                            && let Some((crate::plugins::FormTarget::Settings(id), _)) =
-                                self.plugins.form.as_ref()
-                        {
-                            self.plugins.settings_reload = Some(id.clone());
-                            self.plugins.form = None;
-                        }
-                    }
-                    if event.plugin_form {
-                        self.plugins.form_loading = false;
-                    }
-                    if event.plugin_visual {
-                        for face in self.plugins.visuals.values_mut() {
-                            face.state = "stale".into();
-                        }
-                    }
-                    if !event.connected {
-                        self.plugins.visuals.clear();
-                        self.plugins.status = Value::Null;
-                        self.plugins.dependencies.reset();
-                        self.plugins.dependency_credentials = None;
-                        self.credentials.clear();
-                    }
-                    self.attempted = true;
-                    self.pending_action = None;
-                    self.icon_candidate = None;
-                    self.icon_asked = false;
-                    if event.transfer_job || !event.connected {
-                        self.transfer_active = false;
-                    }
-                    if matches!(e.code.as_str(), "not_found" | "result_expired") {
-                        self.control.terminal();
-                    }
-                    let reason = crate::status::describe_failure(&e, self.es);
-                    if e.unknown {
-                        self.say(format!(
-                            "{}: {reason}",
-                            tr(self.es, "Checking what changed…")
-                        ));
-                    } else if e.code == "runtime_unavailable" {
-                        // The bar already says so, next to the way out.
-                        self.say("");
-                    } else {
-                        self.warn(reason);
-                    }
-                    self.message_code = match &e.cause {
-                        Some(cause) => format!("{}: {cause}", e.code),
-                        None => e.code.clone(),
-                    };
-                    if e.code == "runtime_unavailable" || e.code == "deadline_exceeded" {
-                        self.connected = false;
-                    }
-                }
-                Ok(Reply::RecoveryRequired) => self.enter_recovery(),
-                Ok(Reply::Connected) => {
-                    self.recovery = Default::default();
-                    self.recovery_due = false;
-                    self.machine = None;
-                    self.machine_due = true;
-                    self.plugins.reconnect();
-                    self.credentials.clear();
-                    self.attempted = true;
-                    self.connected = true;
-                    self.force = true;
-                    self.overview_due = true;
-                    self.catalog_due = Some(0);
-                    self.say("");
-                }
-                Ok(Reply::Refresh(r)) => {
-                    if !r.status.is_null() {
-                        if self.navigation.screen() == crate::screens::Screen::Keys
-                            || self.settings.is_null()
-                        {
-                            self.settings = r.status["settings"].clone();
-                        } else if let Some(settings) = r.status["settings"].as_object() {
-                            // A native action may publish brightness while Settings is open.
-                            // Follow untouched fields without discarding the user's drafts.
-                            for (field, value) in settings {
-                                if self.settings.get(field) == self.status["settings"].get(field) {
-                                    self.settings[field] = value.clone();
-                                }
-                            }
-                        }
-                        if self.status["view_revision"] != r.status["view_revision"] {
-                            self.plugins.dependencies.reset();
-                            self.plugins.dependency_status_due = true;
-                            self.plugins.catalog_loaded = false;
-                        }
-                        self.status = r.status;
-                    }
-                    if self.resolving_unknown {
-                        self.resolving_unknown = false;
-                        self.say(tr(
-                            self.es,
-                            "State refreshed — check your change before trying again",
-                        ));
-                    }
-                    if let Some(board) = r.board {
-                        let changed_folder = self
-                            .board
-                            .as_ref()
-                            .is_none_or(|old| old.folder["id"] != board.folder["id"]);
-                        let refs: std::collections::BTreeSet<_> = board
-                            .buttons
-                            .iter()
-                            .filter_map(|b| b.appearance["image"].as_str())
-                            .map(str::to_owned)
-                            .collect();
-                        self.textures.retain(|key, _| refs.contains(key));
-                        self.image_attempts.clear();
-                        if self.board.as_ref().is_none_or(|old| {
-                            old.folder["view_revision"] != board.folder["view_revision"]
-                        }) {
-                            self.plugins.visuals.clear();
-                        }
-                        if self
-                            .inspection
-                            .as_ref()
-                            .is_some_and(|inspection| !crate::session::coherent(&board, inspection))
-                        {
-                            self.inspection = None;
-                            self.inspect_needed = self.selected().is_some();
-                        }
-                        self.board = Some(board);
-                        if changed_folder {
-                            self.app_picker.cancel();
-                            self.plugins.clear_form();
-                            self.control.select(None);
-                            self.selected_slot = None;
-                            self.inspection = None;
-                        } else {
-                            self.follow_selection();
-                        }
-                        if let Some((position, action)) = self.pending_action.take()
-                            && let Some(id) = self.slot_id(position)
-                        {
-                            self.select(position, Some(id.clone()));
-                            self.add_action(&id, &action);
-                        }
-                    }
-                }
-                Ok(Reply::Inspection(v)) => {
-                    if self
-                        .board
-                        .as_ref()
-                        .is_some_and(|board| !crate::session::coherent(board, &v))
-                    {
-                        self.force = true;
-                        self.inspect_needed = self.selected().is_some();
-                        self.inspection = None;
-                        return;
-                    }
-                    if v.button["id"].as_str() == self.control.selected() {
-                        self.draft = Draft::load(&v);
-                        self.inspection = Some(v);
-                    }
-                }
-                Ok(Reply::Response { operation, .. }) if operation == "launcher_catalog" => {} // Handled by finish_application_catalog.
-                Ok(Reply::Response {
-                    operation,
-                    response: r,
-                }) if operation == "result" => {
-                    if let rad_api::ResponseData::Execution(result) = r.data {
-                        let state = match result.state {
-                            rad_api::ExecutionState::Running => "running",
-                            rad_api::ExecutionState::Succeeded => "succeeded",
-                            rad_api::ExecutionState::Failed => "failed",
-                            rad_api::ExecutionState::TimedOut => "timed_out",
-                        };
-                        self.say_run(&json!(result.execution_id), state);
-                        if result.state != rad_api::ExecutionState::Running {
-                            self.control.terminal();
-                        }
-                    }
-                }
-                Ok(Reply::NoAppIcon) => {
-                    if std::mem::take(&mut self.icon_asked) {
-                        self.say(tr(
-                            self.es,
-                            "This application has no PNG or JPEG icon to use",
-                        ));
-                    }
-                }
-                Ok(Reply::Response {
-                    operation,
-                    response: r,
-                }) => {
-                    self.icon_asked = false;
-                    if operation == "plugin_manifest" {
-                        if let rad_api::ResponseData::PluginManifest(view) = r.data
-                            && let Err(error) = self.plugins.accept_manifest(view)
-                        {
-                            self.warn(crate::status::describe_failure(&error, self.es));
-                        }
-                        return;
-                    }
-                    if operation == "plugin_log" {
-                        if let rad_api::ResponseData::PluginLog(log) = r.data
-                            && log.plugin_id == self.plugins.log_selected
-                        {
-                            self.plugins.log = Some(log);
-                        }
-                        return;
-                    }
-                    if operation == "plugin_dependencies" {
-                        if let Err(error) = self.plugins.dependencies.accept(
-                            serde_json::to_value(r.data).expect("typed dependency projection"),
-                        ) && error.code != "cursor_expired"
-                        {
-                            self.warn(crate::status::describe_failure(&error, self.es));
-                            self.message_code = error.code;
-                        }
-                        return;
-                    }
-                    if self.recovery_response(&operation, &r)
-                        || self.machine_response(&operation, &r)
-                    {
-                        return;
-                    }
-                    if operation == "restore_commit" && self.plugins.restore_result(r.status) {
-                        self.credentials.clear();
-                        self.navigation.open(crate::screens::Section::Plugins);
-                        self.say(tr(self.es, "Configuration restored"));
-                        self.force = true;
-                        self.inspect_needed = self.selected().is_some();
-                        return;
-                    }
-                    if operation == "plugin_retry" {
-                        self.plugins.dependency_status_due = true;
-                        self.say(tr(self.es, "Plugin will retry when needed"));
-                        return;
-                    }
-                    if operation == "plugin_admin" {
-                        self.plugins.admin_pending = false;
-                        self.plugins.dependency_status_due = true;
-                        self.plugins.status["state"] = json!("preparing");
-                        self.say(tr(self.es, "Preparing — not yet activated"));
-                        return;
-                    }
-                    // The worker decides against what the runtime now holds: the key takes
-                    // the icon only if that application is its top action and it has no image.
-                    if operation == "add_action"
-                        && let Some((button, application)) = self.icon_candidate.take()
-                    {
-                        let _ = self.worker.enqueue(Job::AppIcon {
-                            button,
-                            application: Some(application),
-                        });
-                    }
-                    if r.status == rad_client::response::Status::Admitted
-                        && let rad_api::ResponseData::Admitted(data) = &r.data
-                    {
-                        self.control.admitted(data.execution_id.clone());
-                        self.result_due = true;
-                    }
-                    match r.status {
-                        rad_client::response::Status::Admitted => {
-                            if let rad_api::ResponseData::Admitted(data) = &r.data {
-                                self.say_run(&json!(data.execution_id), "running")
-                            }
-                        }
-                        rad_client::response::Status::Applied => self.say(tr(self.es, "Saved")),
-                        _ => self.say(tr(self.es, "Updated")),
-                    };
-                    self.force = true;
-                    self.inspect_needed = self.selected().is_some();
-                }
-                Ok(Reply::Image { reference, pixels }) => {
-                    if self.board.as_ref().is_some_and(|b| {
-                        b.buttons.iter().any(|b| b.appearance["image"] == reference)
-                    }) {
-                        let image =
-                            egui::ColorImage::from_rgba_unmultiplied(pixels.size, &pixels.rgba);
-                        self.textures.insert(
-                            reference.clone(),
-                            ctx.load_texture(reference, image, Default::default()),
-                        );
-                    }
-                }
-                Ok(Reply::Theme) => {}
-                Ok(Reply::TransferProgress(n)) => {
-                    self.transfer_active = true;
-                    self.say(format!("{} {n}", tr(self.es, "Transferred bytes:")));
-                }
-                Ok(Reply::TransferFinished { kind, data, path }) => {
-                    self.transfer_active = false;
-                    match kind {
-                        TransferKind::Image => {
-                            self.draft.image = string(&data["media_ref"]);
-                            self.image_path.clear();
-                            self.say(tr(self.es, "Image prepared: save within 60 seconds"));
-                        }
-                        TransferKind::Restore => {
-                            self.restore_token = data["transfer_id"].as_str().map(str::to_owned);
-                            let count = data["summary"]["plugins_count"].as_u64();
-                            self.restore_summary = match count {
-                                Some(count) => format!(
-                                    "{} · {count} plugins",
-                                    tr(
-                                        self.es,
-                                        "This backup will replace your current configuration"
-                                    )
-                                ),
-                                None => tr(
-                                    self.es,
-                                    "This backup will replace your current configuration",
-                                )
-                                .into(),
-                            };
-                        }
-                        TransferKind::Export => {
-                            self.say(tr(self.es, "Export finished"));
-                            if let Some(path) = path {
-                                self.backup_path = path.display().to_string();
-                                self.message_code = self.backup_path.clone();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if matches!(
-            self.updates.installation(),
-            crate::updates::Installation::Ready
-                | crate::updates::Installation::HandingOff
-                | crate::updates::Installation::Relayed
-        ) {
-            return;
-        }
-        if self.reconnect_needed && !self.worker.busy() {
-            self.reconnect_needed = false;
-            let _ = self.worker.submit(Job::Connect);
-        }
-        self.pump_service(ctx);
-        if !self.worker.busy() && self.connected {
-            let now = self.now_ms();
-            let next_image = self.board.as_ref().and_then(|b| {
-                b.buttons.iter().find_map(|button| {
-                    let reference = button.appearance["image"].as_str()?;
-                    if self.textures.contains_key(reference)
-                        || self.image_attempts.contains(reference)
-                    {
-                        return None;
-                    }
-                    Some((
-                        string(&button.entity["id"]),
-                        reference.to_owned(),
-                        string(&button.entity["view_revision"]),
-                    ))
-                })
-            });
-            let normal = self.recovery.is_normal();
-            match self.schedule.choose([
-                normal && (self.force || self.overview_due),
-                normal && self.result_due && self.control.result_request().is_some(),
-                self.transfer_active,
-                normal && self.inspect_needed,
-                normal && self.catalog_due.is_some_and(|due| now >= due),
-                normal && self.plugins.has_work(),
-                normal && next_image.is_some(),
-                normal && self.machine_due,
-                self.recovery_due,
-                normal && self.app_picker.is_due(now),
-            ]) {
-                Some(0) => {
-                    let force = std::mem::take(&mut self.force);
-                    let overview = std::mem::take(&mut self.overview_due)
-                        || self.status.is_null()
-                        || self.resolving_unknown;
-                    let _ = self.worker.submit(Job::Refresh {
-                        board: force,
-                        overview,
-                    });
-                }
-                Some(1) => {
-                    self.result_due = false;
-                    let _ = self
-                        .worker
-                        .submit(Job::Request(self.control.result_request().unwrap()));
-                }
-                Some(2) => {
-                    let _ = self.worker.submit(Job::TransferStep);
-                }
-                Some(3) => {
-                    self.inspect_needed = false;
-                    if let Some(id) = self.selected() {
-                        let _ = self.worker.submit(Job::Inspect(id));
-                    }
-                }
-                Some(4) => {
-                    self.catalog_due = None;
-                    self.request_application_catalog(launcher::CatalogTarget::Actions);
-                }
-                Some(5) => {
-                    self.poll_plugins();
-                }
-                Some(6) => {
-                    let (id, reference, revision) = next_image.unwrap();
-                    self.image_attempts.insert(reference.clone());
-                    let _ = self.worker.submit(Job::Image {
-                        id,
-                        reference,
-                        revision,
-                    });
-                }
-                Some(7) => {
-                    self.machine_due = false;
-                    let _ = self
-                        .worker
-                        .submit(Job::Request(Request::MachineSettings {}));
-                }
-                Some(8) => {
-                    self.recovery_due = false;
-                    let _ = self.worker.submit(Job::Request(Request::Recovery {}));
-                }
-                Some(9) => {
-                    self.request_application_catalog(launcher::CatalogTarget::Picker);
-                }
-                _ => {}
-            }
-        }
-        if self.styled.as_ref() != Some(&self.palette) {
-            Look::new(&self.palette).apply(ctx);
-            self.styled = Some(self.palette.clone());
         }
     }
     /// Work waiting for the worker that a repaint must start.
@@ -1188,6 +896,15 @@ impl App {
     /// Results of the credential and option-list workers; a dead one is replaced, within
     /// the same bound as the main worker.
     fn pump_auxiliary(&mut self, ctx: &egui::Context) {
+        if !self.connected {
+            self.icon_library.reset();
+        }
+        if self.icon_library.open
+            && (self.key_form_open() || self.navigation.screen() != crate::screens::Screen::Keys)
+        {
+            self.icon_library.cancel();
+        }
+        self.icon_library.pump(ctx);
         match self.credentials.pump(&mut self.credential_worker) {
             Pulse::Answered => self.credential_respawn.answered(),
             Pulse::Lost => {
@@ -1210,7 +927,8 @@ impl App {
             Pulse::Quiet => {}
         }
     }
-    /// Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) reach the runtime unless a text field wants them.
+    /// Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) reach the runtime unless a text field wants them;
+    /// Delete removes the selected key.
     fn shortcuts(&mut self, ctx: &egui::Context) {
         if !self.connected
             || !self.recovery.is_normal()
@@ -1228,6 +946,12 @@ impl App {
             self.send(Request::Redo {});
         } else if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Z)) {
             self.send(Request::Undo {});
+        } else if self.navigation.screen() == crate::screens::Screen::Keys
+            && !self.key_form_open()
+            && !egui::Popup::is_any_open(ctx)
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete))
+        {
+            self.delete_selected();
         }
     }
     /// The keys, the actions to drop on them and the panel of the selected one.
@@ -1242,11 +966,19 @@ impl App {
             )
             .show_separator_line(false)
             .show(ui, |ui| self.status_line(ui, look));
+        // The cap keeps content that outgrows the column from ever covering the editor.
         egui::Panel::right("actions")
             .default_size(260.)
+            .max_size(420.)
             .frame(look.panel(look.surface, 12))
             .show(ui, |ui| {
-                ui.add_enabled_ui(editable, |ui| self.actions(ui, look));
+                ui.add_enabled_ui(editable, |ui| {
+                    if self.icon_library.open && !self.key_form_open() {
+                        self.icon_library_panel(ui, look, editable);
+                    } else {
+                        self.actions(ui, look);
+                    }
+                });
             });
         // The keys come first: the inspector takes what a comfortable grid leaves over,
         // and in a short tile never more than what still shows all four rows.
@@ -1265,7 +997,9 @@ impl App {
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .show(ui, |ui| {
-                        ui.add_enabled_ui(editable, |ui| self.inspector(ui, look));
+                        ui.add_enabled_ui(editable && !self.icon_library.pending(), |ui| {
+                            self.inspector(ui, look)
+                        });
                     });
             });
         egui::CentralPanel::default()
@@ -1273,10 +1007,17 @@ impl App {
             .show(ui, |ui| {
                 ui.add_enabled_ui(!self.transfer_active, |ui| self.deck(ui, look));
             });
-        deck::drag_ghost(ui.ctx(), look);
+        self.drag_ghost(ui.ctx(), look);
     }
     /// Esc goes back, as the Back button does, once no text field or menu holds it.
     fn escape(&mut self, ctx: &egui::Context) {
+        if self.icon_library.open
+            && !egui::Popup::is_any_open(ctx)
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.icon_library.cancel();
+            return;
+        }
         let keys = self.navigation.screen() == crate::screens::Screen::Keys;
         if (keys && !self.key_form_open())
             || ctx.egui_wants_keyboard_input()
@@ -1294,6 +1035,10 @@ impl App {
 }
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let wait = self.frame_pacer.wait(Instant::now());
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+        }
         let ctx = ui.ctx().clone();
         if !self.wake_registered {
             let wake = ctx.clone();
@@ -1388,132 +1133,85 @@ impl eframe::App for App {
 }
 
 #[cfg(test)]
-mod connection_loss_tests {
-    use super::*;
-    #[test]
-    fn overview_bar_shows_plugin_attention_and_inaccessible_deck() {
-        let root =
-            std::env::temp_dir().join(format!("rad-editor-bar-no-runtime-{}", std::process::id()));
-        let mut app = App::with_preferences_path(root.clone(), root.join("no-theme"), None);
-        app.es = crate::preferences::Language::En;
-        app.connected = true;
-        app.status = serde_json::json!({"deck_state":"inaccessible", "plugins":[
-            {"id":"secret-technical-id", "code":"needs_credentials"},
-            {"id":"legacy", "code":"needs_update"},
-            {"id":"failed", "code":"failed"}
-        ]});
-        let ctx = egui::Context::default();
-        let output = ctx.run_ui(Default::default(), |ui| {
-            app.bar(ui, &Look::new(&Default::default()))
-        });
-        let texts: Vec<_> = output
-            .shapes
-            .iter()
-            .filter_map(|shape| {
-                if let egui::epaint::Shape::Text(t) = &shape.shape {
-                    Some(t.galley.job.text.as_str())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        for expected in [
-            "Deck inaccessible — editor available",
-            "Needs password",
-            "Needs update",
-            "Not working",
-            "Plugins",
-        ] {
-            assert!(texts.contains(&expected), "missing {expected}: {texts:?}");
-        }
-        assert!(
-            !texts
-                .iter()
-                .any(|text| text.contains("secret-technical-id"))
-        );
-        let plugins_button = output
-            .shapes
-            .iter()
-            .find_map(|shape| {
-                if let egui::epaint::Shape::Text(t) = &shape.shape {
-                    (t.galley.job.text == "Plugins").then(|| t.pos + t.galley.size() * 0.5)
-                } else {
-                    None
-                }
-            })
-            .unwrap();
-        let input = egui::RawInput {
-            events: vec![
-                egui::Event::PointerMoved(plugins_button),
-                egui::Event::PointerButton {
-                    pos: plugins_button,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: Default::default(),
-                },
-                egui::Event::PointerButton {
-                    pos: plugins_button,
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: Default::default(),
-                },
-            ],
-            ..Default::default()
-        };
-        let _ = ctx.run_ui(input, |ui| app.bar(ui, &Look::new(&Default::default())));
-        assert_eq!(
-            app.navigation.screen(),
-            crate::screens::Screen::Settings(crate::screens::Section::Plugins)
-        );
-    }
-    #[test]
-    fn not_applied_disconnect_attempts_one_reconnect_and_never_replays_mutation() {
-        let root =
-            std::env::temp_dir().join(format!("rad-editor-no-runtime-{}", std::process::id()));
-        let mut app = App::with_preferences_path(root.clone(), root.join("no-theme"), None);
-        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let record = sent.clone();
-        app.worker = crate::worker::Worker::spawn(move |job| {
-            record.lock().unwrap().push(match job {
-                Job::Request(Request::Undo {}) => "undo",
-                Job::Connect => "connect",
-                _ => panic!("unexpected job: {job:?}"),
-            });
-            crate::native::Event {
-                plugin_apply: false,
-                plugin_admin: false,
-                plugin_manifest: false,
-                plugin_dependencies: false,
-                plugin_form: false,
-                plugin_visual: false,
-                connected: false,
-                transfer_job: false,
-                palette: Palette::default(),
-                result: Err(crate::session::Error {
-                    code: "runtime_unavailable".into(),
-                    cause: None,
-                    source_change: None,
-                    unknown: false,
-                }),
-            }
-        });
-        app.connected = true;
-        app.send(Request::Undo {});
-        let ctx = egui::Context::default();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while app.worker.busy() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "reconnection must be bounded"
-            );
-            app.pump(&ctx);
-            std::thread::yield_now();
-        }
-        app.pump(&ctx);
-        assert_eq!(*sent.lock().unwrap(), ["undo", "connect"]);
-        assert!(!app.connected);
-    }
-}
-
+mod image_cleanup_tests;
+#[cfg(test)]
+mod reload_tests;
 #[cfg(test)]
 mod worker_loss_tests;
+
+#[cfg(test)]
+mod state_draft_tests {
+    use super::Draft;
+    #[test]
+    fn explicit_empty_face_is_not_human_edit_before_first_observation() {
+        let mut draft = Draft {
+            states: [("off".into(), rad_api::StateFace::default())].into(),
+            ..Default::default()
+        };
+        draft.initial_state(None, "off", false);
+        assert_eq!(
+            draft.state_faces(),
+            draft.states,
+            "an explicit empty face is unchanged"
+        );
+        draft.initial_state(Some("on"), "off", false);
+        assert_eq!(draft.state.as_deref(), Some("on"));
+        assert_eq!(
+            draft.states.get("off"),
+            Some(&rad_api::StateFace::default())
+        );
+    }
+    #[test]
+    fn first_observation_selects_real_tab_without_overriding_choice_or_draft() {
+        let mut draft = Draft::default();
+        draft.initial_state(None, "off", false);
+        assert_eq!(draft.state.as_deref(), Some("off"));
+        draft.initial_state(Some("on"), "off", false);
+        assert_eq!(draft.state.as_deref(), Some("on"));
+        draft.initial_state(Some("off"), "off", false);
+        assert_eq!(draft.state.as_deref(), Some("on"));
+        let mut chosen = Draft::default();
+        chosen.initial_state(None, "off", false);
+        chosen.state_initialized = true;
+        chosen.initial_state(Some("on"), "off", false);
+        assert_eq!(chosen.state.as_deref(), Some("off"));
+        let mut edited = Draft::default();
+        edited.initial_state(None, "off", false);
+        edited.text = "My draft".into();
+        edited.initial_state(Some("on"), "off", false);
+        assert_eq!(edited.state.as_deref(), Some("off"));
+        assert_eq!(edited.text, "My draft");
+        let mut library = Draft::default();
+        library.initial_state(None, "off", false);
+        library.initial_state(Some("on"), "off", true);
+        assert_eq!(library.state.as_deref(), Some("off"));
+    }
+    #[test]
+    fn tabs_preserve_both_faces_and_share_position_without_replacing_the_base() {
+        let mut draft = Draft {
+            base_face: rad_api::StateFace {
+                text: "Base".into(),
+                image: Some("base".into()),
+            },
+            text_position: "top".into(),
+            ..Default::default()
+        };
+        draft.select_state("muted".into());
+        draft.text = "Quiet".into();
+        draft.image = "first".into();
+        draft.select_state("unmuted".into());
+        assert!(draft.text.is_empty());
+        draft.text = "Live".into();
+        draft.image = "second".into();
+        draft.select_state("muted".into());
+        assert_eq!((&*draft.text, &*draft.image), ("Quiet", "first"));
+        let faces = draft.state_faces();
+        assert_eq!(faces.len(), 2);
+        assert_eq!(faces["unmuted"].image.as_deref(), Some("second"));
+        assert_eq!(draft.text_position, "top");
+        assert_eq!(draft.base_face.image.as_deref(), Some("base"));
+        draft.text.clear();
+        draft.image.clear();
+        assert!(!draft.state_faces().contains_key("muted"));
+    }
+}

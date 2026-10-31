@@ -72,6 +72,8 @@ pub(crate) struct Button {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Appearance {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub states: std::collections::BTreeMap<String, StateFace>,
     pub text: String,
     pub image: Option<String>,
     /// Absent while the position follows the image, as in every earlier document.
@@ -224,4 +226,11 @@ impl TryFrom<String> for BrightnessDirection {
             _ => Err("invalid brightness direction"),
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StateFace {
+    pub text: String,
+    pub image: Option<String>,
 }

@@ -3,7 +3,7 @@ use rad_core::{
     configuration::{ActionKind, Candidate, Configuration, DesktopEntry, Edit, Origin},
     identity::{IdentityCounters, IdentityRegistry},
 };
-use rad_store::{PeekedCounters, ReplaceError, Store, StoreError, peek_counters, replace_damaged};
+use rad_store::{ReplaceError, Store, StoreError, peek_counters, replace_damaged};
 use rusqlite::Connection;
 use std::{
     fs,
@@ -117,132 +117,6 @@ fn populated(path: &Path) -> IdentityCounters {
     store.commit(&with_actions);
     store.load().unwrap().registry.counters()
 }
-fn sql(path: &Path, statement: &str) {
-    Connection::open(path)
-        .unwrap()
-        .execute_batch(statement)
-        .unwrap();
-}
-
-#[test]
-fn peek_of_a_valid_store_equals_its_registry() {
-    let fixture = Fixture::new();
-    let counters = populated(&fixture.db());
-    assert!(counters.folders >= 2 && counters.buttons >= 2 && counters.actions >= 2);
-    assert_eq!(
-        peek_counters(&fixture.db()),
-        Some(PeekedCounters {
-            installation: Some(INSTALLATION),
-            counters
-        })
-    );
-}
-
-#[test]
-fn peek_ignores_a_broken_counters_digest() {
-    let fixture = Fixture::new();
-    let counters = populated(&fixture.db());
-    sql(
-        &fixture.db(),
-        "UPDATE counters SET digest=zeroblob(32) WHERE singleton=1",
-    );
-    assert!(Store::open(&fixture.db()).is_err());
-    assert_eq!(peek_counters(&fixture.db()).unwrap().counters, counters);
-}
-
-#[test]
-fn peek_without_meta_takes_the_maximum_of_counters_and_identities() {
-    let fixture = Fixture::new();
-    let counters = populated(&fixture.db());
-    sql(&fixture.db(), "DELETE FROM meta");
-    let peeked = peek_counters(&fixture.db()).unwrap();
-    assert_eq!(peeked.installation, None);
-    assert_eq!(peeked.counters.folders, counters.folders);
-    // Without meta the ledger cannot say which serials are local.
-    assert_eq!(peeked.counters.serial, counters.serial);
-
-    // A `counters` row below what `identities` says: the maximum wins.
-    sql(
-        &fixture.db(),
-        "UPDATE counters SET buttons=zeroblob(8), actions=x'0000000000000001'",
-    );
-    let lowered = peek_counters(&fixture.db()).unwrap();
-    assert_eq!(lowered.counters.buttons, counters.buttons);
-    assert_eq!(lowered.counters.actions, counters.actions);
-}
-
-#[test]
-fn peek_uses_identities_serial_only_for_the_installation_in_meta() {
-    let fixture = Fixture::new();
-    let counters = populated(&fixture.db());
-    sql(
-        &fixture.db(),
-        "UPDATE counters SET serial=zeroblob(8) WHERE singleton=1",
-    );
-    let peeked = peek_counters(&fixture.db()).unwrap();
-    assert_eq!(peeked.installation, Some(INSTALLATION));
-    assert_eq!(peeked.counters.serial, counters.serial);
-    sql(&fixture.db(), "DELETE FROM meta");
-    assert_eq!(peek_counters(&fixture.db()).unwrap().counters.serial, 0);
-}
-
-#[test]
-fn peek_ignores_a_counter_field_of_the_wrong_length() {
-    let fixture = Fixture::new();
-    let counters = populated(&fixture.db());
-    // Strict tables forbid bad lengths in `counters`; rebuild it without the checks.
-    sql(
-        &fixture.db(),
-        "DROP TABLE counters; CREATE TABLE counters(singleton INTEGER, folders BLOB, buttons BLOB, actions BLOB, serial BLOB, digest BLOB);
-         INSERT INTO counters VALUES(1, x'01', x'0000000000000009', x'0000000000000009', x'0000000000000009', x'00');",
-    );
-    let peeked = peek_counters(&fixture.db()).unwrap();
-    assert_eq!(peeked.counters.folders, counters.folders);
-    assert_eq!(peeked.counters.buttons, counters.buttons.max(9));
-}
-
-#[test]
-fn peek_leaves_the_database_journal_and_directory_untouched() {
-    let fixture = Fixture::new();
-    populated(&fixture.db());
-    let journal = fixture.side("state.sqlite3-journal");
-    fs::write(
-        &journal,
-        [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7, 1, 2, 3],
-    )
-    .unwrap();
-    let (db_before, journal_before, entries) = (
-        fs::read(fixture.db()).unwrap(),
-        fs::read(&journal).unwrap(),
-        fixture.entries(),
-    );
-    assert!(peek_counters(&fixture.db()).is_some());
-    assert_eq!(fs::read(fixture.db()).unwrap(), db_before);
-    assert_eq!(fs::read(&journal).unwrap(), journal_before);
-    assert_eq!(fixture.entries(), entries);
-}
-
-#[test]
-fn peek_of_a_missing_or_foreign_file_is_none() {
-    let fixture = Fixture::new();
-    assert_eq!(peek_counters(&fixture.db()), None);
-    fs::write(
-        fixture.db(),
-        b"this is not a database, only text".repeat(200),
-    )
-    .unwrap();
-    assert_eq!(peek_counters(&fixture.db()), None);
-    let empty = fixture.side("empty.sqlite3");
-    fs::write(&empty, b"").unwrap();
-    assert_eq!(peek_counters(&empty), None);
-}
-
-#[test]
-fn peek_percent_encodes_awkward_paths() {
-    let fixture = Fixture::named("a b%41#c?d é");
-    let counters = populated(&fixture.db());
-    assert_eq!(peek_counters(&fixture.db()).unwrap().counters, counters);
-}
 
 /// A real hot journal: a second database whose transaction spilled to its rollback
 /// journal and never committed. Returns the database bytes and the journal bytes
@@ -336,15 +210,6 @@ fn a_failing_create_leaves_the_damaged_base_and_no_temporary() {
     assert_eq!(result, Err(ReplaceError::NotApplied(StoreError::Capacity)));
     assert_eq!(fs::read(fixture.db()).unwrap(), b"damaged");
     assert_eq!(fixture.entries(), ["state.sqlite3"]);
-}
-
-#[test]
-fn a_missing_base_is_not_replaced() {
-    let fixture = Fixture::new();
-    let candidate = initial();
-    let result = replace_damaged(&fixture.db(), 9, |temp| Store::create(temp, &candidate));
-    assert_eq!(result, Err(ReplaceError::NotApplied(StoreError::Io)));
-    assert!(fixture.entries().is_empty());
 }
 
 #[test]

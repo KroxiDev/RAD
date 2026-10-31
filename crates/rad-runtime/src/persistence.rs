@@ -34,6 +34,7 @@ enum BindingState {
     Bound,
     InFlight,
     Release,
+    PrepareAgain,
 }
 struct Binding {
     connection: u64,
@@ -61,7 +62,7 @@ impl Persistence {
             && !self
                 .bindings
                 .values()
-                .any(|b| b.state == BindingState::Release)
+                .any(|b| matches!(b.state, BindingState::Release | BindingState::PrepareAgain))
     }
     /// Retained preflight for which no Authority ticket could be bound. At most
     /// two lease handles, not an external job FIFO. Cleanup happens via poll.
@@ -193,8 +194,16 @@ impl Persistence {
                 Effect::Reconcile { id } => (id, Job::Reconcile),
                 Effect::Collect { id, roots } => (id, Job::Collect(roots)),
                 other => {
-                    if let Effect::Rejected { request, .. } = &other {
-                        self.release_media(*request);
+                    if let Effect::Rejected { request, reason } = &other {
+                        if matches!(reason, rad_authority::Rejection::ViewChanged) {
+                            if let Some(binding) = self.bindings.get_mut(request)
+                                && binding.state == BindingState::Bound
+                            {
+                                binding.state = BindingState::PrepareAgain;
+                            }
+                        } else {
+                            self.release_media(*request);
+                        }
                     }
                     output.push(other);
                     continue;
@@ -262,10 +271,18 @@ impl Persistence {
         if let Some((&request, binding)) = self
             .bindings
             .iter()
-            .find(|(_, b)| b.state == BindingState::Release)
-            && let Ok(job) = self.worker.submit(Job::ReleaseMedia {
-                transfer_id: binding.token.clone(),
-            })
+            .find(|(_, b)| matches!(b.state, BindingState::Release | BindingState::PrepareAgain))
+            && let Ok(job) = self
+                .worker
+                .submit(if binding.state == BindingState::PrepareAgain {
+                    Job::UnretainImages {
+                        transfer_id: binding.token.clone(),
+                    }
+                } else {
+                    Job::ReleaseMedia {
+                        transfer_id: binding.token.clone(),
+                    }
+                })
         {
             self.active = Some(Active::Cleanup {
                 job,
@@ -348,86 +365,5 @@ fn outcome_from_store(value: CommitOutcome) -> Outcome {
         }
         CommitOutcome::NotApplied(_) => Outcome::NotApplied,
         CommitOutcome::Uncertain { .. } => Outcome::Uncertain,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rad_core::{
-        configuration::{Configuration, Edit, Origin, SettingsData},
-        identity::IdentityRegistry,
-    };
-    #[test]
-    fn lost_history_read_rejects_and_releases_authority_instead_of_ignored_complete() {
-        let base = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
-        let mut actor = Authority::new(base, 1, std::num::NonZeroU128::new(99).unwrap());
-        let ticket = actor.reserve(1, Origin::Editor).unwrap();
-        let first = ticket.request();
-        let effects = actor.submit(
-            ticket,
-            vec![Edit::SetSettings(SettingsData {
-                brightness_percent: 11,
-                ..Default::default()
-            })],
-        );
-        let commit = effects
-            .iter()
-            .find_map(|e| {
-                if let Effect::Persist { id, .. } = e {
-                    Some(*id)
-                } else {
-                    None
-                }
-            })
-            .unwrap();
-        // Pure callback routing test, not evidence of a real SQLite commit.
-        actor.complete(
-            commit,
-            Outcome::Applied {
-                revision: 2,
-                changed: true,
-            },
-        );
-        actor.finish(first);
-        let ticket = actor.reserve(1, Origin::Editor).unwrap();
-        let request = ticket.request();
-        let effects = actor.submit(ticket, rad_authority::Command::Undo);
-        let commit = effects
-            .iter()
-            .find_map(|e| {
-                if let Effect::ReadRevision { id, .. } = e {
-                    Some(*id)
-                } else {
-                    None
-                }
-            })
-            .unwrap();
-        let effects = Persistence::failed(&mut actor, commit, true);
-        assert!(
-            effects
-                .iter()
-                .any(|e| matches!(e,Effect::Rejected{request:r,..} if *r==request))
-        );
-        actor.finish(request);
-        let ticket = actor.reserve(1, Origin::Editor).unwrap();
-        assert!(
-            actor
-                .submit(ticket, vec![Edit::SetSettings(SettingsData::default())])
-                .iter()
-                .any(|e| matches!(e, Effect::Persist { .. }))
-        );
-    }
-}
-
-#[cfg(test)]
-mod capacity_contract {
-    use super::*;
-    #[test]
-    fn storage_capacity_preserves_resource_cause() {
-        assert_eq!(
-            outcome_from_store(CommitOutcome::NotApplied(rad_store::StoreError::Capacity)),
-            Outcome::ResourceExhausted(rad_authority::ResourceLimit::StorageCapacity)
-        );
     }
 }

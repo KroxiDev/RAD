@@ -9,6 +9,8 @@ pub struct FormDraft {
     pub fields: Vec<Option<String>>,
     pub dirty: bool,
     pub settings: bool,
+    /// What the plugin calls its fields and options in other languages.
+    pub texts: PluginTexts,
     fresh: bool,
     pub(crate) options: crate::options::OptionLists,
 }
@@ -34,6 +36,7 @@ impl FormDraft {
             fields,
             dirty: false,
             settings: false,
+            texts: PluginTexts::default(),
             fresh: false,
             options,
         }
@@ -45,16 +48,28 @@ impl FormDraft {
         let mut form = Self::load(definition, original);
         for (field, value) in form.definition.schema.fields.iter().zip(&mut form.fields) {
             if field.required {
-                *value = Some(if matches!(field.kind, FieldKind::Boolean) {
-                    "false".into()
-                } else {
-                    String::new()
+                // A fixed choice starts on the option the plugin lists first.
+                *value = Some(match &field.kind {
+                    FieldKind::Boolean => "false".into(),
+                    FieldKind::Choice { options } => {
+                        options.first().map(|o| o.value.clone()).unwrap_or_default()
+                    }
+                    _ => String::new(),
                 });
             }
         }
         form.fresh = true;
         form.dirty = true;
         form
+    }
+    pub fn set_texts(&mut self, key: &str, texts: PluginTexts) {
+        if let Some(definition) = texts
+            .action_definition(key)
+            .filter(|d| d.schema == self.definition.schema)
+        {
+            self.definition.visual = definition.visual.clone();
+        }
+        self.texts = texts;
     }
     pub fn compatible(&self) -> bool {
         self.fresh
@@ -184,6 +199,84 @@ pub struct CatalogEntry {
     pub visual: bool,
     pub ready: bool,
     pub gestures: Vec<rad_api::Gesture>,
+    pub texts: PluginTexts,
+}
+impl CatalogEntry {
+    pub fn linked_visual(&self) -> bool {
+        self.visual
+            && self.type_key.split_once('#').is_some_and(|(_, id)| {
+                self.texts
+                    .0
+                    .as_ref()
+                    .is_some_and(|m| m.actions.iter().any(|a| a.visual.as_deref() == Some(id)))
+            })
+    }
+    pub fn states(&self) -> &[rad_plugin_contract::VisualStateDefinition] {
+        self.type_key
+            .split_once('#')
+            .and_then(|(_, id)| self.texts.0.as_ref()?.visuals.iter().find(|v| v.id == id))
+            .map(|v| v.states.as_slice())
+            .unwrap_or_default()
+    }
+
+    /// The name the user reads, in their language when the plugin translates it.
+    pub fn shown(&self, language: crate::preferences::Language) -> &str {
+        self.texts.get(language, &self.label)
+    }
+}
+/// A plugin's own texts in other languages, from its manifest; shared by its catalog entries.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PluginTexts(Option<std::sync::Arc<rad_plugin_contract::Manifest>>);
+impl PluginTexts {
+    fn action_definition(&self, key: &str) -> Option<&Definition> {
+        let (plugin, action) = key.split_once(':')?;
+        self.0
+            .as_ref()
+            .filter(|m| m.id == plugin)?
+            .actions
+            .iter()
+            .find(|d| d.id == action)
+    }
+    pub fn binds_visual(&self, key: &str) -> bool {
+        self.action_definition(key)
+            .is_some_and(|d| d.visual.is_some())
+    }
+    pub fn bound_visual(&self, key: &str, parameters: &Value) -> Option<rad_api::VisualSource> {
+        let (plugin, _) = key.split_once(':')?;
+        let action = self.action_definition(key)?;
+        serde_json::from_value::<Parameters>(parameters.clone())
+            .ok()?
+            .validate(action)
+            .ok()?;
+        let manifest = self.0.as_ref()?;
+        let visual = action.visual.as_ref()?;
+        let definition = manifest.visuals.iter().find(|v| &v.id == visual)?;
+        let values = definition
+            .schema
+            .fields
+            .iter()
+            .filter_map(|field| {
+                parameters["values"]
+                    .get(&field.id)
+                    .map(|v| (field.id.clone(), v.clone()))
+            })
+            .collect();
+        Some(rad_api::VisualSource {
+            type_key: format!("{plugin}#{visual}"),
+            parameters: Some(rad_api::PluginParameters {
+                schema_version: definition.schema.version,
+                values,
+            }),
+        })
+    }
+
+    /// `text` as the plugin writes it for `language`, or `text` itself.
+    pub fn get<'a>(&'a self, language: crate::preferences::Language, text: &'a str) -> &'a str {
+        match &self.0 {
+            Some(manifest) => manifest.translate(language.code(), text),
+            None => text,
+        }
+    }
 }
 /// Owner of an action (`:`) or visual (`#`) type key; native types have no owner.
 pub(crate) fn plugin_id(type_key: &str) -> Option<&str> {
@@ -222,6 +315,7 @@ pub struct LoadedForm {
     pub original: Vec<u8>,
 }
 pub struct Visual {
+    pub state: Option<String>,
     pub id: String,
     pub revision: String,
     pub availability: String,
@@ -274,6 +368,7 @@ impl<P: Port> Session<P> {
                     visual: item.kind == rad_api::CatalogKind::Visual,
                     ready: item.ready,
                     gestures: item.gestures,
+                    texts: PluginTexts::default(),
                 });
             }
             if entries.len() > 1024 {
@@ -287,7 +382,52 @@ impl<P: Port> Session<P> {
                 return Err(bad());
             }
         }
+        let mut texts = std::collections::BTreeMap::new();
+        for entry in &mut entries {
+            let Some(plugin) = plugin_id(&entry.type_key).map(str::to_owned) else {
+                continue;
+            };
+            if !texts.contains_key(&plugin) {
+                let manifest = self.plugin_manifest(&plugin)?;
+                texts.insert(
+                    plugin.clone(),
+                    PluginTexts(manifest.map(std::sync::Arc::new)),
+                );
+            }
+            entry.texts = texts[&plugin].clone();
+        }
         Ok(entries)
+    }
+    /// The manifest the runtime has for `plugin_id`; `None` when it has no readable one.
+    fn plugin_manifest(
+        &mut self,
+        plugin_id: &str,
+    ) -> Result<Option<rad_plugin_contract::Manifest>, Error> {
+        match self.request(Request::PluginManifest {
+            plugin_id: plugin_id.into(),
+        }) {
+            Ok(response) => {
+                let rad_api::ResponseData::PluginManifest(view) = response.data else {
+                    return Err(bad());
+                };
+                if view.plugin_id != plugin_id {
+                    return Err(bad());
+                }
+                Ok(serde_json::from_value::<rad_plugin_contract::Manifest>(
+                    serde_json::to_value(view.document).map_err(|_| bad())?,
+                )
+                .ok()
+                .filter(|manifest| manifest.id == plugin_id))
+            }
+            Err(error)
+                if error.code == "not_found"
+                    || error.code == "plugin_missing"
+                    || error.code == "incompatible_plugin" =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
     }
     fn plugin_settings_form(&mut self, plugin_id: &str) -> Result<LoadedForm, Error> {
         let rad_api::ResponseData::PluginSettings(settings) = self
@@ -307,31 +447,7 @@ impl<P: Port> Session<P> {
             .map(|hex| decode_hex(hex, 16384))
             .transpose()?
             .unwrap_or_default();
-        let manifest = match self.request(Request::PluginManifest {
-            plugin_id: plugin_id.into(),
-        }) {
-            Ok(response) => {
-                let rad_api::ResponseData::PluginManifest(view) = response.data else {
-                    return Err(bad());
-                };
-                if view.plugin_id != plugin_id {
-                    return Err(bad());
-                }
-                serde_json::from_value::<rad_plugin_contract::Manifest>(
-                    serde_json::to_value(view.document).map_err(|_| bad())?,
-                )
-                .ok()
-                .filter(|manifest| manifest.id == plugin_id)
-            }
-            Err(error)
-                if error.code == "not_found"
-                    || error.code == "plugin_missing"
-                    || error.code == "incompatible_plugin" =>
-            {
-                None
-            }
-            Err(error) => return Err(error),
-        };
+        let manifest = self.plugin_manifest(plugin_id)?;
         let form = manifest
             .and_then(|manifest| manifest.settings)
             .map(|schema| {
@@ -341,6 +457,8 @@ impl<P: Port> Session<P> {
                     schema,
                     gestures: rad_plugin_contract::default_gestures(),
                     credential_slots: vec![],
+                    states: vec![],
+                    visual: None,
                     response_timeout: None,
                 };
                 let mut form = if settings.hex.is_some() {
@@ -458,6 +576,8 @@ impl<P: Port> Session<P> {
         let name = key.rsplit([':', '#']).next().ok_or_else(bad)?;
         let definition = Definition {
             gestures: rad_plugin_contract::default_gestures(),
+            states: vec![],
+            visual: None,
             response_timeout: None,
             id: name.into(),
             label: name.into(),
@@ -516,7 +636,7 @@ impl<P: Port> Session<P> {
             let color = d.color;
             let mut pixels = None;
             let has_image = d.image;
-            if has_image && availability != "unavailable" && revisions.get(id) != Some(&revision) {
+            if has_image && revisions.get(id) != Some(&revision) {
                 let mut bytes = vec![];
                 loop {
                     let rad_api::ResponseData::VisualChunk(chunk) = self
@@ -550,6 +670,7 @@ impl<P: Port> Session<P> {
                 pixels = Some(crate::preview::decode(&bytes)?);
             }
             out.push(Visual {
+                state: d.state,
                 id: id.clone(),
                 revision,
                 availability,
@@ -585,8 +706,18 @@ impl FormTarget {
                 plugin_id: plugin_id.clone(),
                 parameters: Some(serde_json::from_value(value).expect("validated settings draft")),
             },
-            Self::AddAction(button) => crate::commands::add_action(button, key, value),
+            Self::AddAction(button) => Request::Edit {
+                expected_revision: None,
+                changes: vec![rad_api::Change::AddAction {
+                    button_id: button.clone(),
+                    type_key: key.into(),
+                    parameters: rad_api::ActionParameters::Plugin(
+                        serde_json::from_value(value).expect("validated plugin draft"),
+                    ),
+                }],
+            },
             Self::Action(id) => Request::Edit {
+                expected_revision: None,
                 changes: vec![rad_api::Change::Set {
                     id: id.clone(),
                     edit: rad_api::FieldEdit::Parameters(rad_api::ActionParameters::Plugin(
@@ -595,6 +726,7 @@ impl FormTarget {
                 }],
             },
             Self::Visual(id) => Request::Edit {
+                expected_revision: None,
                 changes: vec![rad_api::Change::Set {
                     id: id.clone(),
                     edit: rad_api::FieldEdit::Visual(rad_api::VisualSource {
@@ -621,6 +753,7 @@ impl<P: Port> Session<P> {
                 Ok(v) => out.extend(v),
                 Err(e) if !self.is_open() => return Err(e),
                 Err(_) => out.push(Visual {
+                    state: None,
                     id: id.clone(),
                     revision: String::new(),
                     availability: "unavailable".into(),
@@ -645,4 +778,52 @@ pub fn accepts_action(actions: &[Value]) -> bool {
                 Some("return" | "enter_folder")
             )
         })
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+    #[test]
+    fn restored_form_recovers_link_metadata_so_unchanged_action_can_be_saved() {
+        let manifest = Document::new(include_bytes!("../../../plugins/audio/manifest.json"))
+            .unwrap()
+            .manifest(1, "x86_64-unknown-linux-gnu")
+            .unwrap();
+        let mut definition = manifest.actions[0].clone();
+        definition.visual = None;
+        let mut form = FormDraft::load(
+            definition,
+            br#"{"schema_version":1,"values":{"device":"@default","operation":"toggle"}}"#.to_vec(),
+        );
+        form.set_texts(
+            "org.rad.audio:microphone",
+            PluginTexts(Some(std::sync::Arc::new(manifest))),
+        );
+        assert_eq!(form.definition.visual.as_deref(), Some("microphone"));
+        form.dirty = form.definition.visual.is_some();
+        assert!(form.publish().unwrap().is_some());
+    }
+    #[test]
+    fn action_binding_copies_only_visual_fields_from_its_own_plugin() {
+        let manifest = Document::new(include_bytes!("../../../plugins/audio/manifest.json"))
+            .unwrap()
+            .manifest(1, "x86_64-unknown-linux-gnu")
+            .unwrap();
+        let texts = PluginTexts(Some(std::sync::Arc::new(manifest)));
+        let parameters =
+            json!({"schema_version":1,"values":{"device":"chosen-device","operation":"toggle"}});
+        let visual = texts
+            .bound_visual("org.rad.audio:microphone", &parameters)
+            .unwrap();
+        assert_eq!(visual.type_key, "org.rad.audio#microphone");
+        assert_eq!(
+            visual.parameters.unwrap().values,
+            [("device".into(), json!("chosen-device"))].into()
+        );
+        assert!(
+            texts
+                .bound_visual("other.plugin:microphone", &parameters)
+                .is_none()
+        );
+    }
 }

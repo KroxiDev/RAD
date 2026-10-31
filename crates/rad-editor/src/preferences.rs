@@ -65,38 +65,43 @@ impl Preferences {
         Ok(Self { language })
     }
     pub fn save(self, path: &Path) -> io::Result<()> {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-        let parent = path
-            .parent()
-            .filter(|p| p.is_absolute())
-            .ok_or_else(invalid)?;
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(parent)?;
-        static NEXT_TEMPORARY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let (mut file, mut temporary) = loop {
-            let nonce = NEXT_TEMPORARY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let temporary = path.with_extension(format!("json.{}.{nonce}.tmp", std::process::id()));
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&temporary)
-            {
-                Ok(file) => break (file, PendingFile(Some(temporary))),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(error) => return Err(error),
-            }
-        };
         let language = self.language.map(Language::code);
         let bytes = serde_json::to_vec(&serde_json::json!({"version":1,"language":language}))?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        fs::rename(temporary.0.as_ref().expect("unpublished temporary"), path)?;
-        temporary.0 = None;
-        fs::File::open(parent)?.sync_all()
+        write_private(path, &bytes)
     }
+}
+/// Replaces `path` with `bytes`, readable only by this user: temporary file, sync,
+/// atomic rename and sync of the directory. A failed attempt leaves `path` untouched.
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let parent = path
+        .parent()
+        .filter(|p| p.is_absolute())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not an absolute path"))?;
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(parent)?;
+    static NEXT_TEMPORARY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let (mut file, mut temporary) = loop {
+        let nonce = NEXT_TEMPORARY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temporary = path.with_extension(format!("json.{}.{nonce}.tmp", std::process::id()));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+        {
+            Ok(file) => break (file, PendingFile(Some(temporary))),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    fs::rename(temporary.0.as_ref().expect("unpublished temporary"), path)?;
+    temporary.0 = None;
+    fs::File::open(parent)?.sync_all()
 }
 fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "invalid editor preferences")

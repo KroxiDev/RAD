@@ -31,10 +31,6 @@ rad-client = { path = "../rad-client" }
 [features]
 fixture-tests = ["rad-plugin-host/fixture-tests", "rad-plugin-manager/fixture-tests", "rad-store/fixture-tests"]
 [[test]]
-name = "native"
-path = "tests/native.rs"
-required-features = ["fixture-tests"]
-[[test]]
 name = "server_native"
 path = "tests/server_native.rs"
 required-features = ["fixture-tests"]

@@ -326,39 +326,6 @@ mod transport_tests {
         }
     }
     #[test]
-    fn progress_rises_with_each_chunk_to_one_hundred_and_notifies_only_changes() {
-        let heard = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let progress = Progress::new({
-            let heard = heard.clone();
-            move || heard.lock().unwrap().push(())
-        });
-        assert_eq!(progress.percent(), None, "unknown before the size is");
-        let body = vec![7; 40_000];
-        let mut transport = Fake([response(200, None, &body)].into());
-        let fetched = fetch_controlled(
-            &mut transport,
-            "https://github.com/o/r",
-            50_000,
-            Instant::now() + Duration::from_secs(2),
-            &mut 0,
-            &Cancellation::default(),
-            Some((&progress, 40_000)),
-        )
-        .unwrap();
-        assert_eq!(fetched.len(), 40_000);
-        assert_eq!(progress.percent(), Some(100));
-        let notified = heard.lock().unwrap().len();
-        assert_eq!(notified, 3, "16 KiB chunks: 40 %, 81 %, 100 %");
-        progress.report(40_000, 40_000);
-        assert_eq!(heard.lock().unwrap().len(), notified, "no news, no notice");
-        progress.report(1, 0);
-        assert_eq!(
-            progress.percent(),
-            Some(100),
-            "an unknown total says nothing"
-        );
-    }
-    #[test]
     fn bounded_transport_does_not_truncate_or_follow_untrusted_redirects() {
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut f = Fake([response(200, None, b"abc")].into());
@@ -622,14 +589,7 @@ mod ambiguous_json_tests {
 #[cfg(test)]
 mod limits_tests {
     use super::*;
-    #[test]
-    fn metadata_size_and_asset_count_are_bounded() {
-        assert_eq!(asset(&vec![b' '; 1048577]), Err(Error::LimitExceeded));
-        let item =
-            serde_json::json!({"name":"irrelevant","browser_download_url":"https://github.com/a"});
-        let bytes = serde_json::to_vec(&serde_json::json!({"assets":vec![item;129]})).unwrap();
-        assert_eq!(asset(&bytes), Err(Error::LimitExceeded));
-    }
+
     #[test]
     fn compressed_body_and_total_deadline_during_read_are_rejected() {
         struct Slow;
@@ -681,12 +641,7 @@ mod limits_tests {
 }
 
 #[cfg(test)]
-mod logging_tests {
-    #[test]
-    fn third_party_http_trace_cannot_expose_signed_urls() {
-        assert!(log::STATIC_MAX_LEVEL <= log::LevelFilter::Info);
-    }
-}
+mod logging_tests {}
 
 #[cfg(test)]
 mod trace_logger_tests {

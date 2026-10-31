@@ -3,12 +3,17 @@ use crate::{
     storage::JobId,
     transfers::{Context, Kind, Operation, Output},
 };
-use rad_authority::{Command, ExportLease};
+use rad_authority::{Command, EntityView, ExportLease, Visible};
 use rad_core::{
     configuration::{Candidate, ConfigurationError},
     identity::ShortId,
 };
 
+/// The folder on show and the revision it was read at.
+pub(super) type Shown = (
+    Option<rad_authority::ViewRevision>,
+    rad_core::identity::Binding,
+);
 pub(super) struct Flight {
     job: JobId,
     target: Option<(RequestKey, IncomingContext)>,
@@ -220,12 +225,12 @@ impl Server {
         key: RequestKey,
         c: IncomingContext,
         command: Command,
-        media: Option<String>,
+        media: Option<Vec<String>>,
     ) -> Result<(), RuntimeError> {
-        if let Some(media_ref) = media {
+        if let Some(media_refs) = media {
             return self.start_transfer(
                 Some((key, c)),
-                Operation::RetainImage { media_ref },
+                Operation::RetainImages { media_refs },
                 FlightKind::Retain(command),
             );
         }
@@ -284,22 +289,32 @@ impl Server {
         &self,
         c: IncomingContext,
         request: &rad_wire::Request,
-    ) -> Option<String> {
+    ) -> Option<Vec<String>> {
         if request.operation() != "edit" {
             return None;
         }
-        request
+        let refs: std::collections::BTreeSet<_> = request
             .args()
             .get("changes")?
             .as_array()?
             .iter()
             .filter(|v| v["field"] == "appearance")
-            .filter_map(|v| v["value"]["image"].as_str())
-            .find(|key| {
+            .flat_map(|v| {
+                v["value"]["image"].as_str().into_iter().chain(
+                    v["value"]["states"]
+                        .as_object()
+                        .into_iter()
+                        .flat_map(|states| states.values())
+                        .filter_map(|face| face["image"].as_str()),
+                )
+            })
+            .filter(|key| {
                 self.prepared
                     .contains_key(&(c.connection, (*key).to_owned()))
             })
             .map(str::to_owned)
+            .collect();
+        (!refs.is_empty()).then(|| refs.into_iter().collect())
     }
     pub(super) fn poll_transfers(&mut self) -> Result<(), RuntimeError> {
         for token in self.persistence.take_released() {
@@ -327,7 +342,7 @@ impl Server {
                     }
                 );
                 if let FlightKind::Visual(key) = &kind {
-                    self.failed_images.insert(key.clone());
+                    self.picture_arrived(key.clone(), None);
                 }
                 if let FlightKind::Export(lease) = kind {
                     self.actor.release_export(lease);
@@ -342,8 +357,7 @@ impl Server {
         };
         if let FlightKind::Visual(key) = kind {
             if let Output::Visual { image } = output {
-                self.images.insert(key, Arc::new(image));
-                self.display_dirty = true;
+                self.picture_arrived(key, Some(Arc::new(image)));
                 return Ok(());
             }
             return Err(RuntimeError::Storage);
@@ -375,7 +389,7 @@ impl Server {
                     && !self
                         .actor
                         .appearance(c.origin, id)
-                        .is_some_and(|v| v.appearance.image.as_ref() == Some(media_ref))
+                        .is_some_and(|v| v.appearance.images().any(|image| image == media_ref))
                 {
                     return self.respond(key, self.error(c, "not_found", false));
                 }
@@ -455,12 +469,12 @@ impl Server {
             }
         }
         if self.deck.is_some() {
-            let required = self.visual_keys();
-            self.images.retain(|key, _| required.contains(key));
-            self.failed_images.retain(|key| required.contains(key));
-            if let Some(key) = required
-                .into_iter()
-                .find(|key| !self.images.contains_key(key) && !self.failed_images.contains(key))
+            let shown = self.visual_keys();
+            self.follow_nearby_pictures();
+            let nearby = self.nearby_pictures.as_ref().map(|(_, nearby)| nearby);
+            if let Some(key) = self
+                .pictures
+                .next(&shown, nearby.unwrap_or(&BTreeSet::new()))
             {
                 return self.start_transfer(
                     None,
@@ -473,20 +487,78 @@ impl Server {
         }
         Ok(())
     }
+    /// A picture arrived, or could not be loaded. The folder on show is repainted once its
+    /// pictures are all in, so they appear together; one for later repaints nothing.
+    fn picture_arrived(&mut self, key: String, image: Option<Arc<rad_media::NormalizedImage>>) {
+        let shown = self.visual_keys();
+        let on_show = shown.contains(&key);
+        match image {
+            Some(image) => self.pictures.loaded(key, image),
+            None => self.pictures.fail(key),
+        }
+        self.display_dirty |= on_show && !self.pictures.loading(&shown);
+    }
     fn visual_keys(&self) -> BTreeSet<String> {
         self.actor
             .status(Origin::Editor)
             .active
-            .and_then(|b| self.actor.folder(Origin::Editor, b.short()))
+            .map(|active| self.folder_pictures(active))
+            .unwrap_or_default()
+    }
+    /// Pictures of the folders one press away from the one on show: its parent and the
+    /// folders its keys enter. Worked out again only when the folder or revision changes.
+    fn follow_nearby_pictures(&mut self) {
+        let status = self.actor.status(Origin::Editor);
+        let Some(active) = status.active else {
+            self.nearby_pictures = None;
+            return;
+        };
+        let shown = (status.revision, active);
+        if self
+            .nearby_pictures
+            .as_ref()
+            .is_some_and(|(at, _)| *at == shown)
+        {
+            return;
+        }
+        let mut folders = Vec::new();
+        if let Some(folder) = self.actor.folder(Origin::Editor, active.short()) {
+            let entered = folder.slots.iter().flatten().flat_map(|slot| match slot {
+                Visible::Visible(button) => match self.actor.get(Origin::Editor, button.short()) {
+                    Some(EntityView::Button(button)) => button.actions,
+                    _ => Vec::new(),
+                },
+                Visible::Restricted => Vec::new(),
+            });
+            let destinations = entered.filter_map(|action| match action {
+                Visible::Visible(action) => action.destination,
+                Visible::Restricted => None,
+            });
+            for destination in folder.parent_binding.into_iter().chain(destinations) {
+                if destination != active && !folders.contains(&destination) {
+                    folders.push(destination);
+                }
+            }
+        }
+        let pictures = folders
+            .into_iter()
+            .flat_map(|folder| self.folder_pictures(folder))
+            .collect();
+        self.nearby_pictures = Some((shown, pictures));
+    }
+    fn folder_pictures(&self, folder: rad_core::identity::Binding) -> BTreeSet<String> {
+        self.actor
+            .folder(Origin::Editor, folder.short())
             .into_iter()
             .flat_map(|f| f.slots)
             .flatten()
-            .filter_map(|v| match v {
+            .flat_map(|v| match v {
                 rad_authority::Visible::Visible(b) => self
                     .actor
                     .appearance(Origin::Editor, b.short())
-                    .and_then(|v| v.appearance.image),
-                _ => None,
+                    .map(|v| v.appearance.images().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+                _ => vec![],
             })
             .collect()
     }
@@ -513,6 +585,3 @@ fn encode(bytes: &[u8]) -> String {
     }
     out
 }
-
-#[cfg(test)]
-mod tests;

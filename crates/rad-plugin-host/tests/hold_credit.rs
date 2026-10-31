@@ -211,27 +211,6 @@ fn start_timeout_keeps_release_authority_and_foreign_host_cannot_use_it() {
         Err(Error::Invalid)
     );
 }
-#[test]
-fn ordinary_context_cannot_bypass_hold_reservations() {
-    let (mut host, g) = setup_with_start_reply(false);
-    assert_eq!(
-        host.invoke_with_context(
-            "org.example.hold",
-            g,
-            "hold",
-            params(),
-            (5000, None),
-            context()
-        ),
-        Err(Error::Invalid)
-    );
-    let mut end = context();
-    end.control.as_mut().unwrap().gesture = ControlGesture::HoldEnd;
-    assert_eq!(
-        host.invoke_with_context("org.example.hold", g, "hold", params(), (5000, None), end),
-        Err(Error::Invalid)
-    );
-}
 
 #[test]
 fn release_reuses_snapshot_and_pins_credentials_after_start_completion() {

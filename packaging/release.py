@@ -107,6 +107,10 @@ def stage(binary_dir, output):
                 "Exec=rad-editor\n", "Exec=/usr/lib/rad/rad-editor\n").encode(),
         "usr/share/pixmaps/io.github.KroxiDev.RAD.png": (ROOT / "packaging/rad.png").read_bytes(),
         "usr/share/licenses/rust-action-deck/LICENSE": (ROOT / "LICENSE").read_bytes(),
+        "usr/share/licenses/rust-action-deck/third-party/phosphor/LICENSE":
+            (ROOT / "crates/rad-editor/assets/phosphor/LICENSE").read_bytes(),
+        "usr/share/licenses/rust-action-deck/third-party/phosphor/SOURCE.json":
+            (ROOT / "crates/rad-editor/assets/phosphor/SOURCE.json").read_bytes(),
         "usr/share/rad/release.json": (ROOT / "packaging/release.json").read_bytes(),
         "usr/share/polkit-1/actions/io.github.KroxiDev.RAD.update.policy":
             (ROOT / "packaging/io.github.KroxiDev.RAD.update.policy").read_bytes(),

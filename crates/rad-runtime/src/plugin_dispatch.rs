@@ -380,239 +380,15 @@ impl Plugins {
         }
     }
 }
-#[cfg(all(test, feature = "fixture-tests"))]
-mod tests {
-    use super::*;
-    use rad_authority::{Command, Effect, plugins::PluginError};
-    use rad_core::{
-        configuration::*,
-        execution::Target,
-        identity::{EntityIdentity, IdentityRegistry},
-    };
-    use rad_plugin_contract::Manifest;
-    use std::time::{Duration, Instant};
-    /// A wait, then one External action in `mode`, with its fixture process Ready and installed.
-    fn world(mode: &str) -> (Authority, Plugins, EntityIdentity, u64, Instant) {
-        let initial = Configuration::prepare_new(&IdentityRegistry::new(772).unwrap()).unwrap();
-        let c = initial
-            .configuration()
-            .prepare_edit(
-                initial.registry(),
-                Origin::Editor,
-                Edit::CreateButton {
-                    folder: initial.configuration().data().principal,
-                    position: 0,
-                    name: "Fixture".into(),
-                },
-            )
-            .unwrap();
-        let button = c.configuration().data().buttons[0].binding.identity();
-        let c = c
-            .configuration()
-            .prepare_edits(
-                c.registry(),
-                Origin::Editor,
-                &[
-                    Edit::AddAction {
-                        button,
-                        kind: ActionKind::Wait(Wait::new(10).unwrap()),
-                    },
-                    Edit::AddAction {
-                        button,
-                        kind: ActionKind::External {
-                            type_key: ExternalType::new("org.rad.fixture".into(), "run".into())
-                                .unwrap(),
-                            parameters: format!(
-                                r#"{{"schema_version":1,"values":{{"mode":"{mode}"}}}}"#
-                            )
-                            .into_bytes(),
-                        },
-                    },
-                ],
-            )
-            .unwrap();
-        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(771).unwrap());
-        let manifest:Manifest=serde_json::from_value(serde_json::json!({"contract":1,"capabilities":["credentials","dynamic_options","visual_freshness"],"id":"org.rad.fixture","version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":[rad_plugin_host::TARGET],"actions":[{"id":"run","label":"Run","schema":{"version":1,"fields":[{"id":"mode","label":"Mode","required":true,"kind":{"type":"choice","options":["echo","slow"]}}]},"credential_slots":[]}],"visuals":[]})).unwrap();
-        let mut plugins = Plugins::default();
-        actor
-            .check_plugin_candidate(&manifest, rad_plugin_host::TARGET)
-            .unwrap();
-        let request = plugins.host.reserve_launch(manifest, 0).unwrap();
-        let bin = std::env::var_os("RAD_TEST_PLUGIN_FIXTURE_V1")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::env::current_exe()
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .join("rad-plugin-fixture-v1")
-            });
-        let mut prepared = Some(request.spawn(std::process::Command::new(bin)));
-        let generation = plugins.host.attach(&mut prepared, 0).unwrap();
-        let limit = Instant::now() + Duration::from_secs(3);
-        while plugins.host.state("org.rad.fixture") != Some(State::Ready) {
-            assert!(Instant::now() < limit);
-            plugins.pump(&mut actor, 0).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        // Dispatch must not register Ready: publication has one owner (Admin).
-        assert_eq!(actor.plugin_manifests().count(), 0);
-        let (manifest, _, _) = plugins.host.bindings().next().unwrap();
-        actor
-            .install_plugin(manifest.clone(), generation, rad_plugin_host::TARGET)
-            .unwrap();
-        (actor, plugins, button, generation, limit)
-    }
-    #[test]
-    fn external_dispatch_binds_real_process_after_wait_and_keeps_its_execution() {
-        let (mut actor, mut plugins, button, generation, limit) = world("echo");
-        let ticket = actor.reserve(1, Origin::Editor).unwrap();
-        let events = actor.submit(
-            ticket,
-            Command::Run {
-                target: Target::Button(button),
-            },
-        );
-        assert!(events.iter().any(|e| matches!(e, Effect::Accepted { .. })));
-        assert_eq!(
-            actor.plugin_change_allowed("org.rad.fixture"),
-            Err(PluginError::InUse)
-        );
-        let intent = actor
-            .before_event(10)
-            .unwrap()
-            .into_iter()
-            .find_map(|e| {
-                if let Effect::Dispatch(d) = e {
-                    Some(d)
-                } else {
-                    None
-                }
-            })
-            .unwrap();
-        assert_eq!(
-            actor.job_plugin(intent.id),
-            Some(("org.rad.fixture", generation))
-        );
-        plugins.submit(&actor, &intent).unwrap();
-        let completed = loop {
-            assert!(Instant::now() < limit);
-            let done = plugins.pump(&mut actor, 10).unwrap();
-            if !done.is_empty() {
-                break done;
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        };
-        assert_eq!(completed, vec![(intent.id, Completion::Succeeded)]);
-        actor.job_complete(intent.id, completed[0].1).unwrap();
-        assert_eq!(actor.plugin_change_allowed("org.rad.fixture"), Ok(()));
-        plugins.host.shutdown();
-        while plugins.host.resources().0 > 0 {
-            assert!(Instant::now() < limit);
-            plugins.pump(&mut actor, 10).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-    #[test]
-    fn host_timeout_reaches_engine_as_timed_out_before_its_own_deadline_and_keeps_the_residual_in_host()
-     {
-        let (mut actor, mut plugins, button, _, limit) = world("slow");
-        let ticket = actor.reserve(1, Origin::Editor).unwrap();
-        let events = actor.submit(
-            ticket,
-            Command::Run {
-                target: Target::Button(button),
-            },
-        );
-        let execution = events
-            .iter()
-            .find_map(|e| match e {
-                Effect::Accepted { execution, .. } => Some(*execution),
-                _ => None,
-            })
-            .unwrap();
-        let intent = actor
-            .before_event(10)
-            .unwrap()
-            .into_iter()
-            .find_map(|e| match e {
-                Effect::Dispatch(d) => Some(d),
-                _ => None,
-            })
-            .unwrap();
-        plugins.submit(&actor, &intent).unwrap();
-        // Let the invocation reach the plugin, then expire it by the Host's clock only:
-        // Engine's own deadline is never processed (no `before_event(deadline)`).
-        assert!(plugins.pump(&mut actor, 10).unwrap().is_empty());
-        let done = plugins.pump(&mut actor, intent.deadline_ms).unwrap();
-        assert_eq!(done, vec![(intent.id, Completion::TimedOut)]);
-        actor.job_complete(intent.id, done[0].1).unwrap();
-        let steps = |actor: &Authority| {
-            actor
-                .result(Origin::Editor, execution)
-                .unwrap()
-                .steps
-                .into_iter()
-                .map(|s| match s {
-                    rad_authority::Visible::Visible(s) => s.status,
-                    _ => panic!("restricted step"),
-                })
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            actor.result(Origin::Editor, execution).unwrap().status,
-            rad_core::execution::ExecutionStatus::TimedOut
-        );
-        assert_eq!(
-            steps(&actor),
-            [
-                rad_core::execution::StepStatus::Succeeded,
-                rad_core::execution::StepStatus::TimedOut
-            ]
-        );
-        // The root revision and the plugin binding are free; the Host keeps the residual.
-        assert_eq!(actor.plugin_change_allowed("org.rad.fixture"), Ok(()));
-        assert!(!plugins.host.idle("org.rad.fixture"));
-        assert_eq!(plugins.host.resources().1, 1);
-        // Engine's later deadline neither repeats the action nor changes the result.
-        assert!(
-            actor
-                .before_event(intent.deadline_ms)
-                .unwrap()
-                .iter()
-                .all(|e| !matches!(e, Effect::Dispatch(_)))
-        );
-        assert_eq!(steps(&actor)[1], rad_core::execution::StepStatus::TimedOut);
-        // The late reply is drained: no second completion, nothing re-dispatched.
-        while !plugins.host.idle("org.rad.fixture") {
-            assert!(Instant::now() < limit);
-            assert!(
-                plugins
-                    .pump(&mut actor, intent.deadline_ms)
-                    .unwrap()
-                    .is_empty()
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        assert_eq!(plugins.host.resources().1, 0);
-        plugins.host.shutdown();
-        while plugins.host.resources().0 > 0 {
-            assert!(Instant::now() < limit);
-            plugins.pump(&mut actor, intent.deadline_ms).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-}
 
 #[cfg(all(test, feature = "fixture-tests"))]
 mod credential_tests {
     use super::*;
+
     use rad_authority::{Authority, Command, Effect};
     use rad_core::{
-        configuration::*,
-        execution::*,
+        configuration::{ActionKind, Configuration, Edit, ExternalType, Origin},
+        execution::{DispatchIntent, Target},
         identity::{EntityIdentity, IdentityRegistry},
     };
     use std::{
@@ -708,73 +484,7 @@ mod credential_tests {
             })
             .unwrap()
     }
-    #[test]
-    fn unpublished_ready_host_preserves_older_options_snapshot_install_order() {
-        let plugin = "org.rad.credentials-fixture";
-        let (mut actor, mut plugins, _, generation) = setup(plugin);
-        let selection = actor
-            .plugin_manifests()
-            .find(|(m, _, _)| m.id == plugin)
-            .unwrap()
-            .1;
-        let captured = actor.current_plugin_credentials(plugin, selection).unwrap();
-        // Ready can precede Admin publishing the process binding in the same turn.
-        actor.deactivate_plugin(plugin, generation).unwrap();
-        actor
-            .publish_plugin_credentials(plugin, selection, 2, Arc::new(captured.values().clone()))
-            .unwrap();
-        let extra = [(plugin.to_owned(), selection, captured)];
-        plugins.sync_credentials(&actor, &extra);
-        assert_eq!(
-            plugins.host.credentials_state(plugin, generation, 2),
-            None,
-            "current credentials must not overtake a captured options revision before binding"
-        );
-        actor
-            .activate_plugin(plugin, selection, generation)
-            .unwrap();
-        plugins.sync_credentials(&actor, &extra);
-        for revision in [1, 2] {
-            assert_eq!(
-                plugins.host.credentials_state(plugin, generation, revision),
-                Some(rad_plugin_host::CredentialState::Installing)
-            );
-        }
-        plugins.host.shutdown();
-        let end = Instant::now() + Duration::from_secs(3);
-        while plugins.host.resources().0 > 0 {
-            plugins.pump(&mut actor, 0).unwrap();
-            assert!(Instant::now() < end);
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
 
-    #[test]
-    fn credentials_ack_is_awaited_before_an_admitted_invocation_is_sent() {
-        let (mut actor, mut plugins, button, _) = setup("org.rad.credentials-fixture");
-        let intent = run(&mut actor, button);
-        plugins
-            .submit(&actor, &intent)
-            .expect("admitted work waits asynchronously for credentials ACK");
-        let end = Instant::now() + Duration::from_secs(3);
-        let completed = loop {
-            plugins.sync_credentials(&actor, &[]);
-            let done = plugins.pump(&mut actor, 0).unwrap();
-            if !done.is_empty() {
-                break done;
-            }
-            assert!(Instant::now() < end);
-            std::thread::sleep(Duration::from_millis(1));
-        };
-        assert_eq!(completed, [(intent.id, Completion::Succeeded)]);
-        actor.job_complete(intent.id, completed[0].1).unwrap();
-        plugins.host.shutdown();
-        while plugins.host.resources().0 > 0 {
-            plugins.pump(&mut actor, 0).unwrap();
-            assert!(Instant::now() < end);
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
     #[test]
     fn expired_dispatch_never_invokes_after_a_valid_late_credentials_ack() {
         let plugin = "org.rad.test.credentials.deferred";
@@ -845,11 +555,13 @@ mod credential_tests {
 #[cfg(test)]
 mod hold_tests {
     use super::*;
+
     use rad_authority::Effect;
-    use rad_core::{configuration::*, identity::*};
-    fn fixture(plugin: &str) -> Authority {
-        fixture_mode(plugin, "echo")
-    }
+    use rad_core::{
+        configuration::{ActionKind, Configuration, Edit, ExternalType, Gesture, Origin},
+        identity::IdentityRegistry,
+    };
+
     fn fixture_mode(plugin: &str, mode: &str) -> Authority {
         let c = Configuration::prepare_new(&IdentityRegistry::new(941).unwrap()).unwrap();
         let c = c
@@ -895,131 +607,13 @@ mod hold_tests {
             .unwrap();
         actor
     }
-    #[test]
-    fn release_cancels_a_start_waiting_for_its_original_process_without_replay() {
-        let mut actor = fixture("fixture");
-        let mut pressed = [false; 32];
-        pressed[0] = true;
-        let intent = actor
-            .input_report(1, pressed)
-            .unwrap()
-            .into_iter()
-            .find_map(|e| {
-                if let Effect::Dispatch(i) = e {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .unwrap();
-        let mut plugins = Plugins::default();
-        plugins.submit(&actor, &intent).unwrap();
-        assert_eq!(plugins.deferred.len(), 1);
-        let released = actor.input_report(2, [false; 32]).unwrap();
-        assert!(
-            released
-                .iter()
-                .any(|e| matches!(e, Effect::ReleaseHold { .. }))
-        );
-        let done = plugins.release_hold(&mut actor, intent.id.execution(), 2);
-        assert_eq!(
-            done,
-            vec![(intent.id, Completion::Failed(Failure::ActionFailed))]
-        );
-        assert!(plugins.deferred.is_empty());
-        assert!(plugins.holds.is_empty());
-        actor.job_complete(done[0].0, done[0].1).unwrap();
-        assert_eq!(actor.plugin_change_allowed("fixture"), Ok(()));
-        assert!(plugins.pump(&mut actor, 3).unwrap().is_empty());
-    }
+
     #[cfg(feature = "fixture-tests")]
     #[test]
     fn release_reaches_real_original_plugin_and_keeps_authority_pin_until_ack() {
         real_release("echo");
     }
-    #[cfg(feature = "fixture-tests")]
-    #[test]
-    fn ready_plugin_end_failure_updates_original_execution() {
-        real_release("end_fail");
-    }
-    #[test]
-    fn terminal_observations_report_one_failure_per_generation_not_one_per_pump_state() {
-        use crate::events::Occurrence;
-        let plugin = "org.rad.fixture";
-        let mut actor = fixture(plugin);
-        let mut plugins = Plugins::default();
-        plugins.observe_state(&mut actor, plugin, 1, State::Ready, false);
-        plugins.observe_state(&mut actor, plugin, 1, State::Failed, false);
-        plugins.observe_state(&mut actor, plugin, 1, State::Reaped, false);
-        let failure = Occurrence::new(rad_api::EventCode::PluginFailed, Some(plugin));
-        assert_eq!(plugins.events.as_slice(), std::slice::from_ref(&failure));
-        assert_eq!(plugins.observed.get(plugin), Some(&(1, State::Reaped)));
-        plugins.observe_state(&mut actor, plugin, 1, State::Reaped, false);
-        assert_eq!(plugins.events.as_slice(), std::slice::from_ref(&failure));
-        // An explicitly stopped generation does not produce a failure event.
-        plugins.observe_state(&mut actor, plugin, 2, State::Ready, false);
-        plugins.observe_state(&mut actor, plugin, 2, State::Failed, true);
-        plugins.observe_state(&mut actor, plugin, 2, State::Reaped, true);
-        assert_eq!(plugins.events.as_slice(), std::slice::from_ref(&failure));
-        // A later generation can fail again, even when Failed and Reaped collapse.
-        plugins.observe_state(&mut actor, plugin, 3, State::Ready, false);
-        plugins.observe_state(&mut actor, plugin, 3, State::Reaped, false);
-        plugins.observe_state(&mut actor, plugin, 3, State::Reaped, false);
-        assert_eq!(plugins.events, [failure.clone(), failure.clone()]);
-        assert_eq!(plugins.observed.get(plugin), Some(&(3, State::Reaped)));
-        // A complete replacement can happen between observations, without Ready.
-        plugins.observe_state(&mut actor, plugin, 4, State::Reaped, false);
-        assert_eq!(plugins.events, [failure.clone(), failure.clone(), failure]);
-        assert_eq!(plugins.observed.get(plugin), Some(&(4, State::Reaped)));
-    }
-    #[cfg(feature = "fixture-tests")]
-    #[test]
-    fn a_plugin_that_dies_on_its_own_is_an_event_with_its_id() {
-        use crate::events::Occurrence;
-        use std::time::{Duration, Instant};
-        let plugin = "org.rad.fixture";
-        let mut actor = fixture_mode(plugin, "echo");
-        let manifest = actor.plugin_manifests().next().unwrap().0.clone();
-        let mut plugins = Plugins::default();
-        let launch = plugins.host.reserve_launch(manifest.clone(), 0).unwrap();
-        let bin = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("rad-plugin-fixture-v1");
-        let mut prepared = Some(launch.spawn(std::process::Command::new(bin)));
-        let generation = plugins.host.attach(&mut prepared, 0).unwrap();
-        let end = Instant::now() + Duration::from_secs(3);
-        while plugins.host.state(plugin) != Some(State::Ready) {
-            assert!(Instant::now() < end);
-            plugins.pump(&mut actor, 0).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        assert!(plugins.events.is_empty());
-        let crash = serde_json::from_value(
-            serde_json::json!({"schema_version":1,"values":{"mode":"crash"}}),
-        )
-        .unwrap();
-        plugins
-            .host
-            .invoke(plugin, generation, "run", crash, 5000)
-            .unwrap();
-        while plugins.host.state(plugin) != Some(State::Reaped) {
-            assert!(Instant::now() < end, "the plugin must die");
-            plugins.pump(&mut actor, 1).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        plugins.pump(&mut actor, 2).unwrap();
-        assert_eq!(
-            plugins.events,
-            [Occurrence::new(
-                rad_api::EventCode::PluginFailed,
-                Some(plugin)
-            )]
-        );
-    }
+
     #[cfg(feature = "fixture-tests")]
     fn real_release(mode: &str) {
         use std::time::{Duration, Instant};

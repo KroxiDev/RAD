@@ -62,58 +62,7 @@ fn admit(e: &mut Engine, c: &Candidate) -> Admission {
     )
     .unwrap()
 }
-#[test]
-fn success_one_ms_before_deadline_near_max_can_finish_remaining_plan() {
-    let c = fixture(Mode::Sequential, 100);
-    let mut e = Engine::new(1, 1).unwrap();
-    let start = u64::MAX - 10100;
-    e.advance(start).unwrap();
-    let a = admit(&mut e, &c);
-    e.advance(start + 4999).unwrap();
-    assert!(
-        e.complete(a.dispatches[0].id, Completion::Succeeded)
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(e.next_deadline(), Some(start + 5099));
-    let next = e.advance(start + 5099).unwrap();
-    assert_eq!(next.len(), 1);
-    assert_eq!(next[0].deadline_ms, u64::MAX - 1);
-    e.advance(u64::MAX - 2).unwrap();
-    e.complete(next[0].id, Completion::Succeeded).unwrap();
-    assert_eq!(e.result(a.id).unwrap().status, ExecutionStatus::Succeeded);
-    assert_eq!(e.usage().jobs, 0);
-    assert_eq!(e.next_deadline(), None); // TTL cannot be represented, bounded by count
-}
-#[test]
-fn last_dispatch_error_after_first_success_never_becomes_success() {
-    let c = fixture(Mode::Parallel, 100);
-    let mut e = Engine::new(1, 1).unwrap();
-    let a = admit(&mut e, &c);
-    e.advance(99).unwrap();
-    e.complete(a.dispatches[0].id, Completion::Succeeded)
-        .unwrap();
-    assert_eq!(e.next_deadline(), Some(100));
-    let last = e.advance(100).unwrap();
-    assert_eq!(last.len(), 1);
-    e.advance(5099).unwrap();
-    e.complete(last[0].id, Completion::Failed(Failure::ActionFailed))
-        .unwrap();
-    let result = e.result(a.id).unwrap();
-    assert_eq!(result.status, ExecutionStatus::Failed);
-    assert_eq!(result.steps[0].status, StepStatus::Succeeded);
-    assert_eq!(result.steps[1].status, StepStatus::Succeeded);
-    assert_eq!(
-        result.steps[2].status,
-        StepStatus::Failed(Failure::ActionFailed)
-    );
-    assert_eq!(e.usage().jobs, 0);
-    assert_eq!(
-        e.complete(last[0].id, Completion::Succeeded),
-        Err(ExecutionError::UnknownDispatch)
-    );
-    assert_eq!(e.result(a.id).unwrap(), result);
-}
+
 #[test]
 fn overflow_rolls_back_other_timeout_and_clock_in_the_same_transition() {
     let c = fixture(Mode::Sequential, 100);

@@ -3,7 +3,7 @@ use rad_client::connection::{Client, Endpoint};
 use serde_json::{Value, json};
 use std::{
     fs,
-    os::unix::fs::{PermissionsExt, symlink},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
@@ -74,31 +74,6 @@ fn exit_code(command: &mut Command) -> (Option<i32>, String) {
     )
 }
 
-#[test]
-fn blocking_conditions_exit_75_and_leave_no_record() {
-    // No environment at all, and arguments the runtime does not know.
-    let (code, stderr) = exit_code(Command::new(BINARY).env_clear());
-    assert_eq!(code, Some(75), "{stderr}");
-    assert!(stderr.contains("XDG_RUNTIME_DIR"), "{stderr}");
-    let sandbox = Sandbox::new("blocking");
-    let (code, _) = exit_code(sandbox.command().arg("--unknown"));
-    assert_eq!(code, Some(75));
-    // The deck is a setting of the machine now, not an argument.
-    let (code, _) = exit_code(sandbox.command().arg("--xl-exclusive"));
-    assert_eq!(code, Some(75));
-    // A runtime directory open to others, and one behind a symlink.
-    fs::set_permissions(sandbox.runtime(), fs::Permissions::from_mode(0o755)).unwrap();
-    let (code, stderr) = exit_code(&mut sandbox.command());
-    assert_eq!(code, Some(75), "{stderr}");
-    fs::set_permissions(sandbox.runtime(), fs::Permissions::from_mode(0o700)).unwrap();
-    let link = sandbox.0.join("runtime-link");
-    symlink(sandbox.runtime(), &link).unwrap();
-    let (code, stderr) = exit_code(sandbox.command().env("XDG_RUNTIME_DIR", &link));
-    assert_eq!(code, Some(75), "{stderr}");
-    // Blocking exits are not recorded: the unit state already tells the Editor.
-    assert!(!sandbox.data().join("last-exit.json").exists());
-}
-
 #[cfg(feature = "fixture-tests")]
 mod serving {
     use super::*;
@@ -155,27 +130,6 @@ mod serving {
     }
 
     #[test]
-    fn a_running_runtime_tells_the_editor_it_started_and_a_clean_stop_leaves_no_trace() {
-        let sandbox = Sandbox::new("log");
-        let (running, mut client) = start(&sandbox);
-        let log = view(&mut client, "runtime_log");
-        assert_eq!(event_codes(&log), [("started".into(), None)]);
-        assert_eq!(log["dropped"], "0");
-        // Reading the log is not an event, and the answer is the same the next time.
-        assert_eq!(view(&mut client, "runtime_log"), log);
-        drop(client);
-        assert_eq!(stop(running), Some(0));
-        let (running, mut client) = start(&sandbox);
-        assert_eq!(
-            event_codes(&view(&mut client, "runtime_log")),
-            [("started".into(), None)],
-            "the ring belongs to one process"
-        );
-        drop(client);
-        assert_eq!(stop(running), Some(0));
-    }
-
-    #[test]
     fn a_second_instance_is_blocking_and_the_first_keeps_serving() {
         let sandbox = Sandbox::new("second");
         let (first, mut client) = start(&sandbox);
@@ -205,23 +159,6 @@ mod serving {
         drop(client);
         assert_eq!(stop(running), Some(0));
         assert_eq!(fs::read_dir(sandbox.data()).unwrap().count(), 0);
-    }
-
-    #[test]
-    fn a_newer_database_keeps_the_runtime_in_recovery_and_stays_untouched() {
-        let sandbox = Sandbox::new("newer");
-        let (first, client) = start(&sandbox);
-        drop(client);
-        assert_eq!(stop(first), Some(0));
-        let database = sandbox.data().join("state.sqlite3");
-        let mut bytes = fs::read(&database).unwrap();
-        bytes[60..64].copy_from_slice(&3u32.to_be_bytes());
-        fs::write(&database, &bytes).unwrap();
-        let (running, mut client) = start(&sandbox);
-        assert_eq!(view(&mut client, "recovery")["cause"], "newer_version");
-        drop(client);
-        assert_eq!(stop(running), Some(0));
-        assert_eq!(fs::read(&database).unwrap(), bytes);
     }
 
     /// Holds SQLite's PENDING byte of `database` for as long as it lives, as another

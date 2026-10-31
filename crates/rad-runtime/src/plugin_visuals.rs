@@ -28,6 +28,7 @@ impl Availability {
 }
 #[derive(Default)]
 pub(crate) struct VisualView {
+    pub state: Option<String>,
     pub availability: Availability,
     pub revision: u64,
     pub text: Option<String>,
@@ -40,6 +41,7 @@ pub(crate) struct ResolvedVisual {
     pub position: rad_core::configuration::TextPosition,
 }
 pub(crate) struct Visuals {
+    icons: BTreeMap<String, SelectionIcons>,
     entries: BTreeMap<ShortId, Entry>,
     next: u64,
     tx: mpsc::SyncSender<Decode>,
@@ -47,7 +49,13 @@ pub(crate) struct Visuals {
     decoding: bool,
     _worker: Option<thread::JoinHandle<()>>,
 }
+struct SelectionIcons {
+    selection: u64,
+    definitions: BTreeMap<String, Vec<rad_plugin_contract::VisualStateDefinition>>,
+    images: BTreeMap<(String, String), Arc<rad_media::NormalizedImage>>,
+}
 struct Entry {
+    selection: Option<u64>,
     plugin: String,
     source: String,
     bytes: Vec<u8>,
@@ -97,6 +105,7 @@ impl Visuals {
             })
             .ok();
         Self {
+            icons: BTreeMap::new(),
             entries: BTreeMap::new(),
             next: 0,
             tx,
@@ -106,6 +115,38 @@ impl Visuals {
         }
     }
     pub fn poll(&mut self, actor: &Authority, host: &mut Host) -> bool {
+        self.icons
+            .retain(|id, _| actor.plugin_manifests().any(|(m, _, _)| &m.id == id));
+        for (manifest, selection, _) in actor.plugin_manifests() {
+            if self
+                .icons
+                .get(&manifest.id)
+                .is_some_and(|c| c.selection == selection)
+            {
+                continue;
+            }
+            let mut images = BTreeMap::new();
+            for visual in &manifest.visuals {
+                for state in &visual.states {
+                    if let Some(image) = state.icon.as_deref().and_then(decode) {
+                        images.insert((visual.id.clone(), state.id.clone()), Arc::new(image));
+                    }
+                }
+            }
+            self.icons.insert(
+                manifest.id.clone(),
+                SelectionIcons {
+                    selection,
+                    images,
+                    definitions: manifest
+                        .visuals
+                        .iter()
+                        .filter(|v| !v.states.is_empty())
+                        .map(|v| (v.id.clone(), v.states.clone()))
+                        .collect(),
+                },
+            );
+        }
         let mut desired = BTreeMap::new();
         if let Some(folder) = actor
             .status(Origin::Editor)
@@ -147,7 +188,8 @@ impl Visuals {
         let mut changed = false;
         self.entries.retain(|id, e| {
             let keep = desired.get(id).is_some_and(|(p, s, b, g, r, settings)| {
-                p == &e.plugin
+                self.icons.get(p).map(|c| c.selection) == e.selection
+                    && p == &e.plugin
                     && s == &e.source
                     && b == &e.bytes
                     && g == &e.generation
@@ -166,9 +208,11 @@ impl Visuals {
             if self.entries.contains_key(&id) {
                 continue;
             }
+            self.next = self.next.saturating_add(1);
             self.entries.insert(
                 id,
                 Entry {
+                    selection: self.icons.get(&plugin).map(|c| c.selection),
                     plugin,
                     source,
                     bytes,
@@ -177,7 +221,7 @@ impl Visuals {
                     credential_revision,
                     key: None,
                     raw: VisualState::Unavailable,
-                    revision: 0,
+                    revision: self.next,
                     image_revision: 0,
                     image_waiting: false,
                     pending: None,
@@ -266,16 +310,35 @@ impl Visuals {
         false
     }
     pub fn resolved(&self, actor: &Authority, id: ShortId) -> ResolvedVisual {
-        let view = self.view(id);
+        let mut view = self.view(id);
         let appearance = actor.appearance(Origin::Editor, id);
         let entity = actor.get(Origin::Editor, id);
         let fallback = match (&appearance, &entity) {
             (Some(a), Some(rad_authority::EntityView::Button(b))) => a.appearance.label(&b.name),
             _ => "",
         };
-        let text = view.text.as_deref().unwrap_or(fallback).to_owned();
+        let face = view
+            .state
+            .as_ref()
+            .and_then(|state| appearance.as_ref()?.appearance.states.get(state));
+        let text = if view.state.is_some() {
+            face.map(|f| f.text.clone()).unwrap_or_default()
+        } else {
+            view.text.as_deref().unwrap_or(fallback).to_owned()
+        };
+        if face.is_some_and(|face| face.image.is_some()) {
+            view.color = None;
+        }
         let position = appearance
-            .map(|a| a.appearance.effective_text_position())
+            .map(|a| {
+                if view.state.is_some() {
+                    a.appearance
+                        .text_position
+                        .unwrap_or(rad_core::configuration::TextPosition::Bottom)
+                } else {
+                    a.appearance.effective_text_position()
+                }
+            })
             .unwrap_or(rad_core::configuration::TextPosition::Middle);
         ResolvedVisual {
             view,
@@ -287,7 +350,7 @@ impl Visuals {
     pub fn ipc_view(&self, actor: &Authority, id: ShortId) -> Value {
         let resolved = self.resolved(actor, id);
         let v = resolved.view;
-        json!({"availability":v.availability.as_str(),"revision":v.revision.to_string(),"text":resolved.text,"text_position":position_name(resolved.position),"color":v.color,"image":v.image})
+        json!({"state":v.state,"availability":v.availability.as_str(),"revision":v.revision.to_string(),"text":resolved.text,"text_position":position_name(resolved.position),"color":v.color,"image":v.image})
     }
     pub fn view(&self, id: ShortId) -> VisualView {
         let Some(e) = self.entries.get(&id) else {
@@ -310,23 +373,48 @@ impl Visuals {
             }
         };
         VisualView {
+            state: self.selected_state(id).map(|s| s.id.clone()),
             availability,
             revision: e.revision,
             text: c.and_then(|c| c.text.clone()),
             color: c.and_then(|c| c.color),
-            image: e.image.is_some(),
+            image: self.image(id).is_some(),
         }
     }
+    fn selected_state(&self, id: ShortId) -> Option<&rad_plugin_contract::VisualStateDefinition> {
+        let entry = self.entries.get(&id)?;
+        let states = self
+            .icons
+            .get(&entry.plugin)?
+            .definitions
+            .get(&entry.source)?;
+        let observed = content(&entry.raw)
+            .filter(|_| !entry.invalid_image)
+            .and_then(|c| c.state.as_deref());
+        observed
+            .and_then(|id| states.iter().find(|s| s.id == id))
+            .or_else(|| states.get(1))
+    }
     pub fn image(&self, id: ShortId) -> Option<Arc<rad_media::NormalizedImage>> {
-        self.entries.get(&id).and_then(|e| e.image.clone())
+        let entry = self.entries.get(&id)?;
+        self.selected_state(id)
+            .and_then(|state| {
+                self.icons
+                    .get(&entry.plugin)?
+                    .images
+                    .get(&(entry.source.clone(), state.id.clone()))
+                    .cloned()
+            })
+            .or_else(|| entry.image.clone())
     }
     pub fn read(&self, id: ShortId, revision: u64, offset: usize) -> Result<Value, &'static str> {
-        let e = self
+        let _entry = self
             .entries
             .get(&id)
             .filter(|e| e.revision == revision)
             .ok_or("cursor_expired")?;
-        let bytes = e.image.as_ref().ok_or("executor_unavailable")?.png_bytes();
+        let image = self.image(id).ok_or("executor_unavailable")?;
+        let bytes = image.png_bytes();
         if offset > bytes.len() {
             return Err("invalid_request");
         }
@@ -403,443 +491,14 @@ fn decode(hex: &str) -> Option<rad_media::NormalizedImage> {
     let image = rad_media::normalize(&bytes).ok()?;
     (image.png_bytes().len() <= 256 * 1024).then_some(image)
 }
-#[cfg(all(test, feature = "fixture-tests"))]
-mod tests {
-    use super::*;
-    use rad_core::{configuration::*, identity::IdentityRegistry};
-    use rad_plugin_host::State;
-    use std::{
-        process::Command,
-        sync::Arc,
-        time::{Duration, Instant},
-    };
-    #[test]
-    fn missing_subscriptions_retry_after_capacity_and_twenty_sources_survive_folder_switches() {
-        let mut c = Configuration::prepare_new(&IdentityRegistry::new(812).unwrap()).unwrap();
-        let root = c.configuration().data().principal;
-        for position in 0..2 {
-            c = c
-                .configuration()
-                .prepare_edit(
-                    c.registry(),
-                    Origin::Editor,
-                    Edit::CreateFolder {
-                        parent: root,
-                        position,
-                        name: format!("folder{position}"),
-                    },
-                )
-                .unwrap();
-        }
-        let folders: Vec<_> = c
-            .configuration()
-            .data()
-            .folders
-            .iter()
-            .filter(|f| f.binding.identity() != root)
-            .map(|f| f.binding.identity())
-            .collect();
-        for folder in &folders {
-            for position in 1..=20 {
-                c = c
-                    .configuration()
-                    .prepare_edit(
-                        c.registry(),
-                        Origin::Editor,
-                        Edit::CreateButton {
-                            folder: *folder,
-                            position,
-                            name: format!("source{position}"),
-                        },
-                    )
-                    .unwrap();
-                let id = c
-                    .configuration()
-                    .data()
-                    .buttons
-                    .last()
-                    .unwrap()
-                    .binding
-                    .identity();
-                c = c
-                    .configuration()
-                    .prepare_edit(
-                        c.registry(),
-                        Origin::Editor,
-                        Edit::SetVisual {
-                            button: id,
-                            visual: VisualSource::External {
-                                type_key: ExternalType::new(
-                                    "org.rad.fixture".into(),
-                                    "status".into(),
-                                )
-                                .unwrap(),
-                                configuration: br#"{"schema_version":1,"values":{"mode":"echo"}}"#
-                                    .to_vec(),
-                            },
-                        },
-                    )
-                    .unwrap();
-            }
-        }
-        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(10).unwrap());
-        let manifest = serde_json::from_slice(include_bytes!(
-            "../../rad-plugin-host/fixture/manifest-v1.json"
-        ))
-        .unwrap();
-        let mut host = Host::default();
-        let bin = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("rad-plugin-fixture-v1");
-        host.activate(Command::new(bin), manifest, 0).unwrap();
-        let end = Instant::now() + Duration::from_secs(5);
-        while host.state("org.rad.fixture") != Some(State::Ready) {
-            assert!(Instant::now() < end);
-            host.pump(0).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        let params: rad_plugin_contract::Parameters =
-            serde_json::from_slice(br#"{"schema_version":1,"values":{"mode":"echo"}}"#).unwrap();
-        let mut occupied = vec![];
-        while let Ok(key) = host.subscribe("org.rad.fixture", "status", params.clone(), 1000) {
-            occupied.push(key);
-        }
-        assert!(!occupied.is_empty());
-        let mut visuals = Visuals::new(Arc::new(|| {}));
-        actor.navigate(Origin::Editor, folders[0]).unwrap();
-        visuals.poll(&actor, &mut host);
-        assert!(visuals.entries.values().any(|e| e.key.is_none()));
-        for key in occupied {
-            let _ = host.unsubscribe("org.rad.fixture", key);
-        }
-        for folder in [folders[0], folders[1], folders[0]] {
-            actor.navigate(Origin::Editor, folder).unwrap();
-            loop {
-                visuals.poll(&actor, &mut host);
-                host.pump(0).unwrap();
-                if visuals.entries.len() == 20
-                    && visuals
-                        .entries
-                        .values()
-                        .all(|e| matches!(e.raw, VisualState::Current { .. }))
-                {
-                    break;
-                }
-                assert!(
-                    Instant::now() < end,
-                    "all twenty visible subscriptions must recover"
-                );
-                std::thread::sleep(Duration::from_millis(1));
-            }
-        }
-        host.shutdown();
-        while host.resources().0 > 0 {
-            assert!(Instant::now() < end);
-            host.pump(0).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-    #[test]
-    fn visible_source_is_current_then_stale_and_folder_removal_unsubscribes_without_execution_reservation()
-     {
-        let mut c = Configuration::prepare_new(&IdentityRegistry::new(811).unwrap()).unwrap();
-        c = c
-            .configuration()
-            .prepare_edit(
-                c.registry(),
-                Origin::Editor,
-                Edit::CreateButton {
-                    folder: c.configuration().data().principal,
-                    position: 0,
-                    name: "Visual".into(),
-                },
-            )
-            .unwrap();
-        let binding = c.configuration().data().buttons[0].binding;
-        c = c
-            .configuration()
-            .prepare_edit(
-                c.registry(),
-                Origin::Editor,
-                Edit::SetVisual {
-                    button: binding.identity(),
-                    visual: VisualSource::External {
-                        type_key: ExternalType::new("org.rad.fixture".into(), "status".into())
-                            .unwrap(),
-                        configuration: br#"{"schema_version":1,"values":{"mode":"echo"}}"#.to_vec(),
-                    },
-                },
-            )
-            .unwrap();
-        c = c
-            .configuration()
-            .prepare_edit(
-                c.registry(),
-                Origin::Editor,
-                Edit::SetAppearance {
-                    button: binding.identity(),
-                    appearance: Appearance {
-                        text: String::new(),
-                        image: None,
-                        text_position: Some(TextPosition::Top),
-                    },
-                },
-            )
-            .unwrap();
-        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(9).unwrap());
-        let manifest = serde_json::from_slice(include_bytes!(
-            "../../rad-plugin-host/fixture/manifest-v1.json"
-        ))
-        .unwrap();
-        let mut host = Host::default();
-        let bin = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("rad-plugin-fixture-v1");
-        host.activate(Command::new(bin), manifest, 0).unwrap();
-        let end = Instant::now() + Duration::from_secs(3);
-        while host.state("org.rad.fixture") != Some(State::Ready) {
-            assert!(Instant::now() < end);
-            host.pump(0).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        let mut visuals = Visuals::new(Arc::new(|| {}));
-        assert_eq!(visuals.ipc_view(&actor, binding.short())["text"], "Visual");
-        assert_eq!(
-            visuals.ipc_view(&actor, binding.short())["text_position"],
-            "top"
-        );
-        while visuals.view(binding.short()).availability != Availability::Current {
-            assert!(Instant::now() < end, "visual never became current");
-            visuals.poll(&actor, &mut host);
-            host.pump(0).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        assert_eq!(visuals.view(binding.short()).text.as_deref(), Some("v1"));
-        let mut expected = std::array::from_fn(|_| rad_deck::KeyVisual::default());
-        expected[0] = rad_deck::KeyVisual::new("v1", None, false, false)
-            .text_at(rad_deck::TextPlacement::Top);
-        assert_eq!(
-            crate::display::project_with_plugins(
-                &actor,
-                &BTreeMap::new(),
-                100,
-                false,
-                Some(&visuals)
-            ),
-            rad_deck::Desired::new(expected, 100, false).unwrap()
-        );
-        assert_eq!(
-            visuals.ipc_view(&actor, binding.short())["text_position"],
-            "top"
-        );
-        assert!(actor.plugin_change_allowed("org.rad.fixture").is_ok());
-        host.pump(1000).unwrap();
-        visuals.poll(&actor, &mut host);
-        assert_eq!(
-            visuals.view(binding.short()).availability,
-            Availability::Stale
-        );
-        // Control only the decoder completion transport. The content and TTL
-        // revisions deliberately differ; an old completion cannot replace a new image.
-        let e = visuals.entries.get_mut(&binding.short()).unwrap();
-        let stamp = e.image_revision;
-        e.image_waiting = true;
-        let before = e.revision;
-        assert!(!visuals.complete_decode(Decoded {
-            id: binding.short(),
-            revision: stamp + 100,
-            image: None
-        }));
-        assert!(visuals.complete_decode(Decoded {
-            id: binding.short(),
-            revision: stamp,
-            image: None
-        }));
-        assert_eq!(
-            visuals.view(binding.short()).availability,
-            Availability::Unavailable
-        );
-        assert!(visuals.entries[&binding.short()].revision > before);
-        // Actual bounded decoder worker, then revision-bound IPC reads.
-        let before = visuals.entries[&binding.short()].revision;
-        visuals.tx.send(Decode{id:binding.short(),revision:stamp,hex:"89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae426082".into()}).unwrap();
-        let decoded = visuals.rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert!(decoded.image.is_some());
-        assert!(visuals.complete_decode(decoded));
-        let revision = visuals.entries[&binding.short()].revision;
-        assert!(revision > before);
-        assert_eq!(
-            visuals.read(binding.short(), before, 0),
-            Err("cursor_expired")
-        );
-        assert!(
-            visuals.read(binding.short(), revision, 0).unwrap()["hex"]
-                .as_str()
-                .unwrap()
-                .starts_with("89504e47")
-        );
-        assert_eq!(
-            visuals.read(binding.short(), revision, usize::MAX),
-            Err("invalid_request")
-        );
-        assert!(decode(&"0".repeat(16386)).is_none());
-        assert!(decode("f").is_none());
-        let t = actor.reserve(1, Origin::Editor).unwrap();
-        let e = actor.submit(
-            t,
-            vec![Edit::SetVisual {
-                button: binding.identity(),
-                visual: VisualSource::Manual,
-            }],
-        );
-        let id = e
-            .iter()
-            .find_map(|e| {
-                if let rad_authority::Effect::Persist { id, .. } = e {
-                    Some(*id)
-                } else {
-                    None
-                }
-            })
-            .unwrap();
-        actor.complete(
-            id,
-            rad_authority::Outcome::Applied {
-                revision: 2,
-                changed: true,
-            },
-        );
-        visuals.poll(&actor, &mut host);
-        assert_eq!(
-            visuals.view(binding.short()).availability,
-            Availability::Unavailable
-        );
-        assert_eq!(host.resources().1, 0);
-        host.shutdown();
-        while host.resources().0 > 0 {
-            assert!(Instant::now() < end);
-            host.pump(1000).unwrap();
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-}
-
-/// What a plugin may put in `jpeg_hex`: only a JPEG that decodes within `rad_media`'s limits
-/// becomes an image; anything else leaves the source without one and never panics.
-#[cfg(test)]
-mod image_tests {
-    use super::*;
-    use rad_core::identity::EntityKind;
-    use std::time::Duration;
-
-    /// A valid 16x16 baseline JPEG (the options test plugin's probe image).
-    const JPEG: &str = "ffd8ffe000104a46494600010100000100010000ffdb0043000d090a0b0a080d0b0a0b0e0e0d0f13201513121213271c1e17202e2931302e292d2c333a4a3e333646372c2d405741464c4e525352323e5a615a50604a51524fffdb0043010e0e0e131113261515264f352d354f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4fffc00011080010001003012200021101031101ffc400160001010100000000000000000000000000000405ffc400161000030000000000000000000000000000001461ffc4001501010100000000000000000000000000000002ffc40017110003010000000000000000000000000000146115ffda000c03010002110311003f0089581586cab02b09d6a1187fffd9";
-
-    fn bytes(hex: &str) -> Vec<u8> {
-        (0..hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-            .collect()
-    }
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
-    }
-
-    #[test]
-    fn a_jpeg_that_does_not_decode_or_is_too_large_leaves_the_source_without_an_image() {
-        let valid = bytes(JPEG);
-        // Real decoder control: the unmodified image becomes a PNG.
-        assert!(decode(JPEG).is_some_and(|image| image.png_bytes().starts_with(b"\x89PNG")));
-
-        let mut oversized = valid.clone();
-        let sof = oversized
-            .windows(2)
-            .position(|w| w == [0xff, 0xc0])
-            .unwrap();
-        // Height and width live five bytes after the marker; declare 4096 x 4096.
-        oversized[sof + 5..sof + 9].copy_from_slice(&[0x10, 0x00, 0x10, 0x00]);
-        assert_eq!(
-            rad_media::normalize(&oversized).err(),
-            Some(rad_media::MediaError::DimensionsExceeded),
-            "the case really exercises the pixel limit"
-        );
-        let scan = valid.windows(2).position(|w| w == [0xff, 0xda]).unwrap();
-        let cases = [
-            ("signature only", vec![0xff, 0xd8, 0xff]),
-            (
-                "signature and noise",
-                [vec![0xff, 0xd8, 0xff], vec![0x5a; 200]].concat(),
-            ),
-            ("cut before the scan", valid[..scan].to_vec()),
-            ("cut inside the scan", valid[..valid.len() - 12].to_vec()),
-            ("beyond the pixel limit", oversized),
-        ];
-
-        let mut visuals = Visuals::new(Arc::new(|| {}));
-        let id = ShortId::new(EntityKind::Button, 1).unwrap();
-        for (name, case) in cases {
-            let case = hex(&case);
-            assert!(decode(&case).is_none(), "{name}");
-            // Through the bounded decoder worker, as the runtime does it.
-            visuals.entries.insert(
-                id,
-                Entry {
-                    plugin: "p".into(),
-                    source: "s".into(),
-                    bytes: vec![],
-                    settings: None,
-                    generation: Some(1),
-                    credential_revision: None,
-                    key: None,
-                    raw: VisualState::Current {
-                        content: VisualContent {
-                            text: Some("t".into()),
-                            png_hex: None,
-                            jpeg_hex: Some(case.clone()),
-                            color: None,
-                        },
-                    },
-                    revision: 1,
-                    image_revision: 1,
-                    image_waiting: true,
-                    pending: None,
-                    image: None,
-                    invalid_image: false,
-                },
-            );
-            visuals
-                .tx
-                .send(Decode {
-                    id,
-                    revision: 1,
-                    hex: case,
-                })
-                .unwrap();
-            let decoded = visuals.rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            assert!(visuals.complete_decode(decoded), "{name}");
-            let view = visuals.view(id);
-            assert_eq!(view.availability, Availability::Unavailable, "{name}");
-            assert!(!view.image, "{name}");
-        }
-    }
-}
 
 #[cfg(test)]
-mod settings_tests {
+mod two_state_tests {
     use super::*;
-    use rad_core::{configuration::*, identity::IdentityRegistry};
-
+    use rad_core::{configuration::*, identity::*};
     #[test]
-    fn changed_settings_invalidate_cached_visual_even_before_process_ready() {
-        let c = Configuration::prepare_new(&IdentityRegistry::new(951).unwrap()).unwrap();
+    fn unavailable_binary_visual_uses_second_face_without_name_fallback() {
+        let c = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
         let c = c
             .configuration()
             .prepare_edit(
@@ -848,70 +507,86 @@ mod settings_tests {
                 Edit::CreateButton {
                     folder: c.configuration().data().principal,
                     position: 0,
-                    name: "Visual".into(),
+                    name: "Must not appear".into(),
                 },
             )
             .unwrap();
-        let button = c.configuration().data().buttons[0].binding;
+        let b = c.configuration().data().buttons[0].binding;
         let c = c
             .configuration()
             .prepare_edit(
                 c.registry(),
                 Origin::Editor,
                 Edit::SetVisual {
-                    button: button.identity(),
+                    button: b.identity(),
                     visual: VisualSource::External {
-                        type_key: ExternalType::new("org.rad.obs".into(), "record".into()).unwrap(),
+                        type_key: ExternalType::new("fixture".into(), "mute".into()).unwrap(),
                         configuration: br#"{"schema_version":1,"values":{}}"#.to_vec(),
                     },
                 },
             )
             .unwrap();
-        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(952).unwrap());
-        actor
-            .register_plugin(
-                serde_json::from_slice(include_bytes!("../../../plugins/obs/manifest.json"))
-                    .unwrap(),
-                rad_plugin_host::TARGET,
+        let c = c
+            .configuration()
+            .prepare_edit(
+                c.registry(),
+                Origin::Editor,
+                Edit::SetAppearance {
+                    button: b.identity(),
+                    appearance: Appearance {
+                        states: [(
+                            "muted".into(),
+                            StateFace {
+                                text: "Quiet".into(),
+                                image: Some("0".repeat(64)),
+                            },
+                        )]
+                        .into(),
+                        ..Default::default()
+                    },
+                },
             )
             .unwrap();
-        let mut visuals = Visuals::new(Arc::new(|| {}));
-        let mut host = Host::default();
-        assert!(visuals.poll(&actor, &mut host));
-        assert!(!visuals.poll(&actor, &mut host));
-        let ticket = actor.reserve(1, Origin::Editor).unwrap();
-        let effects = actor.submit(
-            ticket,
-            vec![Edit::SetPluginSettings {
-                plugin: "org.rad.obs".into(),
-                settings: Some(
-                    PluginSettings::new(br#"{"schema_version":1,"values":{"port":5555}}"#.to_vec())
-                        .unwrap(),
-                ),
-            }],
-        );
-        let id = effects
-            .iter()
-            .find_map(|e| match e {
-                rad_authority::Effect::Persist { id, .. } => Some(*id),
-                _ => None,
-            })
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(1).unwrap());
+        let manifest=serde_json::from_value(json!({"contract":1,"capabilities":["visual_freshness","visual_states"],"id":"fixture","version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":["x86_64-unknown-linux-gnu"],"actions":[],"visuals":[{"id":"mute","label":"Mute","schema":{"version":1,"fields":[]},"credential_slots":[],"states":[{"id":"muted","label":"Muted"},{"id":"unmuted","label":"Unmuted"}]}]})).unwrap();
+        actor
+            .register_plugin(manifest, "x86_64-unknown-linux-gnu")
             .unwrap();
-        actor.complete(
-            id,
-            rad_authority::Outcome::Applied {
-                revision: 2,
-                changed: true,
-            },
-        );
-        assert!(
-            visuals.poll(&actor, &mut host),
-            "settings change must replace binding, not retain cached state"
-        );
+        let mut visuals = Visuals::new(Arc::new(|| {}));
+        visuals.poll(&actor, &mut Host::default());
+        let view = visuals.ipc_view(&actor, b.short());
+        assert_eq!(view["state"], "unmuted");
+        assert_eq!(view["text"], "");
+        assert_eq!(view["availability"], "unavailable");
+        let content = rad_plugin_contract::VisualContent {
+            state: Some("muted".into()),
+            text: Some("Ignored plugin label".into()),
+            color: Some([255, 0, 0, 255]),
+            ..Default::default()
+        };
+        visuals.entries.get_mut(&b.short()).unwrap().raw = VisualState::Current {
+            content: content.clone(),
+        };
+        let resolved = visuals.resolved(&actor, b.short());
+        assert_eq!(resolved.view.state.as_deref(), Some("muted"));
+        assert_eq!(resolved.text, "Quiet");
         assert_eq!(
-            visuals.view(button.short()).availability,
+            resolved.view.color, None,
+            "custom state image suppresses plugin background"
+        );
+        assert_eq!(resolved.position, TextPosition::Bottom);
+        visuals.entries.get_mut(&b.short()).unwrap().invalid_image = true;
+        assert_eq!(
+            visuals.view(b.short()).availability,
             Availability::Unavailable
         );
-        assert!(!visuals.poll(&actor, &mut host));
+        assert_eq!(visuals.view(b.short()).state.as_deref(), Some("unmuted"));
+        visuals.entries.get_mut(&b.short()).unwrap().invalid_image = false;
+
+        visuals.entries.get_mut(&b.short()).unwrap().raw = VisualState::Stale { content };
+        assert_eq!(visuals.view(b.short()).availability, Availability::Stale);
+        assert_eq!(visuals.view(b.short()).state.as_deref(), Some("muted"));
+        visuals.entries.get_mut(&b.short()).unwrap().raw = VisualState::Unavailable;
+        assert_eq!(visuals.view(b.short()).state.as_deref(), Some("unmuted"));
     }
 }

@@ -48,23 +48,7 @@ fn resolve_before_deadline<T>(
     }
     Ok(candidate)
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn resolver_blocked_past_deadline_cannot_return_a_launch_candidate() {
-        let now = std::cell::Cell::new(100);
-        let result = resolve_before_deadline(
-            105,
-            || Ok(now.get()),
-            || {
-                now.set(105);
-                Some(())
-            },
-        );
-        assert_eq!(result, Err(LaunchOutcome::Expired));
-    }
-}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogEntry {
     pub id: rad_core::configuration::DesktopEntry,

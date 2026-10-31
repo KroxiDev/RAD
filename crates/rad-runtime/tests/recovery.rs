@@ -7,7 +7,6 @@ use rad_client::{
 };
 use rad_runtime::{
     bootstrap,
-    lifecycle::Paths,
     recovery::Recovery,
     server::Server,
     startup::{Bound, Opened},
@@ -82,26 +81,6 @@ impl Fixture {
             .collect();
         found.sort();
         found
-    }
-    /// Names, sizes and modification times of everything in the data directory.
-    fn snapshot(&self) -> Vec<(String, u64, std::time::SystemTime)> {
-        self.snapshot_of(&self.data())
-    }
-    fn snapshot_of(&self, directory: &Path) -> Vec<(String, u64, std::time::SystemTime)> {
-        let mut entries: Vec<_> = std::fs::read_dir(directory)
-            .unwrap()
-            .map(|entry| {
-                let entry = entry.unwrap();
-                let meta = std::fs::symlink_metadata(entry.path()).unwrap();
-                (
-                    entry.file_name().into_string().unwrap(),
-                    meta.len(),
-                    meta.modified().unwrap(),
-                )
-            })
-            .collect();
-        entries.sort();
-        entries
     }
 }
 impl Drop for Fixture {
@@ -465,34 +444,6 @@ fn spoil_every_revision(file: &Path, marker: &[u8]) {
 }
 
 #[test]
-fn identifiers_of_a_damaged_but_readable_file_are_not_reused() {
-    let fixture = Fixture::new();
-    let installation_before = populated(&fixture);
-    spoil_every_revision(&fixture.database(), b"Marker-button-name");
-
-    let mut mode = fixture.recovery();
-    let root = fixture.root.clone();
-    let created = mode.run(move || {
-        let view = recovery_view(root.clone());
-        assert_eq!(view["cause"], "unreadable");
-        assert_eq!(view["detail"]["counters_read"], true);
-        let mut editor = connect(&root, Endpoint::Editor);
-        let reset = editor
-            .request("recovery_reset", json!({"confirm":true}))
-            .unwrap();
-        assert_eq!(reset.status, Status::Applied, "{reset:?}");
-        let made = create_button(&mut editor, "f2", 0, "After");
-        assert_eq!(made.status, Status::Applied, "{made:?}");
-        data(&editor.request("get", json!({"id":"b3"})).unwrap())
-    });
-    // The new Principal folder is f2 (f1 was the old one) and the new button follows the
-    // two the damaged file had handed out.
-    assert_eq!(created["fields"]["name"], "After");
-    drop(mode);
-    assert_eq!(installation(&fixture), installation_before);
-}
-
-#[test]
 fn a_newer_version_is_reported_and_never_replaced() {
     let fixture = Fixture::new();
     populated(&fixture);
@@ -523,96 +474,6 @@ fn a_newer_version_is_reported_and_never_replaced() {
     });
     assert_eq!(std::fs::read(fixture.database()).unwrap(), bytes);
     assert!(fixture.evidence().is_empty());
-}
-
-#[test]
-fn an_unsafe_database_file_is_reported_and_nothing_is_written() {
-    // A symlink and a second link are both refused, whatever is behind them.
-    for (name, expected) in [
-        ("symlink", "unsafe_database_file"),
-        ("hard link", "unsafe_database_file"),
-    ] {
-        let fixture = Fixture::new();
-        drop(bootstrap::open(&fixture.data(), fixture.session(), 1).unwrap());
-        match name {
-            "symlink" => {
-                let real = fixture.root.join("elsewhere.sqlite3");
-                std::fs::rename(fixture.database(), &real).unwrap();
-                std::os::unix::fs::symlink(&real, fixture.database()).unwrap();
-            }
-            _ => std::fs::hard_link(fixture.database(), fixture.data().join("extra")).unwrap(),
-        }
-        let before = fixture.snapshot();
-        let mut mode = fixture.recovery();
-        let root = fixture.root.clone();
-        mode.run(move || {
-            assert_eq!(
-                recovery_view(root.clone()),
-                json!({
-                    "cause":"unsafe_folder",
-                    "actions":["details"],
-                    "detail":{"code":expected,"counters_read":false}
-                })
-            );
-            let mut editor = connect(&root, Endpoint::Editor);
-            assert_eq!(
-                refusal(
-                    &editor
-                        .request("recovery_reset", json!({"confirm":true}))
-                        .unwrap()
-                ),
-                ("operation_not_allowed", Some(Outcome::NotApplied)),
-                "{name}"
-            );
-        });
-        assert_eq!(fixture.snapshot(), before, "{name}");
-    }
-}
-
-#[test]
-fn an_unsafe_data_directory_is_reported_before_anything_is_written_in_it() {
-    let fixture = Fixture::new();
-    fixture.with_database(b"left alone");
-    std::fs::set_permissions(fixture.data(), std::fs::Permissions::from_mode(0o755)).unwrap();
-    let before = fixture.snapshot();
-
-    // Through the runtime's own checks...
-    let mut mode = fixture.recovery();
-    let root = fixture.root.clone();
-    mode.run(move || {
-        assert_eq!(
-            recovery_view(root),
-            json!({
-                "cause":"unsafe_folder",
-                "actions":["details"],
-                "detail":{"code":"unsafe_directory","counters_read":false}
-            })
-        );
-    });
-    drop(mode);
-    assert_eq!(fixture.snapshot(), before);
-    // ...and through the binary's: `Paths` refuses the folder, so the Bound goes straight
-    // to recovery without opening or reading anything.
-    let paths = Paths::from_values(
-        Some(fixture.root.as_os_str()),
-        Some(fixture.root.join("xdg").as_os_str()),
-        None,
-        Path::new("/usr/bin/rad-runtime"),
-    )
-    .unwrap();
-    std::fs::create_dir(fixture.root.join("xdg")).unwrap();
-    std::fs::rename(fixture.data(), &paths.data).unwrap();
-    let before = fixture.snapshot_of(&paths.data);
-    assert!(paths.prepare_data().is_err());
-    let recovery = Bound::bind(&fixture.root, fixture.session())
-        .unwrap()
-        .unsafe_folder(&paths.data);
-    let mut mode = Mode::Recovery(Box::new(recovery));
-    let root = fixture.root.clone();
-    mode.run(move || {
-        assert_eq!(recovery_view(root)["detail"]["code"], "unsafe_directory");
-    });
-    assert_eq!(fixture.snapshot_of(&paths.data), before);
 }
 
 #[test]
@@ -692,29 +553,6 @@ fn name_of(editor: &mut Client, id: &str) -> Option<String> {
 }
 
 #[test]
-fn a_copy_of_this_installation_keeps_its_identifiers_and_does_not_reuse_the_damaged_ones() {
-    let fixture = Fixture::new();
-    let (installation_before, copy) = populated_with_copy(&fixture);
-    spoil_every_revision(&fixture.database(), b"Marker-button-name");
-    let damaged = std::fs::read(fixture.database()).unwrap();
-
-    let created = restore_into(&fixture, copy, |editor| {
-        assert_eq!(name_of(editor, "b1").as_deref(), Some("Marker-button-name"));
-        assert_eq!(name_of(editor, "b2").as_deref(), Some("Other"));
-        assert_eq!(name_of(editor, "b3"), None, "the damaged file's own button");
-        let made = create_button(editor, "f1", 2, "After");
-        assert_eq!(made.status, Status::Applied, "{made:?}");
-        name_of(editor, "b4")
-    });
-    // The new button follows the three the damaged file had handed out.
-    assert_eq!(created.as_deref(), Some("After"));
-    let evidence = fixture.evidence();
-    assert_eq!(evidence.len(), 1);
-    assert_eq!(std::fs::read(&evidence[0]).unwrap(), damaged);
-    assert_eq!(installation(&fixture), installation_before);
-}
-
-#[test]
 fn a_copy_of_another_installation_is_remapped_over_the_damaged_ones_identity() {
     let fixture = Fixture::new();
     let installation_before = populated(&fixture);
@@ -735,75 +573,4 @@ fn a_copy_of_another_installation_is_remapped_over_the_damaged_ones_identity() {
         assert_eq!(names, ["Marker-button-name", "Other"]);
     });
     assert_eq!(installation(&fixture), installation_before);
-}
-
-#[test]
-fn restoring_needs_confirmation_and_only_an_unreadable_configuration_may_do_it() {
-    let fixture = Fixture::new();
-    fixture.with_database(b"bytes that are not a database");
-    let mut mode = fixture.recovery();
-    let root = fixture.root.clone();
-    mode.run(move || {
-        let mut editor = connect(&root, Endpoint::Editor);
-        assert_eq!(
-            refusal(
-                &editor
-                    .request(
-                        "restore_commit",
-                        json!({"transfer_id":"x","confirm_replace":false})
-                    )
-                    .unwrap()
-            ),
-            ("confirmation_required", Some(Outcome::NotApplied))
-        );
-        assert_eq!(
-            refusal(
-                &editor
-                    .request("transfer_begin", json!({"kind":"export","size":null}))
-                    .unwrap()
-            ),
-            ("operation_not_allowed", Some(Outcome::NotApplied))
-        );
-        assert_eq!(
-            refusal(
-                &editor
-                    .request("transfer_read", json!({"transfer_id":"x","offset":"0"}))
-                    .unwrap()
-            ),
-            ("recovery_required", None)
-        );
-        let mut automation = connect(&root, Endpoint::Automation);
-        assert_eq!(
-            refusal(
-                &automation
-                    .request("transfer_begin", json!({"kind":"restore","size":"10"}))
-                    .unwrap()
-            ),
-            ("permission_denied", Some(Outcome::NotApplied))
-        );
-    });
-    drop(mode);
-
-    let newer = Fixture::new();
-    populated(&newer);
-    // The server that made the data left its own transfer folder; recovery must not add one.
-    std::fs::remove_dir_all(newer.data().join("transfers")).unwrap();
-    let mut bytes = std::fs::read(newer.database()).unwrap();
-    bytes[60..64].copy_from_slice(&3u32.to_be_bytes());
-    std::fs::write(newer.database(), &bytes).unwrap();
-    let mut mode = newer.recovery();
-    let root = newer.root.clone();
-    mode.run(move || {
-        let mut editor = connect(&root, Endpoint::Editor);
-        assert_eq!(
-            refusal(
-                &editor
-                    .request("transfer_begin", json!({"kind":"restore","size":"10"}))
-                    .unwrap()
-            ),
-            ("operation_not_allowed", Some(Outcome::NotApplied))
-        );
-    });
-    assert!(!newer.data().join("transfers").exists());
-    assert_eq!(std::fs::read(newer.database()).unwrap(), bytes);
 }

@@ -2,7 +2,7 @@
 
 Referencia de la integración oficial para desarrolladores y agentes. Silencia,
 reactiva y alterna el **micrófono** y la **salida de audio**, y muestra si cada uno
-está silenciado. ID `org.rad.audio`, versión 0.2.0, Linux x86_64, contrato de plugins
+está silenciado. ID `org.rad.audio`, versión 0.4.0, Linux x86_64, contrato de plugins
 v1. Las capacidades negociadas están en el [contrato y la guía para autores](../README.md).
 
 ## Requisitos
@@ -20,8 +20,13 @@ disponible hasta que vuelva el servidor.
 
 | Acción | Operaciones | Dispositivo |
 | --- | --- | --- |
-| Salida de audio | toggle, mute, unmute | una salida (sink) |
-| Micrófono | toggle, mute, unmute | una entrada (source), excluidos los monitores |
+| Salida de audio | `toggle` (predeterminada), `mute`, `unmute` | una salida (sink) |
+| Micrófono | `toggle` (predeterminada), `mute`, `unmute` | una entrada (source), excluidos los monitores |
+
+El editor muestra las operaciones como «Alternar», «Silenciar» y «Activar
+sonido», con el resto de los textos traducidos en el manifest
+([ADR 0020](../../docs/adr/0020-textos-de-plugins-y-plazo-fijo.md)). El
+dispositivo se elige primero.
 
 | Estado | Muestra |
 | --- | --- |
@@ -74,3 +79,14 @@ pactl dentro de un namespace bwrap con runtime, HOME, dispositivos y red privado
 sin acceso al servidor de audio personal. Si no está disponible ese aislamiento,
 la prueba falla sin continuar. Compilar primero los helpers según la
 [validación del workspace](../README.md#compilar-probar-y-empaquetar).
+
+## Caras por estado
+
+Las acciones vinculan su visual automáticamente al guardarse en RAD. El plugin
+publica el identificador del estado observado mediante la capacidad negociada
+`visual_states`; no alterna un contador local de pulsaciones. El manifest incluye
+dos etiquetas traducibles e iconos PNG por visual, con fuentes originales SVG en
+`icons/`. Las imágenes propias y textos por estado se editan desde las pestañas de
+la tecla. Por defecto se muestra solo el icono; sin fuente disponible se usa el
+segundo estado con marca roja. Los iconos caben en el límite existente de 64 KiB
+del manifest. El texto anterior sigue como respaldo para un host sin la capacidad.

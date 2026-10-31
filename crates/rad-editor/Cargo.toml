@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+resvg = { version = "=0.45.1", default-features = false }
 rad-update = { path = "../rad-update" }
 gio = { version = "=0.22.10", default-features = false, features = ["v2_60"] }
 rad-api = { path = "../rad-api" }

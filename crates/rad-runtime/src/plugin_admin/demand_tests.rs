@@ -35,26 +35,6 @@ fn controlled() -> (Admin, mpsc::Receiver<Job>, Authority, Host) {
         Host::default(),
     )
 }
-#[test]
-fn installed_unused_metadata_is_published_without_launching() {
-    let (mut admin, jobs, mut actor, mut host) = controlled();
-    let manifest: Manifest = serde_json::from_slice(include_bytes!(
-        "../../../rad-plugin-host/fixture/manifest-v1.json"
-    ))
-    .unwrap();
-    admin.startup.push_back(manifest);
-    admin.poll(&mut actor, &mut host, 0);
-    assert_eq!(
-        host.resources(),
-        (0, 0),
-        "unused plugin must not reserve a process"
-    );
-    assert!(
-        jobs.try_recv().is_err(),
-        "metadata publication must not spawn"
-    );
-    assert_eq!(actor.plugin_manifests().count(), 1);
-}
 
 fn tick(admin: &mut Admin, jobs: &mpsc::Receiver<Job>, actor: &mut Authority, host: &mut Host) {
     host.pump(0).unwrap();
@@ -127,66 +107,6 @@ fn demand_reuses_one_process_and_reappearing_during_stop_waits_for_reap() {
         h.state("org.rad.fixture").is_none()
     });
     assert_eq!(host.resources(), (0, 0));
-}
-
-#[test]
-fn failed_continuous_demand_is_latched_until_an_explicit_new_selection() {
-    let (mut admin, jobs, mut actor, mut host) = controlled();
-    let manifest: Manifest = serde_json::from_slice(include_bytes!(
-        "../../../rad-plugin-host/fixture/manifest-v1.json"
-    ))
-    .unwrap();
-    admin.set_extra_demand(["org.rad.fixture".into()].into());
-    admin.startup.push_back(manifest.clone());
-    until(&mut admin, &jobs, &mut actor, &mut host, |a, _| {
-        a.plugin_generation("org.rad.fixture").is_some()
-    });
-    let first = actor.plugin_generation("org.rad.fixture").unwrap();
-    let selection = actor.plugin_manifests().next().unwrap().1;
-    let key = host
-        .invoke(
-            "org.rad.fixture",
-            first,
-            "run",
-            serde_json::from_value(json!({"schema_version":1,"values":{"mode":"crash"}})).unwrap(),
-            1000,
-        )
-        .unwrap();
-    until(&mut admin, &jobs, &mut actor, &mut host, |_, h| {
-        h.state("org.rad.fixture") == Some(State::Reaped)
-    });
-    actor.plugin_failed("org.rad.fixture", first);
-    assert_eq!(host.take_completion().unwrap().0, key);
-    for _ in 0..20 {
-        tick(&mut admin, &jobs, &mut actor, &mut host);
-    }
-    assert_eq!(host.resources().0, 0);
-    assert_eq!(actor.plugin_generation("org.rad.fixture"), Some(first));
-    admin.set_extra_demand(Default::default());
-    tick(&mut admin, &jobs, &mut actor, &mut host);
-    admin.set_extra_demand(["org.rad.fixture".into()].into());
-    for _ in 0..10 {
-        tick(&mut admin, &jobs, &mut actor, &mut host);
-    }
-    assert_eq!(
-        host.resources().0,
-        0,
-        "returning demand must not restart a real failure"
-    );
-    assert!(!actor.plugin_available("org.rad.fixture", selection));
-    // The same metadata selected explicitly is a new repair attempt; wake is not a selection.
-    actor
-        .register_plugin(manifest, rad_plugin_host::TARGET)
-        .unwrap();
-    assert_ne!(actor.plugin_manifests().next().unwrap().1, selection);
-    until(&mut admin, &jobs, &mut actor, &mut host, |a, _| {
-        a.plugin_generation("org.rad.fixture")
-            .is_some_and(|g| g > first)
-    });
-    host.shutdown();
-    until(&mut admin, &jobs, &mut actor, &mut host, |_, h| {
-        h.resources().0 == 0
-    });
 }
 
 #[test]

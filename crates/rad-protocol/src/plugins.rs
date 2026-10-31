@@ -334,7 +334,7 @@ pub(super) fn options(
                 c,
                 &format!("options:{entity:?}:{}", field.id),
                 cursor,
-                options.iter().map(|s| json!(s)).collect(),
+                options.iter().map(|o| json!(o.value)).collect(),
             )
             .map(Listing::Fixed)
         }

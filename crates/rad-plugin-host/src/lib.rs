@@ -435,6 +435,7 @@ impl Host {
         w.visuals.insert(
             c.request,
             Visual {
+                source: source.into(),
                 observed_current: false,
                 received_state: false,
                 renewals: 0,
@@ -647,6 +648,8 @@ fn validate_settings(manifest: &Manifest, settings: Option<&Parameters>) -> Resu
             label: "Settings".into(),
             schema: schema.clone(),
             credential_slots: vec![],
+            states: vec![],
+            visual: None,
             response_timeout: None,
             gestures: rad_plugin_contract::default_gestures(),
         };

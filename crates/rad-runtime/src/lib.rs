@@ -16,6 +16,8 @@ mod plugin_dispatch;
 
 mod plugin_visuals;
 
+mod pictures;
+
 mod plugin_admin;
 
 mod credential_worker;

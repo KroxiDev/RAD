@@ -205,7 +205,7 @@ volver a sumar o restar. El editor refleja cambios externos en Ajustes sin
 descartar modificaciones pendientes del usuario. No navega ni cambia el reposo.
 Se admiten `press` y `long_press`, no `hold`.
 
-La acción se guarda y se copia en documento v5; los envelopes SQLite/RADPKG y el
+La acción existe desde documento v5 (el escritor actual es v6); los envelopes SQLite/RADPKG y el
 framing de clientes conservan sus versiones. Los ajustes nuevos validan
 `brightness_percent` en 10–100; las importaciones históricas conservan el resto
 del contenido y elevan valores válidos 0–9 a 10. Contrato y motivos:
@@ -408,3 +408,80 @@ aplica. Automation recibe `permission_denied` en ambas operaciones.
 Los avisos Board y Overview invalidan vistas independientes. El editor pide solo
 la invalidada; Board e Inspector siguen requiriendo revisiones coincidentes para
 presentarse juntos.
+
+## Caras de visuales y edición atómica
+
+`Appearance` y las vistas de apariencia incluyen `states`, mapa de hasta dos
+identificadores a `{text: string, image: string | null}`. En `FieldEdit::Appearance`,
+texto e imagen se reemplazan; `states` omitido conserva las caras del candidato
+vigente, `{}` las elimina y un mapa explícito las reemplaza (`null` es inválido).
+Las vistas siempre incluyen el mapa. La posición de texto continúa compartida.
+Cambiar plugin o tipo de visual, incluido pasar a Manual, elimina sus caras en la
+misma edición; cambiar solo parámetros las conserva. Deshacer recupera ambas.
+Los cambios de un lote se evalúan en orden: para configurar caras del nuevo visual,
+enviar primero el cambio de visual y después el mapa explícito. Una apariencia sin
+`states` nunca repone caras eliminadas por un cambio anterior del lote.
+
+`plugin_visual` incluye `state` opcional con el identificador observado (el segundo
+del manifest si no está disponible). Su texto está ya resuelto: sin texto propio,
+vacío. `image` puede ser verdadero incluso en `unavailable`, porque existe el icono
+de reposo. `plugin_visual_read` entrega ese icono con la misma revisión; los medios
+propios siguen leyéndose con `media_read`.
+
+`edit.changes` añade dos variantes:
+
+- `{kind:"add_action", button_id, type_key, parameters}`: usa la misma validación
+  que `add_action`; permite añadir un `set` de `visual` en la misma transacción.
+- `{kind:"remove_action", id}`: solo admite un ID de acción; puede agruparse con
+  volver el visual a `manual`.
+
+Los IDs se resuelven al turno de Authority, con permisos vigentes y publicación
+atómica: un fallo no publica una mitad y un deshacer revierte el conjunto. No se
+repiten cambios tras `unknown`. El editor copia los campos del visual declarado
+por la acción y no reemplaza un visual externo ajeno.
+
+`edit.expected_revision` es opcional y decimal en cadena. Es el `view_revision`
+del mismo origen y sesión obtenido al leer Inspector, no la revisión durable de
+SQLite. Authority lo compara al turno del lote, antes de preparar candidatos o
+asignar IDs. Si cambió devuelve `cursor_expired`/`not_applied` sin persistir. Puede
+rechazar conservadoramente por un cambio visible aunque no cambie el documento.
+Ausente conserva la semántica anterior y los clientes lo omiten al serializar.
+No se aplica a otras operaciones ni autoriza reintentar una mutación incierta.
+
+El worker del editor compara tipo y parámetros completos del visual derivado de
+la acción original; `operation` no se copia si el visual no declara ese campo.
+Todas las lecturas del botón y acciones restantes deben tener la misma revisión,
+y el único Edit lleva esa precondición. Una acción nueva no roba un visual; una
+acción editada o retirada solo cambia su vínculo exacto si ninguna restante lo
+comparte. Ante revisión cambiada se conserva el formulario y Aplicar vuelve a
+leer; no hay reintento automático ni dueño persistido.
+
+`media_read {id, offset, media_ref?}` conserva el comportamiento anterior cuando se
+omite `media_ref`. Una referencia explícita debe pertenecer a la apariencia del
+botón consultable (imagen general o cualquiera de sus caras). Se revalida esa
+pertenencia al completar cada lectura; no permite leer otros medios por digest.
+
+Para guardar dos imágenes nuevas juntas, una conexión puede preparar una segunda
+importación solo cuando la primera ya es una imagen preparada y no retenida. La
+cuota global sigue en dos transferencias; no se amplía para copias, subidas en
+curso o transferencias retenidas. El runtime captura ambas como un solo grupo
+antes de encolar la publicación y conserva sus leases ante desconexión e
+incertidumbre; se resuelven juntos sin replay.
+
+Excepción acotada: un rechazo tipado `ViewChanged` antes de iniciar persistencia
+devuelve el grupo de imágenes a preparado en la misma conexión, sin renovar el
+vencimiento original de 60 s ni ampliar la cuota de dos. Así, guardar explícitamente
+otra vez tras releer puede usar los mismos medios. Un fallo de escritura los libera
+como antes; la incertidumbre mantiene el grupo retenido y no permite replay.
+El editor cancela con `transfer_drop` los tokens conocidos de importaciones al
+abandonar la tecla o cambiar de tipo/plugin; una importación tardía también se
+descarta. Conserva cada token hasta confirmar la cancelación o su inexistencia;
+solo esa limpieza admite reintentos acotados ante ocupación, sin impedir lecturas
+ni repetir la edición. Si no puede completarla, cierra únicamente su conexión IPC
+cuando no hay otra petición pendiente y reconecta: descarta las imágenes aún no
+publicadas de esa conexión, conserva el texto y pide elegirlas otra vez. Cancelar,
+desconectar o vencer libera las imágenes preparadas.
+
+Framing sigue en v1. Las variantes nuevas requieren actualizar lectores cerrados;
+editor y runtime se distribuyen juntos. Compatibilidad documental y decisiones:
+[ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md).

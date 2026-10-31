@@ -13,7 +13,8 @@ const TARGET: i64 = 256;
 /// Desktop entry whose icon the key should take: its top action opens an application and
 /// the key has no image of its own.
 pub fn wanted(inspection: &Inspection) -> Option<&str> {
-    if !inspection.appearance["image"].is_null() {
+    if !inspection.appearance["image"].is_null() || !inspection.appearance["visual_type"].is_null()
+    {
         return None;
     }
     let top = &inspection.actions.first()?["fields"];
@@ -146,4 +147,22 @@ fn icon_key(desktop_file: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod state_tests {
+    use super::*;
+    #[test]
+    fn base_application_icon_is_not_offered_for_a_stateful_external_face() {
+        let mut view = Inspection {
+            button: serde_json::Value::Null,
+            appearance: serde_json::json!({"image":null,"visual_type":"org.rad.audio#microphone"}),
+            actions: vec![
+                serde_json::json!({"fields":{"type":"launcher","parameters":{"desktop_entry":"app.desktop"}}}),
+            ],
+        };
+        assert!(wanted(&view).is_none());
+        view.appearance["visual_type"] = serde_json::Value::Null;
+        assert_eq!(wanted(&view), Some("app.desktop"));
+    }
 }

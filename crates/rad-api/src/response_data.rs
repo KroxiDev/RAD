@@ -70,6 +70,7 @@ dto!(EntityPage { items: Vec<EntityView>, next_cursor: Option<String>, view_revi
     deny_unknown_fields
 )]
 pub enum AppearanceField {
+    States(std::collections::BTreeMap<String, crate::StateFace>),
     Text(String),
     Image(Option<String>),
     TextPosition(TextPosition),

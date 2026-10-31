@@ -12,7 +12,7 @@ pub fn config() -> Config {
         "org.rad.media",
         Version {
             major: 0,
-            minor: 2,
+            minor: 3,
             patch: 0,
         },
         1..=1,
@@ -20,6 +20,7 @@ pub fn config() -> Config {
     .capabilities(vec![
         "dynamic_options".into(),
         "jpeg".into(),
+        "labels".into(),
         "visual_freshness".into(),
     ])
 }

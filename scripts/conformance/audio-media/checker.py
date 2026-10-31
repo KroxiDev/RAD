@@ -87,11 +87,14 @@ def run(name, out):
                 executable = BIN/'obs-fixture'
                 args = [str(port)]
                 settings = params(port=port)
+                # Manifest order: the recording starts before its pause toggles.
                 values = dict(scene=dict(scene=target('Live')),
                     filter=dict(source=target('Camera','input'), filter='Blur', operation='on'),
                     item=dict(scene=target('Root'), item=target('G','group',8,'Camera'), operation='show'),
-                    record=dict(operation='start'), stream=dict(operation='start'), wait=dict(timeout_seconds=2))
-                visual_values = {k:{f:v for f,v in values[k].items() if f not in ('operation','timeout_seconds')} for k in ['scene','filter','item','record','stream']}
+                    record=dict(operation='start'), pause=dict(operation='toggle'), stream=dict(operation='start'),
+                    mute=dict(input=target('Camera','input'), operation='toggle'),
+                    virtualcam=dict(operation='toggle'), replay=dict(operation='start'))
+                visual_values = {k:{f:v for f,v in values[k].items() if f != 'operation'} for k in values}
             elif name == 'metrics':
                 executable = BIN/'metrics-fixture'
                 visual_values = {k:{} for k in ['cpu','ram','gpu','vram']}
@@ -99,6 +102,11 @@ def run(name, out):
                 raise AssertionError(name)
             manifest_path = REPO/f'plugins/{name}/manifest.json'
             manifest = json.loads(manifest_path.read_text())
+            if name in ('audio', 'obs'):
+                assert manifest_path.stat().st_size <= 65536
+                assert 'visual_states' in manifest['capabilities']
+                assert all(len(v['states']) == 2 for v in manifest['visuals'])
+                assert all(a['visual'] in {v['id'] for v in manifest['visuals']} for a in manifest['actions'])
             scenario = dict(version=1, trusted_native_code=True, timeout_ms=10000, freshness_ms=26000,
                             args=args, actions=[], options=[], visuals=[])
             if settings is not None:

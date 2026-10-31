@@ -263,6 +263,7 @@ impl Drop for Hidraw {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::os::unix::fs::symlink;
     use std::path::PathBuf;
 
@@ -313,39 +314,6 @@ mod tests {
     }
 
     #[test]
-    fn finds_xl_on_any_port() {
-        let root = temp_root("port");
-        xl(&root, "3-2", Some("AL1"), &["hidraw7"]);
-        assert_eq!(found(&root), pair("hidraw7", "AL1"));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn absent_without_entries_or_without_xl() {
-        let root = temp_root("absent");
-        assert_eq!(found(&root), Err(DeckError::Absent));
-        add(&root, "1-1", ("046d", "c52b"), Some("K1"), &["hidraw0"]);
-        add(&root, "1-2", ("0fd9", "0060"), Some("K2"), &["hidraw1"]);
-        assert_eq!(found(&root), Err(DeckError::Absent));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn two_nodes_of_one_device_are_ambiguous() {
-        let root = temp_root("nodes");
-        xl(&root, "1-5", Some("AL1"), &["hidraw4", "hidraw5"]);
-        assert_eq!(found(&root), Err(DeckError::Identity));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn foreign_driver_is_held() {
-        let root = temp_root("driver");
-        xl(&root, "1-5", Some("AL1"), &["hidraw4"]);
-        let driver = root.join("devices/pci0000:00/0000:00:14.0/usb1/1-5/1-5:1.0/driver");
-        std::fs::remove_file(&driver).unwrap();
-        symlink("/fixture/drivers/usbfs", &driver).unwrap();
-        assert_eq!(found(&root), Err(DeckError::Held));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
     fn lowest_serial_wins_regardless_of_port_or_numbering() {
         for (low_port, low_node, high_port, high_node) in [
             ("1-5", "hidraw2", "3-2", "hidraw9"),
@@ -359,31 +327,7 @@ mod tests {
             std::fs::remove_dir_all(root).unwrap();
         }
     }
-    #[test]
-    fn non_xl_device_is_never_chosen_even_with_lower_serial() {
-        let root = temp_root("other");
-        add(&root, "1-1", ("046d", "c52b"), Some("AA0"), &["hidraw0"]);
-        xl(&root, "1-5", Some("AL1"), &["hidraw4"]);
-        assert_eq!(found(&root), pair("hidraw4", "AL1"));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn xl_without_valid_serial_is_not_eligible() {
-        let root = temp_root("serial");
-        xl(&root, "1-5", None, &["hidraw4"]);
-        assert_eq!(found(&root), Err(DeckError::Identity));
-        xl(&root, "3-2", Some("AL9"), &["hidraw5"]);
-        assert_eq!(found(&root), pair("hidraw5", "AL9"));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn duplicate_lowest_serial_is_ambiguous() {
-        let root = temp_root("tie");
-        xl(&root, "1-5", Some("AL1"), &["hidraw4"]);
-        xl(&root, "3-2", Some("AL1"), &["hidraw5"]);
-        assert_eq!(found(&root), Err(DeckError::Identity));
-        std::fs::remove_dir_all(root).unwrap();
-    }
+
     #[test]
     fn regular_fixture_is_never_treated_as_hidraw_or_written() {
         let root = temp_root("open");

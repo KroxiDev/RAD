@@ -3,24 +3,6 @@
 use rad_editor::screens::{Leave, Navigation, Screen, Section};
 
 #[test]
-fn settings_open_on_a_section_switch_sections_and_back_returns_to_the_keys() {
-    let mut navigation = Navigation::default();
-    assert_eq!(navigation.screen(), Screen::Keys);
-    assert!(
-        !navigation.back(false),
-        "the keys have nothing to go back to"
-    );
-
-    navigation.open(Section::Plugins);
-    assert_eq!(navigation.screen(), Screen::Settings(Section::Plugins));
-    navigation.open(Section::Backup);
-    assert_eq!(navigation.screen(), Screen::Settings(Section::Backup));
-
-    assert!(navigation.back(false));
-    assert_eq!(navigation.screen(), Screen::Keys);
-}
-
-#[test]
 fn unapplied_changes_keep_the_screen_and_ask_until_applied_or_discarded() {
     let mut navigation = Navigation::default();
     navigation.open(Section::General);

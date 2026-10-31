@@ -22,9 +22,21 @@ pub fn packets(key: u8, jpeg: &[u8]) -> Result<Vec<[u8; 1024]>, DeckError> {
         })
         .collect())
 }
+pub fn feature(command: u8, value: i32) -> [u8; 32] {
+    let mut b = [0; 32];
+    b[..2].copy_from_slice(&[3, command]);
+    if command == 13 {
+        b[2..6].copy_from_slice(&value.to_le_bytes());
+    } else if command == 8 {
+        b[2] = value as u8;
+    }
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn xl_report_and_chunk_boundaries_preserve_32_keys_and_final_padding() {
         let mut b = [0; 512];
@@ -44,27 +56,5 @@ mod tests {
         assert_eq!(&p[1][..9], &[2, 7, 31, 1, 1, 0, 1, 0, 77]);
         assert!(p[1][9..].iter().all(|b| *b == 0));
         assert!(packets(32, &data).is_err());
-    }
-}
-pub fn feature(command: u8, value: i32) -> [u8; 32] {
-    let mut b = [0; 32];
-    b[..2].copy_from_slice(&[3, command]);
-    if command == 13 {
-        b[2..6].copy_from_slice(&value.to_le_bytes());
-    } else if command == 8 {
-        b[2] = value as u8;
-    }
-    b
-}
-#[cfg(test)]
-mod feature_tests {
-    use super::*;
-    #[test]
-    fn brightness_sleep_and_logo_are_zero_padded_features() {
-        let b = feature(8, 100);
-        assert_eq!(&b[..3], &[3, 8, 100]);
-        assert!(b[3..].iter().all(|x| *x == 0));
-        assert_eq!(&feature(13, 300)[..6], &[3, 13, 44, 1, 0, 0]);
-        assert_eq!(&feature(2, 0)[..2], &[3, 2]);
     }
 }

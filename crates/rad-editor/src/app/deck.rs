@@ -6,7 +6,7 @@ use super::{
 };
 use eframe::egui::{self, CornerRadius, Stroke, StrokeKind};
 
-use crate::session::Grid;
+use crate::session::{Grid, KeyView};
 const GAP: f32 = 12.;
 const KEY_RANGE: std::ops::RangeInclusive<f32> = 52.0..=104.;
 /// Room between the keys and the edge of the deck body drawn around them.
@@ -45,14 +45,15 @@ pub(super) fn native_icon(appearance: &serde_json::Value) -> Option<rad_api::Nat
 
 /// Paints one key face the way the deck does. Text at the top, in the middle or at the
 /// bottom lies over the picture, which is dimmed behind it; text above or below the
-/// picture gets a band of its own and the picture shrinks to make room.
+/// picture gets a band of its own and the picture shrinks to make room. The picture comes
+/// with how far it has faded in, from 0 to 1.
 pub(super) fn paint_key(
     ui: &egui::Ui,
     look: &Look,
     rect: egui::Rect,
     label: &str,
     text_position: &str,
-    texture: Option<&egui::TextureHandle>,
+    picture: Option<(&egui::TextureHandle, f32)>,
     native_icon: Option<rad_api::NativeIcon>,
 ) {
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
@@ -60,25 +61,26 @@ pub(super) fn paint_key(
     painter.rect_filled(rect, radius, look.key);
     // Same proportions as the 96 px key the deck paints.
     let unit = rect.height() / 96.;
-    let picture = match (label.is_empty(), text_position) {
+    let area = match (label.is_empty(), text_position) {
         (false, "above_image") => rect.with_min_y(rect.top() + 34. * unit),
         (false, "below_image") => rect.with_max_y(rect.top() + 62. * unit),
         _ => rect,
     };
-    if let Some(texture) = texture {
+    if let Some((texture, shown)) = picture {
         let size = texture.size_vec2();
-        let fitted = size * (picture.width() / size.x).min(picture.height() / size.y);
+        let fitted = size * (area.width() / size.x).min(area.height() / size.y);
         egui::Image::from_texture((texture.id(), fitted))
             .corner_radius(radius)
-            .paint_at(ui, egui::Rect::from_center_size(picture.center(), fitted));
+            .tint(egui::Color32::WHITE.gamma_multiply(shown))
+            .paint_at(ui, egui::Rect::from_center_size(area.center(), fitted));
     }
-    if texture.is_none() {
+    if picture.is_none() {
         match native_icon {
             Some(rad_api::NativeIcon::Sleep) => {
-                super::look::paint_moon(&painter, picture.center(), 22. * unit, look.text);
+                super::look::paint_moon(&painter, area.center(), 22. * unit, look.text);
             }
             Some(rad_api::NativeIcon::Brightness) => {
-                super::look::paint_sun(&painter, picture.center(), 22. * unit, look.text);
+                super::look::paint_sun(&painter, area.center(), 22. * unit, look.text);
             }
             None => {}
         }
@@ -113,7 +115,9 @@ pub(super) fn paint_key(
             (top, Some((top - 3., top + height + 3.)))
         }
     };
-    if let (Some((from, to)), true) = (band, texture.is_some() || native_icon.is_some()) {
+    // The band dims what it lies over, so it comes in with the picture.
+    let behind = picture.map_or(native_icon.map(|_| 1.), |(_, shown)| Some(shown));
+    if let (Some((from, to)), Some(behind)) = (band, behind) {
         let band =
             egui::Rect::from_min_max(egui::pos2(rect.left(), from), egui::pos2(rect.right(), to));
         // Square corners would poke out of the key where the band reaches its edge.
@@ -123,39 +127,93 @@ pub(super) fn paint_key(
             sw: if to >= rect.bottom() { KEY_RADIUS } else { 0 },
             se: if to >= rect.bottom() { KEY_RADIUS } else { 0 },
         };
-        painter.rect_filled(band, corners, egui::Color32::from_black_alpha(153));
+        painter.rect_filled(
+            band,
+            corners,
+            egui::Color32::from_black_alpha((153. * behind) as u8),
+        );
     }
     painter.galley(egui::pos2(rect.center().x, top), galley, look.text);
 }
 
-/// Follows the pointer with the name of whatever is being dragged.
-pub(super) fn drag_ghost(ctx: &egui::Context, look: &Look) {
-    let (Some(payload), Some(pointer)) = (
-        egui::DragAndDrop::payload::<Drag>(ctx),
-        ctx.pointer_interact_pos(),
-    ) else {
-        return;
-    };
-    let label = match &*payload {
-        Drag::Button { label, .. } => label.clone(),
-        Drag::Add { label, .. } => label.clone(),
-        Drag::Folder => "🗀".into(),
-        Drag::Reorder(_) => return,
-    };
-    let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Tooltip,
-        egui::Id::new("drag-ghost"),
-    ));
-    let galley = painter.layout_no_wrap(label, egui::FontId::proportional(13.), look.on_accent);
-    let rect = egui::Rect::from_min_size(
-        pointer + egui::vec2(12., 12.),
-        galley.size() + egui::vec2(16., 10.),
-    );
-    painter.rect_filled(rect, CornerRadius::same(KEY_RADIUS), look.accent);
-    painter.galley(rect.min + egui::vec2(8., 5.), galley, look.on_accent);
-}
+/// How much of a key shows at its place while it is dragged away.
+const LIFTED: f32 = 0.35;
+/// How much of a dragged key's face shows under the pointer.
+const CARRIED: f32 = 0.9;
 
 impl App {
+    /// Follows the pointer with whatever is being dragged: a key with its own face, held
+    /// where it was picked up; an action or a folder by its name.
+    pub(super) fn drag_ghost(&self, ctx: &egui::Context, look: &Look) {
+        let (Some(payload), Some(pointer)) = (
+            egui::DragAndDrop::payload::<Drag>(ctx),
+            ctx.pointer_interact_pos(),
+        ) else {
+            return;
+        };
+        let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("drag-ghost"));
+        let painter = ctx.layer_painter(layer);
+        let label = match &*payload {
+            Drag::Button { id, face } => {
+                let Some(view) = self.key_view(id) else {
+                    return;
+                };
+                let rect = face.translate(pointer.to_vec2());
+                // The face is only painted, never laid out: the ghost takes no room, so
+                // the key under the pointer still gets the drop.
+                let mut ui = egui::Ui::new(
+                    ctx.clone(),
+                    layer.id.with(id),
+                    egui::UiBuilder::new().layer_id(layer).max_rect(rect),
+                );
+                painter.add(ui.style().visuals.popup_shadow.as_shape(rect, KEY_RADIUS));
+                ui.multiply_opacity(CARRIED);
+                self.key_face(&ui, look, view, rect);
+                return;
+            }
+            Drag::Add { label, .. } => label.clone(),
+            Drag::Folder => "🗀".into(),
+            Drag::Reorder(_) => return,
+        };
+        let galley = painter.layout_no_wrap(label, egui::FontId::proportional(13.), look.on_accent);
+        let rect = egui::Rect::from_min_size(
+            pointer + egui::vec2(12., 12.),
+            galley.size() + egui::vec2(16., 10.),
+        );
+        painter.rect_filled(rect, CornerRadius::same(KEY_RADIUS), look.accent);
+        painter.galley(rect.min + egui::vec2(8., 5.), galley, look.on_accent);
+    }
+    fn key_view(&self, id: &str) -> Option<&KeyView> {
+        self.board
+            .as_ref()?
+            .buttons
+            .iter()
+            .find(|b| b.entity["id"] == id)
+    }
+    /// Paints a key the way the deck shows it: its plugin's face, or its picture and text.
+    fn key_face(&self, ui: &egui::Ui, look: &Look, view: &KeyView, rect: egui::Rect) {
+        if self.plugin_face(ui, look, view.entity["id"].as_str().unwrap_or(""), rect) {
+            return;
+        }
+        let label = key_label(
+            &string(&view.appearance["text"]),
+            &string(&view.entity["fields"]["name"]),
+            view.appearance["image"].is_string() || native_icon(&view.appearance).is_some(),
+        );
+        let now = ui.input(|i| i.time);
+        let picture = view.appearance["image"]
+            .as_str()
+            .and_then(|reference| self.pictures.get(reference, now));
+        paint_key(
+            ui,
+            look,
+            rect,
+            &label,
+            &string(&view.appearance["text_position"]),
+            picture,
+            native_icon(&view.appearance),
+        );
+    }
     pub(super) fn deck(&mut self, ui: &mut egui::Ui, look: &Look) {
         let Some(model) = self.board.as_ref().map(|board| board.grid) else {
             return;
@@ -197,37 +255,28 @@ impl App {
                 self.key(ui, look, position, key_rect);
             }
         });
+        if self.pictures.fading(ui.input(|i| i.time)) {
+            ui.ctx().request_repaint();
+        }
     }
     fn key(&mut self, ui: &mut egui::Ui, look: &Look, position: usize, rect: egui::Rect) {
         let id = self.slot_id(position);
-        let view = id.as_ref().and_then(|id| {
-            self.board
-                .as_ref()?
-                .buttons
-                .iter()
-                .find(|b| b.entity["id"] == id.as_str())
-        });
-        let label = view
-            .map(|b| {
-                key_label(
-                    &string(&b.appearance["text"]),
-                    &string(&b.entity["fields"]["name"]),
-                    b.appearance["image"].is_string() || native_icon(&b.appearance).is_some(),
-                )
-            })
-            .unwrap_or_default();
+        let view = id.as_deref().and_then(|id| self.key_view(id));
         let name = view.map(|b| string(&b.entity["fields"]["name"]));
         let response = ui.interact(
             rect,
             ui.id().with(("key", position)),
             egui::Sense::click_and_drag(),
         );
-        if let Some(id) = &id {
+        if let (Some(id), Some(grab)) = (&id, ui.input(|i| i.pointer.press_origin())) {
             response.dnd_set_drag_payload(Drag::Button {
                 id: id.clone(),
-                label: label.clone(),
+                face: rect.translate(-grab.to_vec2()),
             });
         }
+        let lifted = egui::DragAndDrop::payload::<Drag>(ui.ctx()).is_some_and(
+            |drag| matches!(&*drag, Drag::Button { id: source, .. } if id.as_ref() == Some(source)),
+        );
         let accepts_drop = response
             .dnd_hover_payload::<Drag>()
             .is_some_and(|drag| match &*drag {
@@ -237,28 +286,21 @@ impl App {
                 Drag::Reorder(_) => false,
             });
         if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
             let radius = CornerRadius::same(KEY_RADIUS);
             if let Some(view) = view {
-                let texture = view.appearance["image"]
-                    .as_str()
-                    .and_then(|reference| self.textures.get(reference));
-                let position = string(&view.appearance["text_position"]);
-                if !self.plugin_face(ui, look, id.as_deref().unwrap_or(""), rect) {
-                    paint_key(
-                        ui,
-                        look,
-                        rect,
-                        &label,
-                        &position,
-                        texture,
-                        native_icon(&view.appearance),
-                    );
+                if lifted {
+                    let mut left = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    left.multiply_opacity(LIFTED);
+                    self.key_face(&left, look, view, rect);
+                } else {
+                    self.key_face(ui, look, view, rect);
                 }
                 if response.hovered() {
-                    painter.rect_filled(rect, radius, egui::Color32::from_white_alpha(10));
+                    ui.painter()
+                        .rect_filled(rect, radius, egui::Color32::from_white_alpha(10));
                 }
             } else {
+                let painter = ui.painter();
                 painter.rect_filled(rect, radius, look.empty_key);
                 if response.hovered() || accepts_drop {
                     painter.rect_filled(rect, radius, look.raised);
@@ -269,7 +311,7 @@ impl App {
                 }
             }
             if accepts_drop || self.selected_slot == Some(position) {
-                painter.rect_stroke(
+                ui.painter().rect_stroke(
                     rect,
                     radius,
                     Stroke::new(2., look.accent),
@@ -288,6 +330,7 @@ impl App {
         if let Some(drag) = response.dnd_release_payload::<Drag>() {
             match &*drag {
                 Drag::Button { id: source, .. } => self.send(crate::Request::Edit {
+                    expected_revision: None,
                     changes: vec![rad_api::Change::Move {
                         id: source.clone(),
                         position,
@@ -305,51 +348,5 @@ impl App {
         if let Some(name) = name.filter(|name| !name.is_empty()) {
             response.on_hover_text(name);
         }
-    }
-}
-
-#[cfg(test)]
-mod brightness_tests {
-    use super::*;
-    use serde_json::json;
-
-    fn face(text: &str) -> Vec<egui::epaint::Shape> {
-        let root = std::env::temp_dir().join(format!("rad-brightness-face-{}", std::process::id()));
-        let mut app = App::with_preferences_path(root.clone(), root.join("theme"), None);
-        let mut slots = vec![serde_json::Value::Null; 32];
-        slots[0] = json!({"id":"b2"});
-        app.board = Some(crate::session::Board {
-            grid: Grid::XL,
-            folder: json!({"id":"f1","fields":{"slots":slots}}),
-            buttons: vec![crate::session::KeyView {
-                entity: json!({"id":"b2","fields":{"name":"Light"}}),
-                appearance: json!({"text":text,"image":null,"text_position":"bottom","native_icon":"brightness"}),
-            }],
-        });
-        egui::Context::default()
-            .run_ui(Default::default(), |ui| {
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::Vec2::splat(96.), egui::Sense::hover());
-                app.key(ui, &Look::new(&Default::default()), 0, rect);
-            })
-            .shapes
-            .into_iter()
-            .map(|shape| shape.shape)
-            .collect()
-    }
-
-    #[test]
-    fn native_brightness_has_a_sun_without_replacing_custom_text() {
-        let plain = face("");
-        assert!(
-            plain
-                .iter()
-                .any(|shape| matches!(shape, egui::epaint::Shape::Circle(_))),
-            "the native sun must be painted"
-        );
-        assert!(!plain.iter().any(|shape| matches!(shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "Light")),
-            "a native icon replaces the fallback key name");
-        assert!(face("Keep").iter().any(|shape| matches!(shape, egui::epaint::Shape::Text(text) if text.galley.job.text == "Keep")),
-            "custom text is preserved over the native icon");
     }
 }

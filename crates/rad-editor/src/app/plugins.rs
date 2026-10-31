@@ -12,8 +12,11 @@ use serde_json::json;
 use std::collections::BTreeMap;
 /// Width of the list of installed plugins; the chosen one takes the rest.
 const LIST_WIDTH: f32 = 280.;
+/// How long after the board changes a plugin face may be missing before it reads unavailable.
+const PENDING_FACE: std::time::Duration = std::time::Duration::from_secs(1);
 #[derive(Default)]
 pub(super) struct PluginUi {
+    pub state_icons: BTreeMap<String, (String, egui::TextureHandle)>,
     pub catalog: Vec<CatalogEntry>,
     pub status: Value,
     pub dependencies: crate::dependencies::Dependencies,
@@ -80,11 +83,23 @@ impl PluginUi {
         self.form = None;
         self.form_load_current = false;
     }
-    pub fn accept_form(&mut self, target: FormTarget, loaded: LoadedForm) {
+    pub fn accept_form(&mut self, target: FormTarget, mut loaded: LoadedForm) {
         self.form_loading = false;
         if std::mem::take(&mut self.form_load_current) {
+            if let Some(form) = loaded.form.as_mut() {
+                form.set_texts(&loaded.type_key, self.texts(&loaded.type_key));
+            }
             self.form = Some((target, loaded));
         }
+    }
+    /// The texts of the plugin that owns `type_key` (an action or visual key, or a plugin id).
+    pub fn texts(&self, type_key: &str) -> crate::plugins::PluginTexts {
+        let plugin = crate::plugins::plugin_id(type_key).unwrap_or(type_key);
+        self.catalog
+            .iter()
+            .find(|entry| crate::plugins::plugin_id(&entry.type_key) == Some(plugin))
+            .map(|entry| entry.texts.clone())
+            .unwrap_or_default()
     }
     /// The worker died with these requests unanswered. None is repeated: whatever depended on
     /// an answer stops waiting for it, and the state is read again.
@@ -276,6 +291,7 @@ impl PluginUi {
     }
 }
 pub(super) struct Face {
+    pub visual_state: Option<String>,
     pub revision: String,
     pub state: String,
     pub text: Option<String>,
@@ -770,32 +786,51 @@ fn dependency_list(
     ui.separator();
     credentials
 }
+#[derive(Clone, Copy)]
+enum PluginRead {
+    Status,
+    Dependencies,
+    Catalog,
+    Visuals,
+    Settings,
+}
 impl App {
     pub(super) fn poll_plugins(&mut self) -> bool {
-        match self.plugins.schedule.choose([
-            self.plugins.dependency_status_due,
-            self.plugins.dependencies.request().is_some(),
-            !self.plugins.catalog_loaded,
-            self.plugins.visual_due,
-            self.plugins.settings_reload.is_some(),
-        ]) {
-            Some(0) => {
+        let reads = [
+            PluginRead::Status,
+            PluginRead::Dependencies,
+            PluginRead::Catalog,
+            PluginRead::Visuals,
+            PluginRead::Settings,
+        ];
+        let ready = reads.map(|read| {
+            let ready = match read {
+                PluginRead::Status => self.plugins.dependency_status_due,
+                PluginRead::Dependencies => self.plugins.dependencies.request().is_some(),
+                PluginRead::Catalog => !self.plugins.catalog_loaded,
+                PluginRead::Visuals => self.plugins.visual_due,
+                PluginRead::Settings => self.plugins.settings_reload.is_some(),
+            };
+            (read, ready)
+        });
+        match self.plugins.schedule.choose(ready) {
+            Some(PluginRead::Status) => {
                 self.plugins.dependency_status_due = false;
                 let _ = self.worker.submit(Job::Plugins);
                 return true;
             }
-            Some(1) => {
+            Some(PluginRead::Dependencies) => {
                 if let Some(request) = self.plugins.dependencies.request() {
                     let _ = self.worker.submit(Job::Request(request));
                 }
                 return true;
             }
-            Some(2) => {
+            Some(PluginRead::Catalog) => {
                 self.plugins.catalog_loaded = true;
                 let _ = self.worker.submit(Job::PluginCatalog);
                 return true;
             }
-            Some(4) => {
+            Some(PluginRead::Settings) => {
                 let id = self
                     .plugins
                     .settings_reload
@@ -804,8 +839,8 @@ impl App {
                 self.open_plugin_form(&id, None, FormTarget::Settings(id.clone()));
                 return true;
             }
-            Some(3) => self.plugins.visual_due = false,
-            _ => return false,
+            Some(PluginRead::Visuals) => self.plugins.visual_due = false,
+            None => return false,
         }
         let ids: Vec<_> = self
             .board
@@ -1010,10 +1045,10 @@ impl App {
             .catalog
             .iter()
             .find(|entry| entry.type_key == type_key)
-            .map(|entry| entry.label.clone())
+            .map(|entry| entry.shown(self.es).to_owned())
             .unwrap_or_else(|| type_key.to_owned())
     }
-    fn current_visual(&self) -> Option<String> {
+    pub(super) fn current_visual(&self) -> Option<String> {
         self.inspection
             .as_ref()
             .and_then(|i| i.appearance["visual_type"].as_str())
@@ -1046,6 +1081,7 @@ impl App {
             .show_ui(ui, |ui| {
                 if ui.selectable_label(current.is_none(), manual).clicked() && current.is_some() {
                     self.send(crate::Request::Edit {
+                        expected_revision: None,
                         changes: vec![rad_api::Change::Set {
                             id: id.into(),
                             edit: rad_api::FieldEdit::Visual(rad_api::VisualSource {
@@ -1060,15 +1096,22 @@ impl App {
                     .catalog
                     .clone()
                     .into_iter()
-                    .filter(|entry| entry.visual && entry.ready)
+                    .filter(|entry| entry.visual && entry.ready && !entry.linked_visual())
                 {
                     let chosen = current.as_deref() == Some(entry.type_key.as_str());
-                    if ui.selectable_label(chosen, &entry.label).clicked() {
+                    if ui.selectable_label(chosen, entry.shown(self.es)).clicked() {
                         self.open_plugin_form(&entry.type_key, None, FormTarget::Visual(id.into()));
                     }
                 }
             });
-        if current.is_some() && ui.button(tr(self.es, "Configure…")).clicked() {
+        if current.as_ref().is_some_and(|key| {
+            !self
+                .plugins
+                .catalog
+                .iter()
+                .any(|e| &e.type_key == key && e.linked_visual())
+        }) && ui.button(tr(self.es, "Configure…")).clicked()
+        {
             self.open_plugin_form("", Some(id.into()), FormTarget::Visual(id.into()));
         }
     }
@@ -1089,6 +1132,12 @@ impl App {
         let mut request = None;
         if !self.plugins.form_pending && self.connected {
             if let Some(form) = loaded.form.as_mut() {
+                if matches!(target, FormTarget::Action(_))
+                    && self.current_visual().is_none()
+                    && form.definition.visual.is_some()
+                {
+                    form.dirty = true;
+                }
                 if form.compatible() {
                     form_ui(ui, look, form, self.es);
                 } else {
@@ -1098,7 +1147,37 @@ impl App {
                 match form.publish() {
                     Ok(Some(value)) => {
                         if ui.add(look.primary(tr(self.es, "Apply"))).clicked() {
-                            request = Some(target.request(&loaded.type_key, value));
+                            let linked = form.texts.binds_visual(&loaded.type_key);
+                            let destination = match &target {
+                                FormTarget::AddAction(button) => Some((
+                                    button.clone(),
+                                    crate::linked_actions::Mutation::Add {
+                                        parameters: value.clone(),
+                                    },
+                                )),
+                                FormTarget::Action(id) => self.selected().map(|button| {
+                                    (
+                                        button,
+                                        crate::linked_actions::Mutation::Edit {
+                                            id: id.clone(),
+                                            parameters: value.clone(),
+                                        },
+                                    )
+                                }),
+                                _ => None,
+                            };
+                            request = Some(
+                                if let Some((button, mutation)) = destination.filter(|_| linked) {
+                                    Job::LinkedAction(crate::linked_actions::LinkedAction {
+                                        button,
+                                        type_key: loaded.type_key.clone(),
+                                        texts: form.texts.clone(),
+                                        mutation,
+                                    })
+                                } else {
+                                    Job::PluginApply(target.request(&loaded.type_key, value))
+                                },
+                            );
                         }
                     }
                     Ok(None) => {
@@ -1152,7 +1231,7 @@ impl App {
             ui.label(look.muted_text(&loaded.type_key).small());
         });
         if let Some(request) = request
-            && self.command(Job::PluginApply(request))
+            && self.command(request)
         {
             self.plugins.form_pending = true;
         }
@@ -1247,7 +1326,7 @@ impl App {
                 )
             });
             let texture = texture.or_else(|| {
-                if v.has_image && v.availability != "unavailable" {
+                if v.has_image {
                     self.plugins
                         .visuals
                         .get(&v.id)
@@ -1260,6 +1339,7 @@ impl App {
             self.plugins.visuals.insert(
                 v.id,
                 Face {
+                    visual_state: v.state,
                     revision: v.revision,
                     state: v.availability,
                     text: v.text,
@@ -1286,7 +1366,19 @@ impl App {
             return false;
         }
         let face = self.plugins.visuals.get(id);
-        let state = face.map(|f| f.state.as_str()).unwrap_or("unavailable");
+        // A face not read yet after the board changed shows plain for a moment, not as
+        // unavailable: it is usually a few milliseconds away.
+        let settling = PENDING_FACE.saturating_sub(self.board_since.elapsed());
+        if face.is_none() && !settling.is_zero() {
+            ui.ctx().request_repaint_after(settling);
+        }
+        let state = face
+            .map(|f| f.state.as_str())
+            .unwrap_or(if settling.is_zero() {
+                "unavailable"
+            } else {
+                "current"
+            });
         let text = face.and_then(|f| f.text.as_deref()).unwrap_or("");
         let mut look = super::look::Look::new(&self.palette);
         if let Some(c) = face.and_then(|f| f.color) {
@@ -1296,13 +1388,28 @@ impl App {
                 (u16::from(c[2]) * u16::from(c[3]) / 255) as u8,
             );
         }
+        let custom = face
+            .and_then(|f| f.visual_state.as_ref())
+            .and_then(|state| {
+                self.board
+                    .as_ref()?
+                    .buttons
+                    .iter()
+                    .find(|b| b.entity["id"] == id)?
+                    .appearance["states"][state]["image"]
+                    .as_str()
+            });
+        let custom_picture = custom.and_then(|key| self.pictures.get(key, ui.input(|i| i.time)));
         super::deck::paint_key(
             ui,
             &look,
             rect,
             text,
             face.map(|f| f.position.as_str()).unwrap_or("middle"),
-            face.and_then(|f| f.texture.as_ref()),
+            custom_picture.or_else(|| {
+                face.and_then(|f| f.texture.as_ref())
+                    .map(|texture| (texture, 1.))
+            }),
             None,
         );
         if state != "current" {
@@ -1334,6 +1441,7 @@ pub(super) fn form_ui(
     es: impl Into<crate::preferences::Language> + Copy,
 ) {
     use rad_plugin_contract::FieldKind;
+    let language = es.into();
     // Labels share one column so the controls line up.
     const LABEL: f32 = 120.;
     for (index, field) in form.definition.schema.fields.clone().iter().enumerate() {
@@ -1354,7 +1462,7 @@ pub(super) fn form_ui(
                         ui.set_min_width(LABEL);
                         ui.label(look.muted_text(format!(
                             "{}{}",
-                            field.label,
+                            form.texts.get(language, &field.label),
                             if field.required { " *" } else { "" }
                         )));
                     },
@@ -1384,15 +1492,23 @@ pub(super) fn form_ui(
                         }
                         FieldKind::Choice { options } => {
                             let old = value.clone();
+                            let texts = form.texts.clone();
+                            // The user reads each option's text; its value is what is stored.
+                            let shown = match options.iter().find(|o| o.value == value) {
+                                _ if value.is_empty() => tr(es, "Choose…"),
+                                Some(option) => texts.get(language, &option.label),
+                                None => &value,
+                            }
+                            .to_owned();
                             egui::ComboBox::from_id_salt("choice")
-                                .selected_text(if value.is_empty() {
-                                    tr(es, "Choose…")
-                                } else {
-                                    &value
-                                })
+                                .selected_text(shown)
                                 .show_ui(ui, |ui| {
                                     for option in options {
-                                        ui.selectable_value(&mut value, option.clone(), option);
+                                        ui.selectable_value(
+                                            &mut value,
+                                            option.value.clone(),
+                                            texts.get(language, &option.label),
+                                        );
                                     }
                                 });
                             old != value
@@ -1433,586 +1549,9 @@ pub(super) fn form_ui(
 }
 
 #[cfg(test)]
-mod administration_tests {
-    use super::*;
-
-    fn click(pos: egui::Pos2) -> Vec<egui::Event> {
-        vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: true,
-                modifiers: Default::default(),
-            },
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: Default::default(),
-            },
-        ]
-    }
-    /// One frame of the Plugins section without the App: the list, and the chosen plugin or
-    /// «Add plugin». Returns every text drawn, with where.
-    fn frame_with(
-        ctx: &egui::Context,
-        plugins: &mut PluginUi,
-        events: Vec<egui::Event>,
-        height: f32,
-    ) -> Vec<(String, egui::Rect)> {
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(900., height),
-            )),
-            events,
-            ..Default::default()
-        };
-        let look = Look::new(&Default::default());
-        let output = ctx.run_ui(input, |ui| {
-            operation_progress(ui, &plugins.status.clone(), false);
-            ui.horizontal_top(|ui| {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(LIST_WIDTH, height - 40.),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.set_width(LIST_WIDTH);
-                        plugin_list(ui, plugins, false);
-                    },
-                );
-                ui.vertical(|ui| {
-                    if plugins.selected_item().is_none() {
-                        add_plugin(ui, &look, plugins, true, false);
-                    } else {
-                        plugin_summary(ui, plugins, true, false);
-                        plugin_more(ui, &look, plugins, true, false);
-                    }
-                });
-            });
-        });
-        output
-            .shapes
-            .into_iter()
-            .filter_map(|s| {
-                if let egui::epaint::Shape::Text(text) = s.shape {
-                    let rect = text.galley.rect.translate(text.pos.to_vec2());
-                    Some((text.galley.job.text.clone(), rect))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-    fn frame(
-        ctx: &egui::Context,
-        plugins: &mut PluginUi,
-        at: Option<egui::Pos2>,
-    ) -> Vec<(String, egui::Rect)> {
-        frame_with(ctx, plugins, at.map(click).unwrap_or_default(), 800.)
-    }
-    #[test]
-    fn resource_metadata_is_requested_only_from_details() {
-        let ctx = egui::Context::default();
-        ctx.style_mut_of(egui::Theme::Dark, |style| style.animation_time = 0.0);
-        ctx.style_mut_of(egui::Theme::Light, |style| style.animation_time = 0.0);
-        let mut plugins = PluginUi {
-            status: json!({"items":[{"id":"fixture","host":"ready"}]}),
-            ..Default::default()
-        };
-        plugins.select("fixture");
-        let text = frame(&ctx, &mut plugins, None);
-        assert!(!text.iter().any(|(text, _)| text == "Declared resources"));
-        let at = text
-            .iter()
-            .find(|(text, _)| text == "View details")
-            .unwrap()
-            .1
-            .center();
-        frame(&ctx, &mut plugins, Some(at));
-        let text = frame(&ctx, &mut plugins, None);
-        assert!(text.iter().any(|(text, _)| text == "Declared resources"));
-    }
-    #[test]
-    fn resource_details_are_bounded_read_only_and_exclude_other_manifest_fields() {
-        use rad_plugin_contract::Resource;
-        let mut manifest: rad_plugin_contract::Manifest = serde_json::from_str(include_str!(
-            "../../../rad-plugin-host/fixture/manifest-v1.json"
-        ))
-        .unwrap();
-        manifest.resources = vec![
-            Resource::Internet,
-            Resource::SystemPrograms,
-            Resource::ExternalFiles,
-            Resource::Devices,
-            Resource::DesktopServices,
-        ];
-        manifest.actions[0].credential_slots = vec!["PRIVATE_SENTINEL".into()];
-        let mut plugins = PluginUi {
-            status: json!({"items":[{"id":manifest.id,"selected":manifest.version,"host":"ready"}]}),
-            ..Default::default()
-        };
-        let view = |manifest: &rad_plugin_contract::Manifest| rad_api::PluginManifestView {
-            plugin_id: manifest.id.clone(),
-            document: serde_json::from_value(serde_json::to_value(manifest).unwrap()).unwrap(),
-        };
-        plugins.accept_manifest(view(&manifest)).unwrap();
-        plugins.select(&manifest.id);
-        let ctx = egui::Context::default();
-        ctx.style_mut_of(egui::Theme::Dark, |style| style.animation_time = 0.0);
-        ctx.style_mut_of(egui::Theme::Light, |style| style.animation_time = 0.0);
-        let text = frame(&ctx, &mut plugins, None);
-        let at = text
-            .iter()
-            .find(|(text, _)| text == "View details")
-            .unwrap()
-            .1
-            .center();
-        frame(&ctx, &mut plugins, Some(at));
-        let text = frame(&ctx, &mut plugins, None);
-        assert!(text.iter().any(|(text, _)| text == "Internet"));
-        assert!(
-            text.iter().any(|(text, _)| text
-                == "Declared by the author; informational, not enforced permissions")
-        );
-        assert!(
-            !text
-                .iter()
-                .any(|(text, _)| text.contains("PRIVATE_SENTINEL"))
-        );
-        assert!(plugins.manifest_request.is_none());
-        manifest.resources.push(Resource::Internet);
-        assert!(plugins.accept_manifest(view(&manifest)).is_err());
-        plugins.resources.clear();
-        manifest.resources.pop();
-        manifest.version.patch += 1;
-        plugins.accept_manifest(view(&manifest)).unwrap();
-        assert!(
-            plugins.resources.is_empty(),
-            "a stale selection cannot populate the cache"
-        );
-    }
-    #[test]
-    fn retry_is_shown_only_after_runtime_allows_it_and_click_is_explicit() {
-        let ctx = egui::Context::default();
-        let mut plugins = PluginUi {
-            status: json!({"items":[{"id":"fixture","host":"failed","can_retry":false}]}),
-            ..Default::default()
-        };
-        plugins.select("fixture");
-        assert!(
-            !frame(&ctx, &mut plugins, None)
-                .iter()
-                .any(|(text, _)| text == "Retry")
-        );
-        plugins.status["items"][0]["can_retry"] = json!(true);
-        let text = frame(&ctx, &mut plugins, None);
-        assert!(plugins.retry_request.is_none());
-        let at = text
-            .iter()
-            .find(|(text, _)| text == "Retry")
-            .unwrap()
-            .1
-            .center();
-        frame(&ctx, &mut plugins, Some(at));
-        assert_eq!(plugins.retry_request.as_deref(), Some("fixture"));
-        assert!(!plugins.update_request);
-        assert!(!plugins.admin_pending);
-    }
-    #[test]
-    fn locked_admin_hides_mutations_and_reuses_only_selected_source_trust() {
-        let mut p = PluginUi {
-            status: json!({"state":"failed","locked":true,"items":[{"id":"p","source":"https://github.com/o/r","source_trusted":true}]}),
-            ..Default::default()
-        };
-        assert!(!p.can_administer(true));
-        p.status["locked"] = json!(false);
-        assert!(p.can_administer(true));
-        p.select("p");
-        assert_eq!(p.source, "https://github.com/o/r");
-        assert!(p.trusted_update());
-        p.source.push_str("/releases/tag/v2");
-        assert!(!p.trusted_update());
-        assert!(!p.trusted);
-    }
-    fn synthetic(count: usize) -> Value {
-        json!({"items": (1..=count).map(|i| json!({
-            "id":format!("plugin{i}"), "selected":{"major":i,"minor":0,"patch":0},
-            "previous":{"major":0,"minor":0,"patch":1}, "host":"failed"
-        })).collect::<Vec<_>>() })
-    }
-    #[test]
-    fn every_installed_plugin_is_reachable_by_scrolling_the_list_with_8_and_32() {
-        for count in [8, 32] {
-            let ctx = egui::Context::default();
-            ctx.style_mut_of(egui::Theme::Dark, |style| style.animation_time = 0.0);
-            let mut plugins = PluginUi {
-                status: synthetic(count),
-                ..Default::default()
-            };
-            let name = |i: usize| format!("plugin{i}");
-            let mut seen = std::collections::BTreeSet::new();
-            let mut text = frame_with(&ctx, &mut plugins, vec![], 500.);
-            for _ in 0..40 {
-                seen.extend(
-                    text.iter()
-                        .filter(|(s, _)| s.starts_with("plugin"))
-                        .map(|(s, _)| s.clone()),
-                );
-                if seen.contains(&name(count)) {
-                    break;
-                }
-                let list = egui::pos2(LIST_WIDTH / 2., 250.);
-                text = frame_with(
-                    &ctx,
-                    &mut plugins,
-                    vec![
-                        egui::Event::PointerMoved(list),
-                        egui::Event::MouseWheel {
-                            unit: egui::MouseWheelUnit::Point,
-                            delta: egui::vec2(0., -120.),
-                            phase: egui::TouchPhase::Move,
-                            modifiers: Default::default(),
-                        },
-                    ],
-                    500.,
-                );
-            }
-            assert_eq!(seen.len(), count, "every plugin appears: {seen:?}");
-            // Wheel scrolling is smooth: let the list come to rest before clicking.
-            for _ in 0..60 {
-                text = frame_with(&ctx, &mut plugins, vec![], 500.);
-            }
-            assert!(text.iter().any(|(s, _)| {
-                s == "Not working · {count}.0.0"
-                    .replace("{count}", &count.to_string())
-                    .as_str()
-            }));
-            let last = text
-                .iter()
-                .find(|(s, _)| *s == name(count))
-                .unwrap()
-                .1
-                .center();
-            frame_with(&ctx, &mut plugins, click(last), 500.);
-            assert_eq!(plugins.selected, name(count), "the last one can be chosen");
-            assert!(!text.iter().any(|(s, _)| s == "Next"), "no pages");
-        }
-        let ctx = egui::Context::default();
-        let mut plugins = PluginUi {
-            status: synthetic(32),
-            ..Default::default()
-        };
-        plugins.status["items"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"id":"plugin33"}));
-        let text = frame(&ctx, &mut plugins, None);
-        assert!(
-            text.iter()
-                .any(|(s, _)| s == "Invalid plugin status: more than 32 entries")
-        );
-        assert!(!text.iter().any(|(s, _)| s.starts_with("plugin")));
-    }
-    #[test]
-    fn installing_an_official_plugin_sends_its_current_release_trusted_by_the_click() {
-        let ctx = egui::Context::default();
-        let mut plugins = PluginUi {
-            status: json!({"state":"idle","items":[{"id":"org.rad.media","host":"ready",
-                "selected":{"major":0,"minor":2,"patch":0}}]}),
-            ..Default::default()
-        };
-        let text = frame(&ctx, &mut plugins, None);
-        assert!(
-            text.iter().any(|(s, _)| s == "Installed"),
-            "Media is installed"
-        );
-        let audio = text.iter().find(|(s, _)| s == "Audio").unwrap().1;
-        let install = text
-            .iter()
-            .filter(|(s, r)| s == "Install" && (r.center().y - audio.center().y).abs() < 8.)
-            .map(|(_, r)| r.center())
-            .next()
-            .expect("Audio has its own Install button");
-        frame(&ctx, &mut plugins, Some(install));
-        let source = plugins.official_install.take().unwrap();
-        assert_eq!(source, crate::official::OFFICIAL[0].source);
-        let request = serde_json::to_value(official_request(source)).unwrap();
-        let text = request.to_string();
-        assert!(text.contains(source), "{text}");
-        assert!(text.contains("\"install\""), "{text}");
-        assert!(
-            text.contains("true"),
-            "the click trusts the official release: {text}"
-        );
-        assert!(plugins.operation_request.is_none(), "nothing else is sent");
-    }
-    #[test]
-    fn the_bar_follows_the_download_from_0_to_100_and_then_goes() {
-        let ctx = egui::Context::default();
-        let mut plugins = PluginUi {
-            status: json!({"state":"preparing","items":[]}),
-            ..Default::default()
-        };
-        let text = frame(&ctx, &mut plugins, None);
-        assert!(
-            text.iter().any(|(s, _)| s == "Working…"),
-            "size still unknown"
-        );
-        for percent in [0, 50, 100] {
-            plugins.status["progress"] = json!(percent);
-            let text = frame(&ctx, &mut plugins, None);
-            let shown = format!("Downloading {percent} %");
-            assert!(text.iter().any(|(s, _)| *s == shown), "{shown}");
-        }
-        plugins.status = json!({"state":"idle","items":[]});
-        let text = frame(&ctx, &mut plugins, None);
-        assert!(!text.iter().any(|(s, _)| s.starts_with("Downloading")));
-    }
-    #[test]
-    fn an_official_plugin_with_a_newer_release_offers_its_update_and_others_their_origin() {
-        let official = json!({"id":"org.rad.audio","host":"ready","source_trusted":true,
-            "source":"https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.1.0",
-            "selected":{"major":0,"minor":1,"patch":0}});
-        assert_eq!(
-            update_source(&official),
-            Some((crate::official::OFFICIAL[0].source.into(), true))
-        );
-        let mut current = official.clone();
-        current["selected"] = json!({"major":0,"minor":2,"patch":0});
-        assert_eq!(update_source(&current), None, "already current");
-        let third = json!({"id":"com.example.x","host":"ready","source_trusted":true,
-            "source":"https://github.com/o/r","diagnostic":"incompatible_plugin",
-            "selected":{"major":1,"minor":0,"patch":0}});
-        assert_eq!(
-            update_source(&third),
-            Some(("https://github.com/o/r".into(), false))
-        );
-    }
-}
-
-#[cfg(test)]
-mod credential_tests {
-    use super::*;
-    #[test]
-    fn declared_credentials_are_visible_separately_from_ordinary_fields() {
-        let definition = rad_plugin_contract::Definition {
-            gestures: rad_plugin_contract::default_gestures(),
-            id: "authenticate".into(),
-            label: "Authenticate".into(),
-            schema: rad_plugin_contract::Schema {
-                version: 1,
-                fields: vec![],
-            },
-            credential_slots: vec!["password".into()],
-            response_timeout: None,
-        };
-        let mut form = FormDraft::new(definition);
-        let ctx = egui::Context::default();
-        let mut panel = super::super::credentials::Panel::default();
-        panel.bind("first", "p:authenticate", &form.definition.credential_slots);
-        let mut worker = super::super::credentials::start(std::path::PathBuf::from("/unused"));
-        let output = ctx.run_ui(Default::default(), |ui| {
-            form_ui(ui, &Look::new(&Default::default()), &mut form, false);
-            panel.show(ui, &mut worker, false, false);
-        });
-        let texts: Vec<_> = output
-            .shapes
-            .iter()
-            .filter_map(|shape| {
-                if let egui::epaint::Shape::Text(t) = &shape.shape {
-                    Some(t.galley.job.text.as_str())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        assert!(texts.contains(&"Credentials — saved separately"));
-        assert!(texts.contains(&"password"));
-        assert_eq!(form.publish().unwrap().unwrap()["values"], json!({}));
-    }
-}
-
-#[cfg(test)]
-mod dependency_tests {
-    use super::*;
-    fn dependency_frame(
-        ctx: &egui::Context,
-        plugins: &mut PluginUi,
-        click: Option<egui::Pos2>,
-    ) -> Vec<(String, egui::Rect)> {
-        let mut input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(900., 800.),
-            )),
-            ..Default::default()
-        };
-        if let Some(pos) = click {
-            input.events = vec![
-                egui::Event::PointerMoved(pos),
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: Default::default(),
-                },
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: Default::default(),
-                },
-            ];
-        }
-        let output = ctx.run_ui(input, |ui| {
-            dependency_list(ui, plugins, true, false);
-        });
-        output
-            .shapes
-            .into_iter()
-            .filter_map(|s| {
-                if let egui::epaint::Shape::Text(text) = s.shape {
-                    let rect = text.galley.rect.translate(text.pos.to_vec2());
-                    Some((text.galley.job.text.clone(), rect))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    #[test]
-    fn password_badge_requires_installed_status_and_slots_never_imported_hints() {
-        let ctx = egui::Context::default();
-        let mut plugins = PluginUi {
-            status: json!({"items":[],"state":"idle"}),
-            ..Default::default()
-        };
-        plugins.dependencies.accept(json!({"view_revision":"1","items":[{"id":"p","version":null,"origin":null,"credential_slots":["password"],"needs_credentials":true}],"next_cursor":null})).unwrap();
-        let text = dependency_frame(&ctx, &mut plugins, None);
-        assert!(
-            !text
-                .iter()
-                .any(|(text, _)| text == "Needs password" || text == "Enter password")
-        );
-        plugins.status = json!({"items":[{"id":"p","needs_credentials":false}],"state":"idle"});
-        let text = dependency_frame(&ctx, &mut plugins, None);
-        assert!(!text.iter().any(|(text, _)| text == "Needs password"));
-        plugins.status["items"][0]["needs_credentials"] = json!(true);
-        let text = dependency_frame(&ctx, &mut plugins, None);
-        assert!(text.iter().any(|(text, _)| text == "Needs password"));
-        assert!(text.iter().any(|(text, _)| text == "Enter password"));
-    }
-
-    #[test]
-    fn every_missing_dependency_is_offered_with_explicit_untrusted_source() {
-        let ctx = egui::Context::default();
-        let mut plugins = PluginUi {
-            status: json!({"items":[],"state":"idle"}),
-            trusted: true,
-            ..Default::default()
-        };
-        let items: Vec<_> = (0..33).map(|i|json!({"id":format!("missing{i}"),"version":null,"origin":if i == 0 {Some("https://github.com/example/plugin")}else{None},"credential_slots":[],"needs_credentials":null})).collect();
-        plugins
-            .dependencies
-            .accept(json!({"view_revision":"1","items":items[..32],"next_cursor":"next"}))
-            .unwrap();
-        plugins
-            .dependencies
-            .accept(json!({"view_revision":"1","items":items[32..],"next_cursor":null}))
-            .unwrap();
-        let mut text = dependency_frame(&ctx, &mut plugins, None);
-        assert!(
-            text.iter().any(|(s, _)| s == "missing0"),
-            "missing plugin not offered"
-        );
-        let install = text
-            .iter()
-            .find(|(s, _)| s == "Prepare installation")
-            .unwrap()
-            .1
-            .center();
-        dependency_frame(&ctx, &mut plugins, Some(install));
-        assert_eq!(plugins.source, "https://github.com/example/plugin");
-        assert!(!plugins.trusted);
-        assert!(plugins.source_edited);
-        for first in [0, 8, 16, 24, 32] {
-            text = dependency_frame(&ctx, &mut plugins, None);
-            for i in first..(first + 8).min(33) {
-                assert!(text.iter().any(|(s, _)| s == &format!("missing{i}")));
-            }
-            assert!(text.iter().any(|(s, _)| s.contains("Version unknown")));
-            assert!(!text.iter().any(|(s, _)| s == "Needs password"));
-            if first < 32 {
-                let next = text.iter().find(|(s, _)| s == "Next").unwrap().1.center();
-                dependency_frame(&ctx, &mut plugins, Some(next));
-            }
-        }
-        assert!(!text.iter().any(|(s, _)| s == "Prepare installation"));
-        assert!(text.iter().any(|(s, _)| s.contains("Source unknown")));
-    }
-}
-
-#[cfg(test)]
-mod restored_tests {
-    use super::*;
-    #[test]
-    fn only_applied_restore_and_reconnect_reload_published_dependencies_without_reusing_trust() {
-        let mut p = PluginUi {
-            source: "https://github.com/example/old".into(),
-            trusted: true,
-            ..Default::default()
-        };
-        p.dependencies
-            .accept(json!({"view_revision":"1","items":[],"next_cursor":null}))
-            .unwrap();
-        assert!(!p.restore_result(rad_client::response::Status::Ok));
-        assert!(!p.restore_result(rad_client::response::Status::Error));
-        assert!(p.dependencies.request().is_none());
-        assert!(p.restore_result(rad_client::response::Status::Applied));
-        assert_eq!(
-            p.dependencies.request().unwrap().operation().as_str(),
-            "plugin_dependencies"
-        );
-        assert!(!p.trusted);
-        assert!(p.source.is_empty());
-        p.dependencies
-            .accept(json!({"view_revision":"2","items":[],"next_cursor":null}))
-            .unwrap();
-        p.reconnect();
-        assert_eq!(
-            p.dependencies.request().unwrap().arguments(),
-            json!({"cursor":null})
-        );
-        assert!(p.dependency_status_due);
-    }
-    #[test]
-    fn imported_sources_are_only_supported_public_links_normalized_without_execution() {
-        for unsupported in [
-            "",
-            "file:///tmp/plugin",
-            "https://evil.test/o/r",
-            "https://github.com/o/r?secret=x",
-            "https://github.com/o/../releases",
-            "https://github.com/o/r/releases/tag/x/y",
-        ] {
-            assert!(installation_source(unsupported).is_none());
-        }
-        assert_eq!(
-            installation_source("https://github.com/o/r.git/releases/latest/").as_deref(),
-            Some("https://github.com/o/r")
-        );
-        assert_eq!(
-            installation_source("https://github.com/o/r/releases/tag/v2/").as_deref(),
-            Some("https://github.com/o/r/releases/tag/v2")
-        );
-    }
-}
-
-#[cfg(test)]
 mod source_change_tests {
     use super::*;
+
     const REGISTERED: &str = "https://github.com/owner/repo/releases/tag/v1";
     const OTHER: &str = "https://github.com/other/repo/releases/tag/v2";
     fn ui(source: &str) -> PluginUi {
@@ -2026,56 +1565,7 @@ mod source_change_tests {
         plugins.trusted = true;
         plugins
     }
-    fn args(request: &crate::Request) -> Value {
-        request.arguments()
-    }
-    #[test]
-    fn another_repository_waits_for_the_user_and_then_sends_the_registered_origin() {
-        for operation in ["update", "reinstall"] {
-            let mut plugins = ui(OTHER);
-            assert!(
-                plugins.next_admin_request(operation).is_none(),
-                "{operation} must not be sent before the user agrees"
-            );
-            let asked = plugins.confirmation.clone().expect("confirmation opens");
-            assert_eq!(asked.change.registered, REGISTERED);
-            assert_eq!(asked.change.requested, OTHER);
-            let request = plugins.confirm().expect("the confirmed request");
-            assert_eq!(
-                args(&request),
-                json!({"operation":operation,"plugin_id":"fixture","source":OTHER,
-                       "trusted":true,"replaces_source":REGISTERED})
-            );
-            assert!(plugins.confirmation.is_none());
-        }
-    }
-    #[test]
-    fn same_repository_other_tag_or_case_is_sent_without_confirmation() {
-        for source in [
-            "https://github.com/owner/repo/releases/tag/v2",
-            "https://github.com/OWNER/REPO",
-        ] {
-            let mut plugins = ui(source);
-            let request = plugins.next_admin_request("update").unwrap();
-            assert!(args(&request).get("replaces_source").is_none(), "{source}");
-            assert!(plugins.confirmation.is_none());
-        }
-    }
-    #[test]
-    fn other_operations_and_plugins_without_origin_never_ask() {
-        let mut plugins = ui(OTHER);
-        for operation in ["install", "uninstall", "rollback"] {
-            assert!(
-                plugins.next_admin_request(operation).is_some(),
-                "{operation}"
-            );
-        }
-        plugins.status["items"][0]["source"] = Value::Null;
-        plugins.select("fixture");
-        plugins.source = OTHER.into();
-        plugins.trusted = true;
-        assert!(plugins.next_admin_request("update").is_some());
-    }
+
     #[test]
     fn a_confirmation_does_not_outlive_the_plugin_or_the_link_it_was_raised_for() {
         let mut plugins = ui(OTHER);
@@ -2092,28 +1582,5 @@ mod source_change_tests {
         plugins.selected = "second".into();
         assert!(plugins.pending_confirmation().is_none(), "another plugin");
         assert!(plugins.confirm().is_none(), "nothing valid to confirm");
-    }
-    #[test]
-    fn a_refusal_from_the_runtime_opens_the_confirmation_with_the_origins_it_names() {
-        let mut plugins = ui("https://github.com/owner/repo/releases/tag/v2");
-        plugins.submitted = Some("update");
-        // The registered origin changed meanwhile: the runtime names the current one.
-        let change = SourceChange::from_details(&json!({
-            "registered":"https://github.com/moved/repo","requested":"https://github.com/owner/repo/releases/tag/v2"
-        }))
-        .unwrap();
-        plugins.source_refused(change.clone());
-        assert_eq!(plugins.pending_confirmation().unwrap().change, change);
-        let request = plugins.confirm().unwrap();
-        assert_eq!(args(&request)["operation"], "update");
-        assert_eq!(
-            args(&request)["replaces_source"],
-            "https://github.com/moved/repo"
-        );
-        assert_eq!(args(&request)["trusted"], true);
-        // Without a remembered operation there is nothing to repeat.
-        let mut idle = ui(OTHER);
-        idle.source_refused(change);
-        assert!(idle.pending_confirmation().is_none());
     }
 }

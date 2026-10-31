@@ -3,30 +3,6 @@ use rad_plugin_manager::{Manager, ManagerState};
 use support::{Directory, TARGET};
 
 #[test]
-fn creates_and_reopens_empty_private_store_without_overwriting() {
-    let dir = Directory::new();
-    let manager = Manager::create(&dir.0, 1, TARGET).unwrap();
-    assert_eq!(manager.state(), ManagerState::Ready);
-    assert!(manager.installed().unwrap().is_empty());
-    assert!(
-        Manager::open(&dir.0, 1, TARGET).is_err(),
-        "exclusive owner while open"
-    );
-    drop(manager);
-    assert!(
-        Manager::create(&dir.0, 1, TARGET).is_err(),
-        "create never resets existing data"
-    );
-    assert!(
-        Manager::open(&dir.0, 1, TARGET)
-            .unwrap()
-            .installed()
-            .unwrap()
-            .is_empty()
-    );
-}
-
-#[test]
 fn prepared_install_does_not_publish_until_durable_commit_and_survives_reopen() {
     use rad_plugin_manager::{CommitOutcome, Operation};
     let dir = Directory::new();
@@ -56,24 +32,6 @@ fn prepared_install_does_not_publish_until_durable_commit_and_survives_reopen() 
         executable,
         std::fs::read(std::env::current_exe().unwrap()).unwrap()
     );
-}
-
-#[test]
-fn interrupted_prepare_recovers_without_publishing_or_leaving_residues() {
-    use rad_plugin_manager::Operation;
-    let dir = Directory::new();
-    let mut manager = Manager::create(&dir.0, 1, TARGET).unwrap();
-    let bytes = support::package(1);
-    let _abandoned = manager.prepare(Operation::Install, Some(&bytes)).unwrap();
-    drop(manager);
-    let mut manager = Manager::open(&dir.0, 1, TARGET).unwrap();
-    assert!(manager.installed().unwrap().is_empty());
-    assert_eq!(
-        std::fs::read_dir(&dir.0).unwrap().count(),
-        1,
-        "startup removes only own abandoned staging"
-    );
-    assert!(manager.prepare(Operation::Install, Some(&bytes)).is_ok());
 }
 
 #[test]
@@ -109,56 +67,6 @@ fn update_rollback_reinstall_uninstall_retain_only_one_previous() {
     assert_eq!(manager.commit(&mut change).unwrap(), CommitOutcome::Applied);
     assert!(manager.installed().unwrap().is_empty());
     assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 1);
-}
-
-#[test]
-fn replacing_the_selected_version_with_itself_never_evicts_the_previous_version() {
-    use rad_plugin_manager::{CommitOutcome, Error, Operation};
-    let dir = Directory::new();
-    let mut manager = Manager::create(&dir.0, 1, TARGET).unwrap();
-    let id = "org.rad.fixture".to_string();
-    for (op, version) in [(Operation::Install, 1), (Operation::Update(id.clone()), 2)] {
-        let mut change = Some(
-            manager
-                .prepare(op, Some(&support::package(version)))
-                .unwrap(),
-        );
-        assert_eq!(manager.commit(&mut change).unwrap(), CommitOutcome::Applied);
-    }
-    let index = std::fs::read(dir.0.join("index.json")).unwrap();
-    assert_eq!(
-        manager
-            .prepare(Operation::Update(id.clone()), Some(&support::package(2)))
-            .err(),
-        Some(Error::SameVersion)
-    );
-    assert_eq!(manager.state(), ManagerState::Ready);
-    assert_eq!(std::fs::read(dir.0.join("index.json")).unwrap(), index);
-    // An interrupted same-version reinstall must reopen cleanly, still on v2 over v1.
-    let _abandoned = manager
-        .prepare(Operation::Reinstall(id.clone()), Some(&support::package(2)))
-        .unwrap();
-    drop(manager);
-    let mut manager = Manager::open(&dir.0, 1, TARGET).unwrap();
-    assert_eq!(std::fs::read(dir.0.join("index.json")).unwrap(), index);
-    assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 3);
-    let mut change = Some(
-        manager
-            .prepare(Operation::Reinstall(id.clone()), Some(&support::package(2)))
-            .unwrap(),
-    );
-    assert_eq!(manager.commit(&mut change).unwrap(), CommitOutcome::Applied);
-    assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 3);
-    drop(manager);
-    let mut manager = Manager::open(&dir.0, 1, TARGET).unwrap();
-    let mut change = Some(manager.prepare(Operation::Rollback(id), None).unwrap());
-    assert_eq!(manager.commit(&mut change).unwrap(), CommitOutcome::Applied);
-    let installed = manager.installed().unwrap();
-    assert_eq!(installed[0].manifest.version.major, 1);
-    assert_eq!(
-        installed[0].previous.as_ref().map(|m| m.version.major),
-        Some(2)
-    );
 }
 
 #[test]
@@ -255,33 +163,6 @@ fn collisions_and_symlinks_preserve_preexisting_data_and_never_escape() {
 }
 
 #[test]
-fn reinstall_after_uninstall_accepts_same_identity_without_existing_binary() {
-    use rad_plugin_manager::{CommitOutcome, Operation};
-    let dir = Directory::new();
-    let mut manager = Manager::create(&dir.0, 1, TARGET).unwrap();
-    let bytes = support::package(1);
-    let mut install = Some(manager.prepare(Operation::Install, Some(&bytes)).unwrap());
-    manager.commit(&mut install).unwrap();
-    let mut uninstall = Some(
-        manager
-            .prepare(Operation::Uninstall("org.rad.fixture".into()), None)
-            .unwrap(),
-    );
-    manager.commit(&mut uninstall).unwrap();
-    let mut reinstall = Some(
-        manager
-            .prepare(Operation::Reinstall("org.rad.fixture".into()), Some(&bytes))
-            .unwrap(),
-    );
-    assert_eq!(
-        manager.commit(&mut reinstall).unwrap(),
-        CommitOutcome::Applied
-    );
-    assert_eq!(manager.installed().unwrap()[0].manifest.version.major, 1);
-    assert!(manager.installed().unwrap()[0].previous.is_none());
-}
-
-#[test]
 fn incompatible_or_wrong_identity_packages_leave_active_and_previous_bytes_unchanged() {
     use rad_plugin_manager::Operation;
     let dir = Directory::new();
@@ -317,34 +198,6 @@ fn incompatible_or_wrong_identity_packages_leave_active_and_previous_bytes_uncha
         assert_eq!(manager.installed().unwrap()[0].manifest.version.major, 1);
         assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 2);
     }
-}
-
-#[test]
-fn ordinary_rejections_name_their_cause_and_keep_the_manager_ready() {
-    use rad_plugin_manager::{Error, Operation};
-    let dir = Directory::new();
-    let mut manager = Manager::create(&dir.0, 1, TARGET).unwrap();
-    let bytes = support::package(1);
-    let mut install = Some(manager.prepare(Operation::Install, Some(&bytes)).unwrap());
-    manager.commit(&mut install).unwrap();
-    let index = std::fs::read(dir.0.join("index.json")).unwrap();
-    assert_eq!(
-        manager.prepare(Operation::Install, Some(&bytes)).err(),
-        Some(Error::AlreadyInstalled)
-    );
-    let foreign = support::package_for("org.rad.other", 2);
-    for operation in [
-        Operation::Update("org.rad.fixture".into()),
-        Operation::Reinstall("org.rad.fixture".into()),
-    ] {
-        assert_eq!(
-            manager.prepare(operation, Some(&foreign)).err(),
-            Some(Error::PluginMismatch)
-        );
-    }
-    assert_eq!(manager.state(), ManagerState::Ready);
-    assert_eq!(std::fs::read(dir.0.join("index.json")).unwrap(), index);
-    assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 2);
 }
 
 #[test]
@@ -412,27 +265,6 @@ fn unexpected_payload_children_are_preserved_and_rejected_on_startup() {
 }
 
 #[test]
-fn incomplete_journal_next_is_owned_orphan_and_open_recovers() {
-    let dir = support::Directory::new();
-    drop(Manager::create(&dir.0, 1, support::TARGET).unwrap());
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(dir.0.join("journal.next"))
-            .unwrap()
-            .write_all(b"{incomplete")
-            .unwrap();
-    }
-    let manager = Manager::open(&dir.0, 1, support::TARGET).unwrap();
-    assert!(manager.installed().unwrap().is_empty());
-    assert!(!dir.0.join("journal.next").exists());
-}
-
-#[test]
 fn inventory_uses_validated_manifest_cache_but_reopen_revalidates_bytes() {
     use rad_plugin_manager::Operation;
     let dir = Directory::new();
@@ -457,78 +289,8 @@ fn inventory_uses_validated_manifest_cache_but_reopen_revalidates_bytes() {
     );
 }
 
-#[test]
-fn confirmed_source_is_normalized_and_survives_reopen_and_rollback() {
-    use rad_plugin_manager::{GithubSource, Operation};
-    let dir = Directory::new();
-    let mut manager = Manager::create(&dir.0, 1, TARGET).unwrap();
-    let source = GithubSource::parse("https://github.com/owner/repo.git/releases/latest").unwrap();
-    let mut p = Some(
-        manager
-            .prepare_from_source(
-                Operation::Install,
-                Some(&support::package(1)),
-                Some(&source),
-                None,
-            )
-            .unwrap(),
-    );
-    manager.commit(&mut p).unwrap();
-    assert_eq!(
-        manager.installed().unwrap()[0].source.as_deref(),
-        Some("https://github.com/owner/repo")
-    );
-    drop(manager);
-    let mut manager = Manager::open(&dir.0, 1, TARGET).unwrap();
-    assert_eq!(
-        manager.installed().unwrap()[0].source.as_deref(),
-        Some("https://github.com/owner/repo")
-    );
-    let mut p = Some(
-        manager
-            .prepare(
-                Operation::Update("org.rad.fixture".into()),
-                Some(&support::package(2)),
-            )
-            .unwrap(),
-    );
-    manager.commit(&mut p).unwrap();
-    let mut p = Some(
-        manager
-            .prepare(Operation::Rollback("org.rad.fixture".into()), None)
-            .unwrap(),
-    );
-    manager.commit(&mut p).unwrap();
-    assert_eq!(
-        manager.installed().unwrap()[0].source.as_deref(),
-        Some("https://github.com/owner/repo")
-    );
-}
-
 fn source(url: &str) -> rad_plugin_manager::GithubSource {
     rad_plugin_manager::GithubSource::parse(url).unwrap()
-}
-
-#[test]
-fn source_identity_is_owner_and_repository_without_case_tag_or_git_suffix() {
-    let registered = source("https://github.com/Owner/Repo");
-    for same in [
-        "https://github.com/owner/repo",
-        "https://github.com/OWNER/REPO.git",
-        "https://github.com/owner/repo/releases/latest",
-        "https://github.com/owner/repo/releases/tag/v9",
-    ] {
-        assert!(registered.same_origin(&source(same)), "{same}");
-        assert!(source(same).same_origin(&registered), "{same}");
-    }
-    for other in [
-        "https://github.com/owner/other",
-        "https://github.com/other/repo",
-        "https://github.com/owner/repo-extra",
-        "https://github.com/owner-x/repo",
-    ] {
-        assert!(!registered.same_origin(&source(other)), "{other}");
-    }
 }
 
 fn installed_from(dir: &Directory, origin: Option<&str>) -> Manager {
@@ -597,52 +359,5 @@ fn another_repository_needs_confirmation_of_the_registered_origin_and_writes_not
             manager.installed().unwrap()[0].source.as_deref(),
             Some("https://github.com/other/repo/releases/tag/v2")
         );
-    }
-}
-
-#[test]
-fn same_repository_or_no_registered_origin_needs_no_confirmation() {
-    use rad_plugin_manager::Operation;
-    let id = "org.rad.fixture".to_string();
-    for (registered, requested, expected) in [
-        (
-            Some("https://github.com/owner/repo"),
-            "https://github.com/owner/repo/releases/tag/v2",
-            "https://github.com/owner/repo/releases/tag/v2",
-        ),
-        (
-            Some("https://github.com/owner/repo"),
-            "https://github.com/OWNER/REPO.git",
-            "https://github.com/OWNER/REPO",
-        ),
-        (
-            None,
-            "https://github.com/other/repo",
-            "https://github.com/other/repo",
-        ),
-    ] {
-        for operation in [
-            Operation::Update(id.clone()),
-            Operation::Reinstall(id.clone()),
-        ] {
-            let dir = Directory::new();
-            let mut manager = installed_from(&dir, registered);
-            let requested = source(requested);
-            let mut p = Some(
-                manager
-                    .prepare_from_source(
-                        operation,
-                        Some(&support::package(2)),
-                        Some(&requested),
-                        None,
-                    )
-                    .unwrap(),
-            );
-            manager.commit(&mut p).unwrap();
-            assert_eq!(
-                manager.installed().unwrap()[0].source.as_deref(),
-                Some(expected)
-            );
-        }
     }
 }

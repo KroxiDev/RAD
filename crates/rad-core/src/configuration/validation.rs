@@ -88,6 +88,16 @@ pub(super) fn validate_data(
         return Err(ConfigurationError::InvalidTree);
     }
     for button in &data.buttons {
+        if button.appearance.states.len() > 2
+            || button
+                .appearance
+                .states
+                .iter()
+                .any(|(id, face)| !StateFace::valid_identifier(id) || face.text.len() > 8192)
+        {
+            return Err(ConfigurationError::InvalidValue);
+        }
+
         if button.gesture == Gesture::Hold
             && button
                 .actions

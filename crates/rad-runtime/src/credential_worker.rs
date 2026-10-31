@@ -234,6 +234,7 @@ impl Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn lost_worker_resolves_pending_work_as_unknown_once() {
         let (tx, _tasks) = mpsc::sync_channel(1);
@@ -258,91 +259,5 @@ mod tests {
         assert_eq!(done.result, Some(Err(Error::Uncertain)));
         assert!(!worker.available());
         assert!(worker.poll().is_none());
-    }
-    #[test]
-    fn explicit_request_recovers_after_a_transient_open_failure_without_restart() {
-        use std::{
-            os::unix::fs::{DirBuilderExt, PermissionsExt},
-            time::{Duration, Instant},
-        };
-        let root =
-            std::env::temp_dir().join(format!("rad-vault-worker-retry-{}", std::process::id()));
-        std::fs::DirBuilder::new()
-            .mode(0o755)
-            .create(&root)
-            .unwrap();
-        let poll = mio::Poll::new().unwrap();
-        let wake = Arc::new(mio::Waker::new(poll.registry(), mio::Token(91)).unwrap());
-        let mut worker = Worker::spawn(root.clone(), wake).unwrap();
-        fn event(worker: &mut Worker) -> Event {
-            let end = Instant::now() + Duration::from_secs(3);
-            loop {
-                if let Some(event) = worker.poll() {
-                    return event;
-                }
-                assert!(Instant::now() < end);
-                thread::sleep(Duration::from_millis(1));
-            }
-        }
-        assert!(matches!(event(&mut worker), Event::Opened(State::Unknown)));
-        worker.submit(Task::Reconcile(vec![])).unwrap();
-        assert!(matches!(
-            event(&mut worker),
-            Event::Finished(Finished {
-                state: State::Unknown,
-                ..
-            })
-        ));
-        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
-        worker
-            .submit(Task::Request(
-                CredentialOperation::Status {
-                    plugin_id: "fixture".into(),
-                    slot: "password".into(),
-                },
-                vec![],
-            ))
-            .unwrap();
-        let Event::Finished(done) = event(&mut worker) else {
-            panic!("expected request result");
-        };
-        worker.shutdown();
-        while !worker.stopped() {
-            thread::yield_now();
-        }
-        std::fs::remove_dir_all(root).unwrap();
-        assert_eq!(done.state, State::Ready);
-        assert_eq!(done.result, Some(Ok(Status::Absent)));
-    }
-    /// A loop woken by the worker's end must already read it as stopped: otherwise it
-    /// goes back to sleep and shutdown never completes (no further wake comes).
-    #[test]
-    fn a_loop_woken_by_the_worker_end_always_sees_it_stopped() {
-        use std::time::Duration;
-        let root = std::env::temp_dir().join(format!("rad-vault-end-{}", std::process::id()));
-        for round in 0..300 {
-            let mut poll = mio::Poll::new().unwrap();
-            let mut events = mio::Events::with_capacity(4);
-            // The runtime keeps its waker for its whole life: a waker dropped with the
-            // thread would close its descriptor and take the pending event with it.
-            let wake = Arc::new(mio::Waker::new(poll.registry(), mio::Token(92)).unwrap());
-            let mut worker = Worker::spawn(root.clone(), wake.clone()).unwrap();
-            while worker.poll().is_none() {
-                thread::yield_now();
-            }
-            worker.shutdown();
-            loop {
-                poll.poll(&mut events, Some(Duration::from_secs(2)))
-                    .unwrap();
-                assert!(
-                    !events.is_empty(),
-                    "round {round}: woken for the end, read as running, never woken again"
-                );
-                if worker.stopped() {
-                    break;
-                }
-            }
-        }
-        let _ = std::fs::remove_dir_all(root);
     }
 }

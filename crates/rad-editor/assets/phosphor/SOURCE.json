@@ -1,0 +1,1007 @@
+{
+  "repository": "https://github.com/phosphor-icons/core",
+  "commit": "2b75f3ad12b420c9504ef05df8d2564a28f8500e",
+  "weight": "regular",
+  "icons": [
+    {
+      "id": "speaker-high",
+      "size": 514,
+      "sha256": "caca5fc1ee8489ac19232301d2c96f6d4048802491d75d761bbb89d5c98e459d"
+    },
+    {
+      "id": "speaker-low",
+      "size": 412,
+      "sha256": "e8f30ca16e03c397ead5c26416ab3064bdcef0d64762f9255e24e629a5eaa4f6"
+    },
+    {
+      "id": "speaker-none",
+      "size": 298,
+      "sha256": "628a7884e1cd0b9369fcdfc0d199510bf8bd15cb00919c303dbeeac0663515e8"
+    },
+    {
+      "id": "speaker-slash",
+      "size": 647,
+      "sha256": "66b75267ea8ba8759a70e4c8312bfe06b834fc8fcf0dd1710d9819877f0c8013"
+    },
+    {
+      "id": "speaker-x",
+      "size": 481,
+      "sha256": "8a9b6f327fe0a72448e183e23c1712c7a9aa384050475004543d318e690c498f"
+    },
+    {
+      "id": "speaker-simple-high",
+      "size": 427,
+      "sha256": "844e1186330da432675306cbf98098bbf066b6adb0cb6294677e6437b5b0fccb"
+    },
+    {
+      "id": "speaker-simple-low",
+      "size": 384,
+      "sha256": "28d96758244a88d0ea988ea08da0be445744d525867d750d1886b264f093b226"
+    },
+    {
+      "id": "speaker-simple-none",
+      "size": 338,
+      "sha256": "3f30f2490347b4a974bfe12459f27cce3b6fb318a9e1c62e2fd16147352f9318"
+    },
+    {
+      "id": "speaker-simple-slash",
+      "size": 535,
+      "sha256": "281806441aa9735217dedf8a699f486e9888be2d1e0d225670047d78cec50f1e"
+    },
+    {
+      "id": "speaker-simple-x",
+      "size": 521,
+      "sha256": "d11532556504b30a24ca1089e898021a0d142745179b8d06968763a582a86ecb"
+    },
+    {
+      "id": "microphone",
+      "size": 362,
+      "sha256": "b49dabfaf603e82594cef0c5e5784c747f4c098b7723d2973c92965745ca93a9"
+    },
+    {
+      "id": "microphone-slash",
+      "size": 773,
+      "sha256": "fca7244103fc780eec4124d0a9f10237d92fab2c05e038a9f0c1d87ccb8d951c"
+    },
+    {
+      "id": "microphone-stage",
+      "size": 580,
+      "sha256": "aca9c779a4d9df6e02468118d5d26c7e9878807ee8ac0f0be1ab566fe27a3dfa"
+    },
+    {
+      "id": "headphones",
+      "size": 508,
+      "sha256": "992d04ff6759f1f12d40259298a92589c18556bf5b2ea6f82bc23e74d9c48185"
+    },
+    {
+      "id": "headset",
+      "size": 546,
+      "sha256": "7f2efeda2bd797c8112ca8502582cd4df82da9aef0953540805debbc337c63a3"
+    },
+    {
+      "id": "ear",
+      "size": 664,
+      "sha256": "b24f627dc1ae21b8ac991e6921f1ea85fff81052caa68c591ca75f3f4eb44a7b"
+    },
+    {
+      "id": "ear-slash",
+      "size": 849,
+      "sha256": "1033350caddb96f1b2c55629c51b3a779385274d0f70f70f9497d478a7b4e603"
+    },
+    {
+      "id": "equalizer",
+      "size": 634,
+      "sha256": "5387cf9d57b4a9f42f5f6646042aea8c5995a6be15d0e1269720efcf7b3941d9"
+    },
+    {
+      "id": "faders",
+      "size": 474,
+      "sha256": "18344f92122bc39bb1975f9f27af332f9f68b7f2d7262dabfce37e8e56042de9"
+    },
+    {
+      "id": "faders-horizontal",
+      "size": 359,
+      "sha256": "9d821bb567dd1f1a467e054160b2fd390a6c7ec46961914127538d4e92540326"
+    },
+    {
+      "id": "wave-sine",
+      "size": 388,
+      "sha256": "3be689afd9a500b9c522b5a8097ddec584dd1dd2d261cf1a7bfb9504c97c4bd3"
+    },
+    {
+      "id": "wave-square",
+      "size": 229,
+      "sha256": "35dae26b04ded183e692a764a471e3a6ecb7f3cebdb36c018b212394e4cc2575"
+    },
+    {
+      "id": "wave-triangle",
+      "size": 232,
+      "sha256": "aaa5984b29160180dd7b65e9be8246a2c8be24245c358248b90723ba2c83a0ec"
+    },
+    {
+      "id": "waves",
+      "size": 766,
+      "sha256": "de913b2bff765875493325023e29d261ecd5b0c1de81b797ebcdf7b8c09c66e0"
+    },
+    {
+      "id": "piano-keys",
+      "size": 365,
+      "sha256": "8209fc820a1af4377847dc000fe4640e5167dd32afdd4a3c72135701d71349f7"
+    },
+    {
+      "id": "play",
+      "size": 293,
+      "sha256": "885b3ed2095889c4ff063dac35dc424cb9f6c00273ab44e2f90dc9dadbee661a"
+    },
+    {
+      "id": "pause",
+      "size": 320,
+      "sha256": "7a9a8fe311234262b85c6e332f77db4ba9a59b6ca4292c41d327977cf61a2fc9"
+    },
+    {
+      "id": "stop",
+      "size": 216,
+      "sha256": "90c8296c46c18d913784d0c3d6c66bbbfcf536b161a0387659d65dc2548ba623"
+    },
+    {
+      "id": "record",
+      "size": 307,
+      "sha256": "c6b664f9e2e96570fd909a89a57cb50fd91d62e37e002038396fe0b77981f3a7"
+    },
+    {
+      "id": "skip-back",
+      "size": 291,
+      "sha256": "20f318558e166d5dea09fb854a1bbc199e9891b17febed640e912a6ee4712d37"
+    },
+    {
+      "id": "skip-forward",
+      "size": 275,
+      "sha256": "52f1ed5a89f1a38bf8537b38bd2da0501e396fc4cb03a2cdde38d248ceb03fbe"
+    },
+    {
+      "id": "rewind",
+      "size": 398,
+      "sha256": "98d15fb0be07114297bfdcbd14a346b12b759c91e3b6644d1fd3ae4d2f7f99c1"
+    },
+    {
+      "id": "fast-forward",
+      "size": 369,
+      "sha256": "81893a7203a6ff8ea2ff8fb294413ed5bc059ade85e141cc547ae61f1b9eb667"
+    },
+    {
+      "id": "eject",
+      "size": 453,
+      "sha256": "f13694244b5fdbb6cf6be9a23bd3aa3bec12d6f80101247faf7b95d976570e0a"
+    },
+    {
+      "id": "repeat",
+      "size": 473,
+      "sha256": "12cef5f8ba7074921f909838088154a6847b936b11342c28daa475c62b71df86"
+    },
+    {
+      "id": "repeat-once",
+      "size": 579,
+      "sha256": "fb93f05d413b97cd3d1736004661d4669cb9c7e84bf052f9fbb062ed3f478ece"
+    },
+    {
+      "id": "shuffle",
+      "size": 760,
+      "sha256": "c3fdac72b005805ddf1078b858eecb55f288d7bc34573ffae276de02373bb6f2"
+    },
+    {
+      "id": "shuffle-angular",
+      "size": 607,
+      "sha256": "162dd6d67cca3dd295a645b8114767b91d72407b13923d7375883043b42cd836"
+    },
+    {
+      "id": "queue",
+      "size": 374,
+      "sha256": "afca8abc51d163ba1aa058888463146cceb0d131ad9654ed4f37253e19e429d6"
+    },
+    {
+      "id": "music-note",
+      "size": 303,
+      "sha256": "433d99d789fa7f1f43fe9e75e68eb3c546ef7ea7a4c6545c73f2f48f32f376fa"
+    },
+    {
+      "id": "music-notes",
+      "size": 370,
+      "sha256": "b991d76e24e781b864f9ad8b7aa14e516d4fd851871a979928917e20d492eca0"
+    },
+    {
+      "id": "playlist",
+      "size": 418,
+      "sha256": "fc711b95835ee28f0fcd3654544c2898d8cafcaacbd13a50b1977ae657fdd578"
+    },
+    {
+      "id": "disc",
+      "size": 374,
+      "sha256": "3d9b64f3b0e47c89af963cc0373d31416435b4f7970b6b7c12d12c3911f3576d"
+    },
+    {
+      "id": "cassette-tape",
+      "size": 501,
+      "sha256": "d2d522f1e3ad56b56f1a21da599d656cd10b590bb585ccef0f86972e3174c55e"
+    },
+    {
+      "id": "vinyl-record",
+      "size": 466,
+      "sha256": "9f670fdd8ae1b144f372b97b9be8acd0cc0d796d2e78607b58a4baa2683461e2"
+    },
+    {
+      "id": "radio",
+      "size": 493,
+      "sha256": "07218be27079d4dd3ff8fc105594e15e95532c5260beadb8565173a47d03c80c"
+    },
+    {
+      "id": "metronome",
+      "size": 400,
+      "sha256": "9fadb1c3dce0c2cbbdd8b371f69c94dd10163dcd1ebbed5dafee5d56b2b87478"
+    },
+    {
+      "id": "guitar",
+      "size": 1422,
+      "sha256": "d6e48337f02617efe65f407054ce0e7d842c6df1e2ed976cfdbbf0c17cd94c9f"
+    },
+    {
+      "id": "bell",
+      "size": 400,
+      "sha256": "439b02c746ff59945b6175c6d327113ca3f7a729a43d5bcafb278a0f11ee34b5"
+    },
+    {
+      "id": "bell-slash",
+      "size": 617,
+      "sha256": "d5c7ee0acf3ea46fe7d821dd1816f3d9e2c4aecce6b040722e877b72c85a8d3e"
+    },
+    {
+      "id": "house",
+      "size": 356,
+      "sha256": "180e9259e99e23da197b59b19394d006d6a5d33e384cc2b9c8381cb0214a5716"
+    },
+    {
+      "id": "arrow-left",
+      "size": 248,
+      "sha256": "3c2001cf957d182fc54927e4b286cc8cf66dd97830f441ca2650d42a63a9006a"
+    },
+    {
+      "id": "arrow-right",
+      "size": 245,
+      "sha256": "e45bc4a12592b8723110db42c6deffdf177e4fe7704cf50324963fa0a59b2d74"
+    },
+    {
+      "id": "arrow-up",
+      "size": 257,
+      "sha256": "361aa9f9c52a759bf598faf6ed38ccd426f949f541d662c65b5b5d868fa76980"
+    },
+    {
+      "id": "arrow-down",
+      "size": 239,
+      "sha256": "cc6416ae83e20660f14b11f5525c6d05ee679c3f26cee41b696cb37aa905d4f5"
+    },
+    {
+      "id": "arrow-u-up-left",
+      "size": 303,
+      "sha256": "37975867f2e89f745250d3601a5674ca37883a8d79f52abcb082beba4df28df7"
+    },
+    {
+      "id": "arrow-u-up-right",
+      "size": 279,
+      "sha256": "9de7342e5986db1610798b58505bed5f390ada73d006761b52c35d30d23e786d"
+    },
+    {
+      "id": "arrows-clockwise",
+      "size": 503,
+      "sha256": "2e80fbc9c5c37553934c9ebbd6324bf7fabe9a4b4d7c2445d99edfce55cc22df"
+    },
+    {
+      "id": "arrows-counter-clockwise",
+      "size": 586,
+      "sha256": "41eed7762fc5812adadf7267222f72bf65590d57f94fb7e2f68b880e516a6d8e"
+    },
+    {
+      "id": "arrows-left-right",
+      "size": 372,
+      "sha256": "84c43373542a3ac2e7de3d22ddef0c8eb61ef6ba7a270c6aca5aa493dd40f8b4"
+    },
+    {
+      "id": "arrows-down-up",
+      "size": 387,
+      "sha256": "64046920e174a406b080ec61e040bf73bf231be019d92ce8caec14d2035e167d"
+    },
+    {
+      "id": "caret-left",
+      "size": 200,
+      "sha256": "623bf248fe21a8170344e168aaac2e174119cea5d7c5d0fb0dc84f581009475f"
+    },
+    {
+      "id": "caret-right",
+      "size": 219,
+      "sha256": "e6dec01e074807965b7f3146b976a9b5e82c31d9c2c88aeb52e77cc2ab16c1d7"
+    },
+    {
+      "id": "caret-up",
+      "size": 232,
+      "sha256": "bccc26004e73e5de783ac6dde607e3671e776261d81972ccdbd296b4aca21ca9"
+    },
+    {
+      "id": "caret-down",
+      "size": 214,
+      "sha256": "53f0cf2d0b144ac3cb07e353e0cd0853ffb3ed432d741460ce288edfcb0924b1"
+    },
+    {
+      "id": "sign-in",
+      "size": 333,
+      "sha256": "4f9ac62582c9319778af5aef0865ba15b777378d222f4475be72ba1115bba076"
+    },
+    {
+      "id": "sign-out",
+      "size": 346,
+      "sha256": "511fe7958ef31f8904185631fd7045c11f35c8034a2a64ccb3bdcc4dfa81df77"
+    },
+    {
+      "id": "arrow-square-out",
+      "size": 347,
+      "sha256": "8610e8f5c7d4952ae1ada34ef56fa7cbab1780bc85f25a5c9482b74144790fc8"
+    },
+    {
+      "id": "link",
+      "size": 690,
+      "sha256": "526d89480e3064c614b7d46a93888c187696d7776f684527d48eb94e2d7cd5d4"
+    },
+    {
+      "id": "link-break",
+      "size": 728,
+      "sha256": "54ac64cf997d33c5db295bd389c8a5679d0aff8c7d25df9178ff185da482d68e"
+    },
+    {
+      "id": "magnifying-glass",
+      "size": 243,
+      "sha256": "f9fa2561978a9a3291e8ae0ebfcb651104f5069fade8f84871627bca68889cde"
+    },
+    {
+      "id": "magnifying-glass-plus",
+      "size": 376,
+      "sha256": "c61e00fdb994983b59cab26905a7ed45342d7319115d29f50050e26d1f210cb1"
+    },
+    {
+      "id": "magnifying-glass-minus",
+      "size": 326,
+      "sha256": "a8478832f12a7a5a231e1ffb1b987fe45f9e1508570b98046e7ff51db7eb1043"
+    },
+    {
+      "id": "corners-in",
+      "size": 379,
+      "sha256": "31e9060aafdd6e24f4b8aef7742a89e7e616e6e2da07160691d020cb5ab07dee"
+    },
+    {
+      "id": "corners-out",
+      "size": 379,
+      "sha256": "fd79277404b3662b50b737127fb6bf6f63ae93c9b60d9f2aca9122a950ec08c8"
+    },
+    {
+      "id": "folder",
+      "size": 305,
+      "sha256": "4a882bcd4a91ae0a01887024f08d358932f183b6b171e87a3e48c5910364d507"
+    },
+    {
+      "id": "folder-open",
+      "size": 423,
+      "sha256": "9157518d00547242d3986c4fdaaf44a62ef056caf3ecee0c88137529947170ea"
+    },
+    {
+      "id": "folders",
+      "size": 490,
+      "sha256": "36b164dda05b50eaecd3325301032e46c61f0eefb566eea97e2247ef87438274"
+    },
+    {
+      "id": "folder-plus",
+      "size": 418,
+      "sha256": "576f2e68f6adf880e3334363b1d3baa2bd07ef41b7ae04a77cbe4eea240e62df"
+    },
+    {
+      "id": "folder-minus",
+      "size": 351,
+      "sha256": "88adc72792b63ffc5b18be5828c835badbc0a552e84b08576da6fe99140817ff"
+    },
+    {
+      "id": "folder-lock",
+      "size": 453,
+      "sha256": "8cd9bb1948d0a6074e39825f9db50466356ab66aaba9fa5268f0db27a681aefe"
+    },
+    {
+      "id": "folder-star",
+      "size": 751,
+      "sha256": "6fb398e7c9837f5b4cb9737853cb51dc32896816f9d57618b809e90870a85f00"
+    },
+    {
+      "id": "file",
+      "size": 296,
+      "sha256": "eb2dcc530fb0727a1718dfdc55a466479bb5ad7c8f0e45f1993541093c747e06"
+    },
+    {
+      "id": "file-plus",
+      "size": 409,
+      "sha256": "3b8413ff4a86a81cc9b32b2fa49c7088eaf40637637b7c18dc35c08b880eb56a"
+    },
+    {
+      "id": "file-minus",
+      "size": 358,
+      "sha256": "971398e697337f5594871fef9a9d2979d09a6b0b9ed8f32b17ace20fa54ec997"
+    },
+    {
+      "id": "file-text",
+      "size": 416,
+      "sha256": "9a580a038cce9f6dd223597864abe1b5c5c03bf8176d2f7171574598468b16f7"
+    },
+    {
+      "id": "file-audio",
+      "size": 648,
+      "sha256": "adcacce695f7bc28beabe2de74a532344b38ab51936d8fb197f7302cb8a3ce40"
+    },
+    {
+      "id": "file-video",
+      "size": 533,
+      "sha256": "e7364a0c8b32edddce3ff3674b295f3a991305318afef323a670270a256e1840"
+    },
+    {
+      "id": "file-image",
+      "size": 486,
+      "sha256": "acfc3e022c3384e2683ed429e2853380e20d0b371516524f031f55d65754fac3"
+    },
+    {
+      "id": "file-code",
+      "size": 517,
+      "sha256": "41566f7e1917e5d6d7520fd133a5905bd6b809453acca2d1203600a531a57180"
+    },
+    {
+      "id": "file-archive",
+      "size": 461,
+      "sha256": "d753fe7a6e30fbfbfcbe5a837678a8e815eeae28b85c2d1af4fab8663fcfdd0f"
+    },
+    {
+      "id": "file-arrow-down",
+      "size": 454,
+      "sha256": "b08faaac9a2dae480b6f1decd2133ee2489450393191b0eb9490d47aeabf6d91"
+    },
+    {
+      "id": "file-arrow-up",
+      "size": 428,
+      "sha256": "b7127fb44729f481bb574b3e3ddfff1085de38bfe82d112c743f887ba7352da2"
+    },
+    {
+      "id": "copy",
+      "size": 279,
+      "sha256": "5a892fc6a72866e60c67db2088a87653cf44b57b1a5d183b36e950cdc5dd66b3"
+    },
+    {
+      "id": "clipboard",
+      "size": 385,
+      "sha256": "c6ff70834d8f50867b8ad1e48a3951f9ed132b4477dd8797115ceb528e105f84"
+    },
+    {
+      "id": "clipboard-text",
+      "size": 471,
+      "sha256": "1b1116133ad78d227c8d77f52856bde049dc02a351a1810d5dc91b2475cb873f"
+    },
+    {
+      "id": "floppy-disk",
+      "size": 406,
+      "sha256": "067b385ee62469be500d2d5bcd10e2aedd7529cd615ed180fa8414aaef0e40ab"
+    },
+    {
+      "id": "download-simple",
+      "size": 317,
+      "sha256": "c48678aa09b44ba4974954690ee6cc846379c448a7214f8c802604c2a1562014"
+    },
+    {
+      "id": "upload-simple",
+      "size": 324,
+      "sha256": "d2b22b75affd718a4a24d71ee71586b277cf48ddb7d52b7d7d0a85b47f8b12d1"
+    },
+    {
+      "id": "trash",
+      "size": 391,
+      "sha256": "e6a830c0409f9e101e3695c981eef98427d39fd01f502b9cbd6900930b01f19c"
+    },
+    {
+      "id": "power",
+      "size": 357,
+      "sha256": "7c493f7a807a08a5fcaadd33493fd4ad66cb0aa752a822c71a5f5cf5fd665b53"
+    },
+    {
+      "id": "gear",
+      "size": 1977,
+      "sha256": "5c0cb3ba307c72babf78d952d9140c682ff30307fedc7fbb87c9a293c1e2fd64"
+    },
+    {
+      "id": "cpu",
+      "size": 541,
+      "sha256": "fd4084e582bc555e794d82934ee90330542a837d56a9f3fb365aa0b9f2e0d599"
+    },
+    {
+      "id": "memory",
+      "size": 546,
+      "sha256": "3cd7a6db66298861c44e485fb38cfe3d82a485f29f42d78a37000f53dbe7e79d"
+    },
+    {
+      "id": "graphics-card",
+      "size": 724,
+      "sha256": "8309f5f52ec05287ab19f46e0e6562f6a589d87836d08f74377b0c929474f1ba"
+    },
+    {
+      "id": "hard-drive",
+      "size": 260,
+      "sha256": "6f113d180d03e93df3dd8d650e85dbb11547537efc333b261d32f5b3dc47d2e8"
+    },
+    {
+      "id": "hard-drives",
+      "size": 418,
+      "sha256": "c4ba6f3519182785a6b99d04d2d0fdbbb0bcb54f1e3c916c49e1af59ea77b6f2"
+    },
+    {
+      "id": "monitor",
+      "size": 329,
+      "sha256": "ac9005f7dd981b06b7c029b3625bf908ded63e0dc52e781ad550ae2ef621f86a"
+    },
+    {
+      "id": "desktop",
+      "size": 349,
+      "sha256": "875a31fd2dc493c6ba9aa5187a91e0364de6704876704e1bf81ef4b7e785ad79"
+    },
+    {
+      "id": "laptop",
+      "size": 392,
+      "sha256": "761f9e8d8a9db3e28adf8a6287016a47302f8fb629dfa355372d3835681b506f"
+    },
+    {
+      "id": "keyboard",
+      "size": 513,
+      "sha256": "96646775c552eb7944a88071ec3d7b93f28fd0e19ae995cfb52957403e38422e"
+    },
+    {
+      "id": "mouse",
+      "size": 379,
+      "sha256": "11d1fe1ad81b74382bdde2a3c1f8381b7884332837fb14e3ccfb0dccd2799cf7"
+    },
+    {
+      "id": "printer",
+      "size": 481,
+      "sha256": "398705192743d7ced5da5ca18f2b9e69759284276596f3dd3787720093d3f57e"
+    },
+    {
+      "id": "usb",
+      "size": 469,
+      "sha256": "07fb1516e718942905515ae2ce76e9d1e9790dc0c4925ae7d9b10ae765e1e23e"
+    },
+    {
+      "id": "plug",
+      "size": 523,
+      "sha256": "513534dd9665042bfed73c669130a904a0ab17df06cc8c0e4a717721474839d9"
+    },
+    {
+      "id": "plugs-connected",
+      "size": 948,
+      "sha256": "cca84487a9a3b1a3c413576efe1fc400f119cfff59bcc5fc336e5b3d8e1788ea"
+    },
+    {
+      "id": "battery-full",
+      "size": 482,
+      "sha256": "99626598f286e1c73e23fb1024981665c9ec02cee7c2c705046312ca25adc9c7"
+    },
+    {
+      "id": "battery-charging",
+      "size": 473,
+      "sha256": "5e2b18c3c8d1012e9345fbf45271dc8e42056b09a68617d7f1d5c88fc917e3bf"
+    },
+    {
+      "id": "battery-warning",
+      "size": 416,
+      "sha256": "76ee3f98efed9b663b40ebcb1842fba43a1c42e9843f2b7d16fb3e5fb52d75bf"
+    },
+    {
+      "id": "wifi-high",
+      "size": 467,
+      "sha256": "d11ce9b83f063b6d12d3c8ff93cce7d601fe19ee1d6e5ba828b4a764b100519f"
+    },
+    {
+      "id": "wifi-slash",
+      "size": 786,
+      "sha256": "39ed62ae822a3917ac70239bbaa2144152049783451f4687456aae8f044152fc"
+    },
+    {
+      "id": "bluetooth",
+      "size": 347,
+      "sha256": "b7acd2d97b06217902bfe61cafd4dda5432a0823ebee5cca8a26175efab46b91"
+    },
+    {
+      "id": "lock",
+      "size": 321,
+      "sha256": "7f9e0acc09a417a48328cd5b74e95de98989c5af1710ca5da705179da75c72d9"
+    },
+    {
+      "id": "lock-open",
+      "size": 389,
+      "sha256": "8b9f2b734cf20b70327b569ae4e254d5899771b6ea886bb6e9a2facde5582c04"
+    },
+    {
+      "id": "moon",
+      "size": 467,
+      "sha256": "5c91f82aea4e7b53305bf29628caebc22a1198ba9fa46c62eef13fb8b3c3f21d"
+    },
+    {
+      "id": "camera",
+      "size": 499,
+      "sha256": "e1fb071d5326bc4de193746b38457a6f73c89df90d65d33eaa8386eb22b219f5"
+    },
+    {
+      "id": "camera-slash",
+      "size": 597,
+      "sha256": "beda7bcb31172d637d465d2333c96764a21fba4fb60d96bee62930dde7ddd553"
+    },
+    {
+      "id": "camera-rotate",
+      "size": 724,
+      "sha256": "c7f308fd058ac9c62cf8164ea5d4ae6e5513199cf348d70d57a8e1a6f62c8ee3"
+    },
+    {
+      "id": "camera-plus",
+      "size": 525,
+      "sha256": "f5624e3bc69746356329144e06f9c10ab89c8e5b60f64631f3ca2dc0001a4311"
+    },
+    {
+      "id": "video-camera",
+      "size": 352,
+      "sha256": "3c9eaa197d77d45496d35be0a750095b643cf7a3685e3b067049b587368acce2"
+    },
+    {
+      "id": "video-camera-slash",
+      "size": 469,
+      "sha256": "f319e2f86632e72ebcf6825632455c9ebdcb1defefcb53da75b5f2c225d22714"
+    },
+    {
+      "id": "webcam",
+      "size": 319,
+      "sha256": "109830fe1108b290133ec2e3ca79001e5bec35664f61849c4c74eb0755e85a19"
+    },
+    {
+      "id": "film-slate",
+      "size": 492,
+      "sha256": "58b84e6c5a2950cfa0d8cae68c04e65dc32407dde463c3a2c79d265464726e0c"
+    },
+    {
+      "id": "film-strip",
+      "size": 363,
+      "sha256": "6d079e87432258b9fe9eff9d10ababcfbca7a400537277a215360a436581987f"
+    },
+    {
+      "id": "film-reel",
+      "size": 544,
+      "sha256": "c3d0fcd26670354a34f23c4322d8a424bddd8e4072d2b762e6efe6e4a251d254"
+    },
+    {
+      "id": "screencast",
+      "size": 453,
+      "sha256": "2245e0a4a14f671f0b5c0338702b4b7edd70deb7dad5b51fa43e7f47dcae4458"
+    },
+    {
+      "id": "monitor-play",
+      "size": 439,
+      "sha256": "7534556c726dfd4f291fd7fb4ab3b4a9ea6e8c7aaeec39a731dda6eecd0f6258"
+    },
+    {
+      "id": "monitor-arrow-up",
+      "size": 462,
+      "sha256": "b58294ed97f54fa24937f3c9d6bfd10c380788a910f3c82cded9b4d4d0713d67"
+    },
+    {
+      "id": "broadcast",
+      "size": 700,
+      "sha256": "e8377f3bf952fc637ca1ca31d5ea6f0917f9195d0bca9b2bfa3d6201b09c59e9"
+    },
+    {
+      "id": "aperture",
+      "size": 705,
+      "sha256": "dc292be18c248bfc1ec9474ac7c2200d1303aca077a47530ebe0da9b064f2781"
+    },
+    {
+      "id": "image",
+      "size": 400,
+      "sha256": "642a0575f7b5a7ea2f5fefa6f27a5dc57683911845b85213a7e33652c2a3179d"
+    },
+    {
+      "id": "images",
+      "size": 501,
+      "sha256": "7e8e0035864a6cc3e0ea1e0441d073b582001b74c374939fd8ece6ff55101a2b"
+    },
+    {
+      "id": "selection",
+      "size": 617,
+      "sha256": "5fff68fdc60d81f1855302416481dc69fe9f0abfbb353d3bc43f2c24150ab8d4"
+    },
+    {
+      "id": "crop",
+      "size": 297,
+      "sha256": "cfe662ba74b6a63a2e80452305369c19d1e04166c084dad9f0855468890154d9"
+    },
+    {
+      "id": "frame-corners",
+      "size": 351,
+      "sha256": "76491dff75b5b3df3ffd90225e53f6f904be11d50e16fab490e69f82a1b13c78"
+    },
+    {
+      "id": "scan",
+      "size": 486,
+      "sha256": "b41a343997afb4cb31cb0d490358d1f1544b14029d0d3a717ff2ba4c07dc5397"
+    },
+    {
+      "id": "eye",
+      "size": 701,
+      "sha256": "91d39f20bf95e0f36c07bd79b83a85fe6ff4ca20e2759c4afee7419ef80403fe"
+    },
+    {
+      "id": "eye-slash",
+      "size": 1000,
+      "sha256": "070b0296a7df89ebf4cec12436e323b5531d458aa9aed3608924085889e1fd17"
+    },
+    {
+      "id": "closed-captioning",
+      "size": 443,
+      "sha256": "73c07d44cd2ba00ac014b716f58149d7bcde2b3989e01b960332e6c40f1c3ce2"
+    },
+    {
+      "id": "panorama",
+      "size": 758,
+      "sha256": "1c17f4c4d915927dd4b31859b75809a6d4501611d4236fbbc5b14b13f53ee6c5"
+    },
+    {
+      "id": "chat",
+      "size": 330,
+      "sha256": "1b8e07e27bf357e6497a5db06dd4ea17bcac4577a63756ac38b4149b507a3f44"
+    },
+    {
+      "id": "chat-text",
+      "size": 448,
+      "sha256": "efdb68b49cb030dcc6d04abf6f4e9368a0a9e7870d0145e62badcc99e58ca288"
+    },
+    {
+      "id": "chat-circle",
+      "size": 319,
+      "sha256": "09e36aa820a39bbc8cffe705ad84c836d1e5733f83dc1d2212a965fdacdf4a67"
+    },
+    {
+      "id": "chat-circle-dots",
+      "size": 473,
+      "sha256": "2af44e36757c90c999e070065ae61c495c66c8e88f43c5f07964dc3367cad60d"
+    },
+    {
+      "id": "chats",
+      "size": 414,
+      "sha256": "246d81e02c169c439a73d212bf28d4068cc727a6a527663e568f5c7da547aed3"
+    },
+    {
+      "id": "envelope",
+      "size": 336,
+      "sha256": "1cacf2964607ad27bcb6c55117e5c7275cfb3c206f799b720f095b63965efdc4"
+    },
+    {
+      "id": "envelope-open",
+      "size": 359,
+      "sha256": "538aa142c231df1b004e7dfd2c709be06a3be062adf7a24f0ff52f31e5de3a87"
+    },
+    {
+      "id": "paper-plane-tilt",
+      "size": 429,
+      "sha256": "0dbff2ada31c963dfd95bfe2ab2cb39a90fe7100eb7c1724577444a1d8a7c26d"
+    },
+    {
+      "id": "phone",
+      "size": 709,
+      "sha256": "a6eaa18b76ebeff885aad0eff89dc286a659f263bea801359a6fe2d15cde24f8"
+    },
+    {
+      "id": "phone-call",
+      "size": 1053,
+      "sha256": "35e0113708f69bc0f6a9b33f5dc3b1a5da0700f373852be92acf51b37d7f5400"
+    },
+    {
+      "id": "phone-disconnect",
+      "size": 755,
+      "sha256": "2bf702e6d6c8e5329e518cbdeb8abcf2a347fd5761350075cb07e6bdb64b276f"
+    },
+    {
+      "id": "users",
+      "size": 506,
+      "sha256": "b3385e4c6aa03f7e16d1b03887c2cdff9900f5a7edbd5ea5176055938ccfb908"
+    },
+    {
+      "id": "user",
+      "size": 340,
+      "sha256": "787434f7fef95f20e137d309d3c6b8b471548c55c9dfc137ae10625d70959d11"
+    },
+    {
+      "id": "user-plus",
+      "size": 477,
+      "sha256": "02197487a2b9ba649efc90baa79e2868bed55c1050a7f7130d348f1a4e2c8678"
+    },
+    {
+      "id": "user-minus",
+      "size": 426,
+      "sha256": "2582236704a313bb05d4f1ed954c0fe389067f9a95de2cf8c1ace7377b63a820"
+    },
+    {
+      "id": "address-book",
+      "size": 500,
+      "sha256": "5fc4bb47b2d193e3b7239ce2fec26a97f2675ea21dab502e3207df6bbe6c849d"
+    },
+    {
+      "id": "at",
+      "size": 434,
+      "sha256": "d61f51a200f052e438f081f5e1969ba272c0bb53dacc8a04d9f9b293f91dd1bf"
+    },
+    {
+      "id": "megaphone",
+      "size": 501,
+      "sha256": "6bb3638fd7d8988bc449638293566ac2d978307357675d46c37f6a04a814006e"
+    },
+    {
+      "id": "notification",
+      "size": 308,
+      "sha256": "2cdf7fad56efff3011f8c053d119792092dc16838df3450b68f59b69b77de3ea"
+    },
+    {
+      "id": "globe",
+      "size": 856,
+      "sha256": "3b53d207c09fc72de699c8b2149892e065b570b3ae144412ae53244b0a0f7977"
+    },
+    {
+      "id": "network",
+      "size": 492,
+      "sha256": "9f632e1b092871168c497d948fea25ea6814d52eda3106ad1a5b232c8d2d63ea"
+    },
+    {
+      "id": "share-network",
+      "size": 407,
+      "sha256": "e6923db3591f797c89c36671aad3e20effd7b06e6eb400b2a7ffb6daaed0474a"
+    },
+    {
+      "id": "heart",
+      "size": 489,
+      "sha256": "312dee73d1d969631d5498012f619ccf4edbdf31e1be3e65af4f4f1b3ac1b2dd"
+    },
+    {
+      "id": "thumbs-up",
+      "size": 409,
+      "sha256": "6894fd629b39ad47220d5e8e847e497aa7a889501e1f0dd0ffd8a82af4f06cc0"
+    },
+    {
+      "id": "thumbs-down",
+      "size": 425,
+      "sha256": "343680638967c63939cb785203af8fdd55065133c85c2d0fb1885d07e7823b04"
+    },
+    {
+      "id": "sun",
+      "size": 685,
+      "sha256": "8df1c7b747774f8b2c1fe353b1b785c74aac35bfa50f2ed7d8d9a85a4191b2ac"
+    },
+    {
+      "id": "sun-dim",
+      "size": 650,
+      "sha256": "ac1b28a3fb6e5c6751cb52f1738c6caa4372c98aed5488bccf43973810da776a"
+    },
+    {
+      "id": "lightbulb",
+      "size": 704,
+      "sha256": "b61e4d9685a1d74e579a7dbbe0d5222bdf8dcdcaf5b67825a17ff45363e4fadd"
+    },
+    {
+      "id": "timer",
+      "size": 351,
+      "sha256": "eccb04ff7903c451948aba91d91606eba71d9e050ed52b9e14a0e11199379d0e"
+    },
+    {
+      "id": "clock",
+      "size": 287,
+      "sha256": "b8c6c2899d2b9af48a55ba02ba6d7faf89b757915772dd24f5397f7b0d02aa5c"
+    },
+    {
+      "id": "alarm",
+      "size": 419,
+      "sha256": "71cf350cf81ef6e08377119c14d924f851191d9e828f9107a367d77fdd3f6cc9"
+    },
+    {
+      "id": "hourglass",
+      "size": 421,
+      "sha256": "fed8236215f226df32aa16a675d0875497242cb8e6b65418fadb0ba5c904124d"
+    },
+    {
+      "id": "calendar",
+      "size": 580,
+      "sha256": "3b589be35978b8c400a60d6c2154885ea648c20b8947e376ccabfde66ddabda5"
+    },
+    {
+      "id": "calendar-check",
+      "size": 460,
+      "sha256": "94a43416ea1c0db010e860b1b63a668834c99629c4a0b2ea3a4179876e60f622"
+    },
+    {
+      "id": "calculator",
+      "size": 575,
+      "sha256": "83c7343dba80b2359cfe617ffdc89b80f7555a53cb2d6ff13b48ce16a062f644"
+    },
+    {
+      "id": "terminal",
+      "size": 241,
+      "sha256": "41a1f59cc15a3f2603c7493a82adb040fce1fa61f4aa439be0d6d875af466769"
+    },
+    {
+      "id": "code",
+      "size": 451,
+      "sha256": "882462ff89cc7b864cb2af1a3a2660bd796f01bdac35b6d4cff7c131fb74e3dc"
+    },
+    {
+      "id": "wrench",
+      "size": 653,
+      "sha256": "690d657aa4a9c99d620583cf6247cfefa5372c10e2bc60e9255a3ce19e3e9c47"
+    },
+    {
+      "id": "hammer",
+      "size": 617,
+      "sha256": "286bddc0b30f4b0b0864cf8ca871b07a9c0a16d1df1f743b2cbabb15b6d9140d"
+    },
+    {
+      "id": "scissors",
+      "size": 506,
+      "sha256": "54180ec6ac157bafe78c40b16a0a03b588886e1e86497241c97ba9f4aacdeab8"
+    },
+    {
+      "id": "pencil",
+      "size": 412,
+      "sha256": "59c456fd1164519962c4828df6bc803e9659800c1ca478bac2ad477b220a79ec"
+    },
+    {
+      "id": "paint-brush",
+      "size": 568,
+      "sha256": "71f96a0b1a20e671a4af66d3b6bfaa41cf01778ad858193515d0268f07666972"
+    },
+    {
+      "id": "palette",
+      "size": 702,
+      "sha256": "f16925171ff434d8e8768da0d06867d77cd50d9e78932ab12af65bccac7a1375"
+    },
+    {
+      "id": "check",
+      "size": 215,
+      "sha256": "cbb89a8c42f283d4f846eb935e05d88c1be04462f16480e068c0f82b9ce40b12"
+    },
+    {
+      "id": "x",
+      "size": 284,
+      "sha256": "7397b15e1fa66eaf6ff9b59fe91d483cb5c3bcf75b2fe052097ab6f0593b513a"
+    },
+    {
+      "id": "plus",
+      "size": 212,
+      "sha256": "d688feb9dd2e41c1721d6906a05a2a42e18cd774762fe706d72b2bdfd91cddc4"
+    },
+    {
+      "id": "minus",
+      "size": 163,
+      "sha256": "5a068d1cfd707fde5ddb0ce0623958123b6a5afba98401318983aeb0fdad6382"
+    },
+    {
+      "id": "warning",
+      "size": 543,
+      "sha256": "047c8edbdfddb9f1692bbf56acc85b7e4649b567c60eb39470e98e4f9ddc6a2e"
+    },
+    {
+      "id": "info",
+      "size": 348,
+      "sha256": "438a1f319d53d86e840af73fb7b1d224c9224a437b9fa449a4e2cb45a82a3552"
+    },
+    {
+      "id": "question",
+      "size": 442,
+      "sha256": "fd9a87cfce2abaa9113058be90e5281da58f665e2185974b80c7425d5c7fe2d6"
+    }
+  ]
+}

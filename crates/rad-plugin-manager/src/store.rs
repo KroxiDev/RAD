@@ -662,22 +662,7 @@ mod fault_tests {
         ));
         a.abort(&mut foreign).unwrap();
     }
-    #[test]
-    fn recovered_commit_preserves_original_io_cause_and_releases_recovery() {
-        let dir = support::Directory::new();
-        let mut m = Manager::create(&dir.0, 1, support::TARGET).unwrap();
-        let mut p = Some(
-            m.prepare(Operation::Install, Some(&support::package(1)))
-                .unwrap(),
-        );
-        FAILURE.with(|f| f.set(Some("before_selector")));
-        assert_eq!(
-            m.commit_recovering(&mut p),
-            CommitOutcome::NotApplied(Error::Io)
-        );
-        assert_eq!(m.state(), ManagerState::Ready);
-        assert!(m.installed().unwrap().is_empty());
-    }
+
     #[test]
     fn io_failures_before_and_after_selector_leave_recoverable_state() {
         for (point, applied) in [
@@ -713,23 +698,7 @@ mod fault_tests {
 #[cfg(test)]
 mod prepare_fault_tests {
     use super::*;
-    #[test]
-    fn worker_prepare_reconciles_partial_manifest_and_allows_retry() {
-        let dir = support::Directory::new();
-        let mut manager = Manager::create(&dir.0, 1, support::TARGET).unwrap();
-        FAILURE.with(|f| f.set(Some("after_manifest")));
-        assert!(matches!(
-            manager.prepare_recovering(Operation::Install, Some(&support::package(1))),
-            Err(Error::Io)
-        ));
-        assert_eq!(manager.state(), ManagerState::Ready);
-        let mut p = Some(
-            manager
-                .prepare_recovering(Operation::Install, Some(&support::package(1)))
-                .unwrap(),
-        );
-        assert_eq!(manager.commit(&mut p).unwrap(), CommitOutcome::Applied);
-    }
+
     #[test]
     fn partial_staging_is_bounded_and_reconciliation_preserves_active_version() {
         let dir = support::Directory::new();

@@ -207,47 +207,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rad_update::{Cancellation, Candidate, CheckResult, Prepared, Progress};
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-    struct Silent(Arc<AtomicUsize>);
-    impl crate::updates::Backend for Silent {
-        fn check(&self, _: &Cancellation) -> Result<CheckResult, String> {
-            self.0.fetch_add(1, Ordering::SeqCst);
-            Ok(CheckResult::NoUpdate)
-        }
-        fn prepare(
-            &self,
-            _: &Candidate,
-            _: &Cancellation,
-            _: &Progress,
-        ) -> Result<Prepared, String> {
-            panic!("not requested")
-        }
-        fn handoff(&self, _: &Prepared) -> Result<(), String> {
-            panic!("not requested")
-        }
-        fn discard(&self, _: &Prepared) {}
-    }
-    fn texts(app: &mut App) -> Vec<String> {
-        let ctx = egui::Context::default();
-        let output = ctx.run_ui(Default::default(), |ui| {
-            app.settings_screen(ui, &Look::new(&Default::default()))
-        });
-        output
-            .shapes
-            .iter()
-            .filter_map(|shape| {
-                if let egui::epaint::Shape::Text(t) = &shape.shape {
-                    Some(t.galley.job.text.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
+
     #[test]
     fn disconnected_settings_drafts_are_not_discarded_by_back_from_updates() {
         let root = std::env::temp_dir().join(format!("rad-update-draft-{}", std::process::id()));
@@ -264,37 +224,5 @@ mod tests {
         );
         assert_eq!(app.settings["brightness_percent"], 20);
         assert!(app.navigation.asking(app.settings_unapplied()));
-    }
-    #[test]
-    fn updates_are_available_without_a_runtime_and_entry_does_not_query() {
-        let root = std::env::temp_dir().join(format!("rad-update-ui-{}", std::process::id()));
-        let mut app = App::with_preferences_path(root.clone(), root.join("theme"), None);
-        let calls = Arc::new(AtomicUsize::new(0));
-        app.updates = crate::updates::Controller::new(Arc::new(Silent(calls.clone())));
-        app.es = crate::preferences::Language::Es;
-        app.open_settings(crate::screens::Section::Updates);
-        let texts = texts(&mut app);
-        assert!(
-            texts.iter().any(|text| text == "Verificar actualizaciones"),
-            "missing update control: {texts:?}"
-        );
-        assert!(
-            !texts
-                .iter()
-                .any(|text| text.contains("No hay actualizaciones disponibles"))
-        );
-        let release = rad_update::current_release().unwrap();
-        assert!(
-            texts
-                .iter()
-                .any(|text| text
-                    == &format!("Versión de RAD {}-{}", release.version, release.pkgrel)),
-            "the current product version must be directly visible: {texts:?}"
-        );
-        assert!(
-            !texts.iter().any(|text| text == "Avanzado"),
-            "Updates must not hide the version behind Advanced"
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }

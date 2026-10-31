@@ -37,14 +37,17 @@ export XDG_RUNTIME_DIR="$PWD/target/test-session/runtime"
 export XDG_STATE_HOME="$PWD/target/test-session/state"
 cargo fmt --all -- --check
 cargo build --offline --locked --release --workspace --all-features --bins --examples
+(
+  export CARGO_TARGET_DIR="$PWD/target/plugins"
+  cargo fmt --manifest-path plugins/Cargo.toml --all -- --check
+  cargo build --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --bins --examples
+)
 export RAD_TEST_LAUNCHER_HELPER="$CARGO_TARGET_DIR/release/rad-launcher-helper"
 export RAD_TEST_LAUNCHER_FIXTURE="$CARGO_TARGET_DIR/release/rad-launcher-fixture"
 cargo test --offline --locked --release --workspace --all-features
 cargo clippy --offline --locked --release --workspace --all-features --all-targets -- -D warnings
 (
   export CARGO_TARGET_DIR="$PWD/target/plugins"
-  cargo fmt --manifest-path plugins/Cargo.toml --all -- --check
-  cargo build --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --bins --examples
   cargo test --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features
   cargo clippy --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --all-targets -- -D warnings
 )
@@ -54,7 +57,10 @@ bash scripts/conformance/metrics/run.sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s packaging/tests -v
 ```
 
-Los ejemplos/helpers deben compilarse antes de tests focalizados. Una comprobación
+Los binarios y ejemplos/helpers de **ambos workspaces** deben compilarse antes de
+los tests de la raíz o focalizados: el runtime también usa fixtures de plugins,
+como `held-converter-fixture`. No depender de artefactos de una ejecución anterior.
+Una comprobación
 focal crítica es `cargo test --offline --locked --release -p rad-core --test permissions`.
 Las conformidades usan fixtures de ambos workspaces y guardan salidas ignoradas
 en `target/conformance/`.
@@ -103,9 +109,11 @@ Casos que se conservan, o se añaden si falta cobertura.
 | Contrato | Casos |
 |---|---|
 | Cliente y UI | Desconexión tras el envío, worker muerto, sin replay, crédito único, vistas coherentes por revisión, avisos coalescidos, Unknown resuelto releyendo, cursor inválido o parcial, salida JSON de `rad-cli` |
-| Textos | Todas las claves existen en cada catálogo; ningún código en bruto en la UI; respaldo en inglés |
+| Iconos integrados | PNG opaco y antialias idéntico al preview ([renderer](../crates/rad-editor/tests/icon_library.rs)); captura del destino y borrador completo, rechazo antes de subir, fallo de upload/finish y Unknown sin replay ([publicación](../crates/rad-editor/tests/icon_save.rs)); cancelar, cambio de tecla, render/respuesta tardíos, conservación del borrador y ancho de la columna derecha estable durante 50 redibujados y devuelto a la paleta al cerrar ([estado local](../crates/rad-editor/src/app/icon_library.rs)); licencia Phosphor distribuida en el paquete |
+| Dos estados | Manifest binario estricto y negociación; observación real y reposo sin texto; edición/vínculo atómicos y undo; dos imágenes retenidas juntas ante desconexión, GC/copias/reinicio; destino de biblioteca capturado por estado |
+| Textos | Todas las claves existen en cada catálogo; ningún código en bruto en la UI; respaldo en inglés; cada texto de los plugins oficiales tiene traducción al español |
 | Publicación y Store | Fallos de escritura, sync o rollback; before/after; reinicio; hold de evidencia corrupta; medios cambiados en la segunda pasada |
-| Formatos | Golden real de cada versión; importadores de v1, v2, v3 y v4 en el Store y en la restauración; rechazo de versiones futuras; brillo histórico 0–9 normalizado a 10 sin aceptar valores mayores de 100 |
+| Formatos | Golden real de cada versión; importadores de v1, v2, v3, v4 y v5 en el Store y en la restauración; rechazo de versiones futuras; brillo histórico 0–9 normalizado a 10 sin aceptar valores mayores de 100 |
 | Brillo | Ajuste 10–100 y acción nativa subir/bajar diez puntos sobre el valor vigente, con saturación, sin escritura en el límite; publicación solo tras Applied, fallo e incertidumbre sin doble delta; cola vencida sin efecto tardío; Ajustes actualizado sin descartar borradores |
 | Identidades | Contadores tras recuperación y restauración; poda tras el historial; límite sobre lo vigente con mensaje claro; un ShortId nunca reasignado |
 | Copias | Exportación de un clic solo en Copias; sin inicio automático, duplicados ni borradores omitidos; destino privado sin sobrescritura y limpieza de incompletos ([pruebas de archivos](../crates/rad-editor/tests/backups.rs)); los tres destinos; reserva de ambos rangos; destino editado y deshecho hasta quedar vacío; deshacer tras restaurar; copia v1 real; ajustes de plugins restaurados; plugins ausentes ofrecidos para instalar |
@@ -115,7 +123,7 @@ Casos que se conservan, o se añaden si falta cobertura.
 | SDK y salida | Salida parcial o sin lector, concurrencia máxima sin cola creciente, baja y cierre, vigencia vencida en el host, fuente sana sin cambios, renovación sin carga |
 | Operación | Clases de salida, tope de reinicios, modo recuperación, plugins e hijos que mueren con el runtime, aplicaciones que sobreviven en su scope, servicio instalado y arrancado sin autoinicio |
 | Dispositivo | Detección por VID/PID en cualquier puerto, ausencia y reconexión, rejilla desde el modelo |
-| Escritorio | Entrada del menú e ícono instalados y reescritos solo si cambian; bandeja registrada también cuando aparece tarde; un solo editor abierto; «Salir» con parada limpia; ninguna ventana flotante |
+| Escritorio | Entrada del menú e ícono instalados y reescritos solo si cambian; bandeja registrada también cuando aparece tarde; un solo editor abierto; «Salir» con parada limpia; ninguna ventana flotante; editor oculto sin bloquearse; redibujado limitado a 60 fps |
 | Capas | Test de arquitectura contra la tabla y sus invariantes |
 | Audio, Media, OBS, Metrics | `pactl` colgado o con flood, con kill y reap; bus privado y epochs; backpressure y sin replay; CPU y RAM sin NVML y lector terminal |
 | Distribución de RAD | Metadata enlazada a bytes/identidad Arch; layout sin fixtures ni datos; rechazo de fuente sucia para release; consulta manual y cancelación; relevo y privilegios probados con dobles |

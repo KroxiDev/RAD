@@ -34,6 +34,10 @@ detalle.
 - Cada texto visible se pide por clave a un catálogo por idioma, embebido; hoy,
   inglés y español, con el inglés como respaldo. Añadir un idioma es añadir un
   catálogo.
+- Los textos de un plugin (acciones, visuales, campos y opciones) vienen de su
+  manifest con sus traducciones; sin traducción se muestra el texto del plugin
+  ([ADR 0020](adr/0020-textos-de-plugins-y-plazo-fijo.md)). El editor nunca
+  traduce a un plugin con claves propias.
 - El idioma por defecto es el del sistema; se cambia en las preferencias del editor.
 - La API entrega códigos y el editor los traduce por catálogo. Un código desconocido
   se muestra como «Algo salió mal» con «Ver detalles».
@@ -95,6 +99,29 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   posición vacía, la tecla se crea recién al elegir, con el nombre de la aplicación y
   su ícono cuando está disponible; cancelar no deja una tecla vacía. Los cambios de aplicación de un
   lanzador existente se guardan con «Guardar», también desde «Avanzado».
+- **Menú Imagen.** Sus opciones (Biblioteca de iconos, Usar icono de la app,
+  Importar y Quitar imagen) se ven como botones desde el primer momento, no como
+  texto que solo se distingue al pasar el puntero; Quitar imagen usa el estilo
+  de acción destructiva.
+- **Biblioteca de iconos.** En Imagen → Biblioteca de iconos (apariencia manual),
+  200 iconos Phosphor regulares se buscan por nombres y etiquetas en español o
+  inglés y se recorren por grupos. El panel sustituye temporalmente la paleta
+  derecha con el mismo ancho, que nunca supera 420 px y vuelve intacto a la
+  paleta al cerrar; no abre otra ventana ni duplica la vista previa del
+  inspector. Elegir un icono habilita colores sólidos de icono y fondo, con
+  muestras y selector personalizado, y una barra de tamaño del 50% al 100%, de 5
+  en 5 y al 100% por defecto; abrir la biblioteca por sí solo no cambia la tecla. «Guardar»
+  es la única acción primaria y publica también el resto del borrador; «Cancelar»
+  o Esc descarta solo la elección del icono, sin borrar los otros campos editados.
+  Cambiar de tecla, entrar a Ajustes o a un formulario, o perder la conexión
+  invalida la elección local aún no enviada. Importar
+  PNG/JPEG propio sigue disponible. Los SVG son exclusivamente los incluidos:
+  no se aceptan SVG externos. Se guarda un PNG, incluido en las copias, no una
+  receta editable. Este equipo recuerda qué icono, colores y tamaño produjeron
+  cada imagen guardada desde la biblioteca: al reabrirla sobre esa imagen parte de
+  ellos, con el icono seleccionado y a la vista, y «Guardar» se habilita solo ante
+  un cambio. El recuerdo no viaja en las copias ni a otro equipo; si falta o no se
+  puede leer, la biblioteca abre sin selección, como antes.
 - **Suspender.** Acción nativa con media luna en el grupo RAD. Activa
   inmediatamente el mismo reposo configurado por inactividad, incluso
   cuando el reposo automático está desactivado. Cualquier tecla despierta sin
@@ -105,14 +132,63 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   cada ejecución cambia el brillo vigente en diez puntos porcentuales, con
   saturación en 10% y 100%. El valor se guarda y se refleja en Ajustes; no hay
   cantidad ni paso configurables, y alcanzar un límite no genera otra escritura.
+- **Opciones de los plugins.** Cada opción se muestra con su nombre, nunca con
+  su valor interno. Una opción obligatoria empieza en la primera, que el plugin
+  pone como recomendada; en OBS y Audio es «Alternar».
 - **Gestos.** El editor ofrece pulsar, mantener o pulsación larga solo si la acción
   los admite.
 - **Pantallas.** Ajustes y los formularios ocupan la ventana o el panel de la tecla,
   sin ventanas flotantes; «Volver» y Esc regresan. Con cambios sin aplicar, la
   pantalla se queda y ofrece «Descartar».
+- **Cambios sin recarga visible.** Lo que cambia se reemplaza de una vez, sin
+  «Cargando…» ni huecos intermedios: el panel de la tecla, sus imágenes y las caras
+  de plugins siguen visibles hasta que llega su versión nueva. Al cambiar de
+  carpeta, la nueva se muestra al instante. El editor y el runtime conservan las
+  imágenes de las carpetas visitadas y precargan las de la carpeta superior y las
+  subcarpetas, con un tope de 8 MB cada uno fuera de la carpeta visible. Una imagen
+  que aún no llegó aparece en el editor con un fundido de 0,15 s, junto con las
+  demás; en el Stream Deck, todas a la vez y nunca marcadas como no disponibles
+  mientras cargan. Al seleccionar una tecla, su panel aparece con un fundido corto
+  y dice «Cargando…» solo si tarda más de 0,4 s.
+- **Borrar.** La papelera del panel o Supr borran la tecla seleccionada, o la
+  carpeta a la que entra, sin confirmación; Ctrl+Z la recupera.
+- **Mover una tecla.** Al arrastrarla, su cara (imagen, texto o cara de plugin,
+  tal como se ve en el deck) sigue al puntero al tamaño de la tecla, tomada por el
+  mismo punto; la original queda atenuada hasta soltar. Las acciones y la carpeta
+  de la paleta se arrastran con su nombre.
 - **Progreso.** Las transferencias muestran una barra.
 - **Puesta en marcha.** El editor arranca RAD y ofrece «Iniciar RAD con el equipo»;
   el usuario nunca usa la terminal ([ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md)).
+
+## Teclas con dos estados observados
+
+Al guardar una acción con visual vinculado, la tecla muestra su estado sin elegir
+otro visual. Cambiar sus parámetros sincroniza el visual; retirarla vuelve a
+Manual si era el visual vinculado. Un visual externo ajeno se conserva. Los
+visuales vinculados no se ofrecen en paleta ni combo; Multimedia y Métricas siguen
+ofreciendo sus visuales independientes. Las teclas antiguas ganan el vínculo al
+guardar su acción, no mediante una migración automática.
+
+Cambiar el visual a otro plugin o tipo, o pasar a Manual, borra el texto y la
+imagen propios de cada estado; Ctrl+Z los recupera. Cambiar solo el dispositivo,
+la escena u otro parámetro los conserva.
+
+Solo para esos visuales, debajo de la vista previa aparecen dos pestañas con los
+textos traducidos del manifest. Abren en el estado observado disponible; texto,
+imagen importada y biblioteca de iconos editan la cara elegida, con una única
+posición de texto compartida. Cambiar de pestaña conserva el borrador de texto y
+medios de ambas caras; invalida la elección local aún no guardada de la biblioteca,
+como cambiar su destino. Una respuesta tardía nunca se aplica a otra cara.
+
+La primera observación que llega tarde selecciona la pestaña real solo mientras
+no se haya elegido una pestaña ni editado su cara o abierto la biblioteca. Después
+la selección del usuario no sigue alternando con la fuente. «Usar icono de la
+aplicación» solo se ofrece en apariencia manual: ese atajo escribe la imagen base,
+no una cara externa. Las caras conservan importación de imagen y biblioteca.
+
+Cada estado trae un icono reemplazable. Sin texto propio, solo icono, también en
+escenas. Una fuente no disponible muestra el segundo estado con marca roja; una
+observación vencida conserva la marca ámbar. No se cuenta cuántas veces se pulsó.
 
 ## Actualizaciones de RAD
 
@@ -152,4 +228,5 @@ confianza en GitHub oficial y sus límites están en
 - [ ] Cada error dice qué pasó en lenguaje llano y ofrece una acción (S3).
 - [ ] Al usuario solo se le pide lo que el sistema no puede decidir (S4).
 - [ ] Cada control aparece solo cuando se puede usar (S5).
-- [ ] Todo texto visible sale del catálogo y existe en todos los idiomas disponibles.
+- [ ] Todo texto visible sale del catálogo, o del manifest si es de un plugin, y
+      existe en todos los idiomas disponibles.

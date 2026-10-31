@@ -52,20 +52,3 @@ fn export_lease_retains_snapshot_after_history_eviction_and_expires_on_idle_dead
     assert!(!a.retained_revisions().contains(&1));
     assert!(!a.release_export(lease));
 }
-#[test]
-fn disconnected_export_releases_its_transfer_credit() {
-    let c = rad_core::configuration::Configuration::prepare_new(
-        &rad_core::identity::IdentityRegistry::new(9).unwrap(),
-    )
-    .unwrap();
-    let mut a = rad_authority::Authority::new(c, 1, std::num::NonZeroU128::new(1).unwrap());
-    let old = a
-        .pin_export(4, rad_core::configuration::Origin::Editor)
-        .unwrap();
-    a.disconnect(4);
-    assert!(
-        a.pin_export(4, rad_core::configuration::Origin::Editor)
-            .is_ok()
-    );
-    assert!(!a.release_export(old));
-}

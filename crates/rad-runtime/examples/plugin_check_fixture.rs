@@ -190,6 +190,7 @@ fn main() {
                         valid_for_ms: 1000,
                         state: VisualState::Current {
                             content: VisualContent {
+                                state: None,
                                 text: Some(if mode == "visual-leak" {
                                     secret.clone()
                                 } else {
@@ -216,6 +217,7 @@ fn main() {
                         valid_for_ms: 1000,
                         state: VisualState::Current {
                             content: VisualContent {
+                                state: None,
                                 text: Some(secret.clone()),
                                 ..Default::default()
                             },

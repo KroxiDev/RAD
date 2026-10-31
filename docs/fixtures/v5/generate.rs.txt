@@ -1,0 +1,13 @@
+use rad_core::{configuration::*,identity::*};
+#[test]
+fn generate_v5_golden() {
+ let bytes=include_bytes!("../../../docs/fixtures/v4/profile.json");
+ let data=rad_codec::decode_data(bytes).unwrap();
+ let initial=Configuration::prepare_new(&IdentityRegistry::new(data.principal.installation()).unwrap()).unwrap();
+ let candidate=initial.configuration().prepare_restore(initial.registry(),Origin::Editor,true,data).unwrap();
+ let button=candidate.configuration().data().buttons[0].binding.identity();
+ let candidate=candidate.configuration().prepare_edit(candidate.registry(),Origin::Editor,Edit::AddAction{button,kind:ActionKind::Brightness(BrightnessDirection::Increase)}).unwrap();
+ let bytes=rad_codec::encode(candidate.configuration()).unwrap();
+ assert_eq!(rad_codec::document_version(&bytes).unwrap(),5);
+ std::fs::write("../../docs/fixtures/v5/profile.json",bytes).unwrap();
+}

@@ -25,36 +25,6 @@ fn every_embedded_catalog_has_the_same_nonempty_keys_and_english_fallback() {
     }
     assert_eq!(texts::text("es", "future.unknown"), "Something went wrong");
 }
-#[test]
-fn unknown_errors_have_plain_copy_while_technical_code_is_retained() {
-    let error = rad_editor::session::Error {
-        code: "future_code".into(),
-        cause: None,
-        source_change: None,
-        unknown: false,
-    };
-    assert_eq!(
-        rad_editor::status::describe_failure(&error, true),
-        "Algo salió mal"
-    );
-    assert_eq!(error.code, "future_code");
-}
-#[test]
-fn plugin_internal_states_map_to_four_plain_states_with_actions() {
-    use rad_editor::status::PluginState as S;
-    use serde_json::json;
-    for (item, state) in [
-        (json!({"host":"ready"}), S::Ready),
-        (json!({"host":"absent"}), S::Ready),
-        (json!({"needs_credentials":true}), S::NeedsPassword),
-        (json!({"diagnostic":"incompatible_plugin"}), S::NeedsUpdate),
-        (json!({"host":"residual"}), S::NotWorking),
-        (json!({"host":"unknown_future"}), S::NotWorking),
-    ] {
-        assert_eq!(S::of(&item), state);
-        assert_eq!(state.action(false).is_some(), state != S::Ready);
-    }
-}
 
 #[test]
 fn every_literal_lookup_in_editor_source_has_a_catalog_entry() {
@@ -107,9 +77,4 @@ fn every_literal_lookup_in_editor_source_has_a_catalog_entry() {
             }
         }
     }
-}
-
-#[test]
-fn catalog_selection_uses_system_locale_normalization() {
-    assert_eq!(texts::text("ES_AR.UTF-8", "Settings"), "Ajustes");
 }

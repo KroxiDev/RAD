@@ -4,7 +4,7 @@ Referencia de la integración oficial para desarrolladores y agentes. Controla u
 reproductor (play, pause, play/pause, stop, previous, next) y muestra lo que reproduce:
 la carátula si está disponible o, en su defecto, el estado. Se comunica mediante
 [MPRIS](https://specifications.freedesktop.org/mpris/latest/Player_Interface.html)
-sobre el D-Bus de sesión. ID `org.rad.media`, versión 0.2.0, Linux x86_64, contrato de
+sobre el D-Bus de sesión. ID `org.rad.media`, versión 0.3.0, Linux x86_64, contrato de
 plugins v1. Las capacidades negociadas están en el
 [contrato y la guía para autores](../README.md).
 

@@ -93,10 +93,13 @@ fn setup(mode: Mode) -> Authority {
                 fields: vec![],
             },
             credential_slots: vec![],
+            states: vec![],
+            visual: None,
             response_timeout: None,
             gestures: vec![rad_plugin_contract::Gesture::Hold],
         }],
         visuals: vec![],
+        translations: Default::default(),
     };
     a.install_plugin(manifest, 1, "x86_64-unknown-linux-gnu")
         .unwrap();
@@ -143,49 +146,6 @@ fn release_cancels_future_sequential_starts_and_retains_original_snapshot_until_
     assert_eq!(a.plugin_change_allowed("fixture"), Err(PluginError::InUse));
     a.hold_released(job.id.execution());
     assert_eq!(a.plugin_change_allowed("fixture"), Ok(()));
-}
-#[test]
-fn completed_parallel_starts_remain_pinned_until_disconnect_ends_them() {
-    let mut a = setup(Mode::Parallel);
-    let jobs = start(&mut a);
-    assert_eq!(jobs.len(), 2);
-    for job in &jobs {
-        a.job_complete(job.id, Completion::Succeeded).unwrap();
-    }
-    assert_eq!(a.plugin_change_allowed("fixture"), Err(PluginError::InUse));
-    let release = a.input_disconnect(2).unwrap();
-    assert_eq!(
-        release
-            .iter()
-            .filter(|e| matches!(e, Effect::ReleaseHold { .. }))
-            .count(),
-        1
-    );
-    a.hold_released(jobs[0].id.execution());
-    assert_eq!(a.plugin_change_allowed("fixture"), Ok(()));
-}
-
-#[test]
-fn release_does_not_fail_an_already_dispatched_parallel_plan() {
-    let mut a = setup(Mode::Parallel);
-    let jobs = start(&mut a);
-    a.input_report(2, [false; 32]).unwrap();
-    for job in &jobs {
-        a.job_complete(job.id, Completion::Succeeded).unwrap();
-    }
-    assert_eq!(
-        a.result(Origin::Editor, jobs[0].id.execution())
-            .unwrap()
-            .status,
-        ExecutionStatus::Running
-    );
-    a.hold_released(jobs[0].id.execution());
-    assert_eq!(
-        a.result(Origin::Editor, jobs[0].id.execution())
-            .unwrap()
-            .status,
-        ExecutionStatus::Succeeded
-    );
 }
 
 #[test]

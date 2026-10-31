@@ -19,6 +19,8 @@ const PREVIEW: f32 = 80.;
 const ACTION_WIDTH: f32 = 560.;
 /// Longest wait the runtime accepts; checked here to explain it instead of a bare rejection.
 const MAX_WAIT_MS: u64 = 600_000;
+/// Seconds the panel of a newly selected key takes to fade in once it is read.
+const REVEAL_SECONDS: f32 = 0.12;
 
 impl App {
     pub(super) fn inspector(&mut self, ui: &mut egui::Ui, look: &Look) {
@@ -66,22 +68,35 @@ impl App {
     }
     /// The draft differs from what the runtime last published for this key.
     pub(super) fn unsaved(&self) -> bool {
-        self.inspection.as_ref().is_some_and(|published| {
-            let published = Draft::load(published);
-            let draft = &self.draft;
-            published.name != draft.name
-                || published.text != draft.text
-                || published.image != draft.image
-                || published.text_position != draft.text_position
-                || published.mode != draft.mode
-                || published.gesture != draft.gesture
-                || published.order != draft.order
-                || published.waits != draft.waits
-                || published.entries != draft.entries
-                || published.brightness_directions != draft.brightness_directions
-        })
+        self.icon_library.dirty_for(&self.draft.id)
+            || self.inspection.as_ref().is_some_and(|published| {
+                let mut published = Draft::load(published);
+                if let Some(state) = &self.draft.state {
+                    published.select_state(state.clone());
+                }
+                let draft = &self.draft;
+                published.states != draft.state_faces()
+                    || published.name != draft.name
+                    || published.text != draft.text
+                    || published.image != draft.image
+                    || published.text_position != draft.text_position
+                    || published.mode != draft.mode
+                    || published.gesture != draft.gesture
+                    || published.order != draft.order
+                    || published.waits != draft.waits
+                    || published.entries != draft.entries
+                    || published.brightness_directions != draft.brightness_directions
+            })
     }
-    fn save(&mut self) {
+    pub(super) fn save(&mut self) {
+        if self.icon_library.dirty_for(&self.draft.id)
+            && self
+                .inspection
+                .as_ref()
+                .is_none_or(|view| view.button["id"].as_str() != Some(self.draft.id.as_str()))
+        {
+            return; // A revision invalidated the inspection; wait before capturing action edits.
+        }
         let actions = self.inspection.iter().flat_map(|i| &i.actions);
         let waits: Option<Vec<_>> = actions
             .zip(&self.draft.waits)
@@ -121,7 +136,7 @@ impl App {
             .filter(|(action, _)| action["fields"]["type"] == "brightness")
             .map(|(action, direction)| (string(&action["id"]), *direction))
             .collect();
-        let request = commands::save_button(&commands::KeySave {
+        let mut request = commands::save_button(&commands::KeySave {
             id: &self.draft.id,
             name: &self.draft.name,
             text: &self.draft.text,
@@ -134,18 +149,72 @@ impl App {
             launchers: &launchers,
             brightness: &brightness,
         });
-        self.send(request);
+        if let crate::Request::Edit {
+            changes,
+            expected_revision,
+        } = &mut request
+        {
+            if self.draft.state.is_some() || self.icon_library.dirty_for(&self.draft.id) {
+                let Some(revision) = self
+                    .inspection
+                    .as_ref()
+                    .and_then(|view| view.button["view_revision"].as_str())
+                else {
+                    return;
+                };
+                *expected_revision = Some(revision.to_owned());
+            }
+            for change in changes {
+                if let rad_api::Change::Set {
+                    edit: rad_api::FieldEdit::Appearance(a),
+                    ..
+                } = change
+                {
+                    a.states = Some(self.draft.state_faces());
+                    if self.draft.state.is_some() {
+                        a.text = self.draft.base_face.text.clone();
+                        a.image = self.draft.base_face.image.clone();
+                    }
+                }
+            }
+        }
+        if self.icon_library.dirty_for(&self.draft.id) {
+            if let Some(mut job) = self.icon_library.save_job(request) {
+                if let Job::SaveIcon { state, .. } = &mut job {
+                    *state = self.draft.state.clone();
+                }
+                if self.command(job) {
+                    self.icon_library.saving();
+                }
+            }
+        } else {
+            self.send(request);
+        }
     }
     fn key_editor(&mut self, ui: &mut egui::Ui, look: &Look, id: &str) {
+        self.prepare_state_tab(ui);
         let actions = self
             .inspection
             .as_ref()
             .map(|i| i.actions.clone())
             .unwrap_or_default();
+        // Fades in once read; a key read ahead shows at once, and edits replace it in place.
+        let reveal = ui.ctx().animate_bool_with_time(
+            egui::Id::new(("key-reveal", self.selection)),
+            self.inspection.is_some(),
+            REVEAL_SECONDS,
+        );
         ui.horizontal(|ui| {
-            let (preview, preview_response) =
-                ui.allocate_exact_size(egui::Vec2::splat(PREVIEW), egui::Sense::click());
-            self.paint_preview(ui, look, id, preview);
+            let (preview, preview_response) = ui
+                .vertical(|ui| {
+                    let (preview, response) =
+                        ui.allocate_exact_size(egui::Vec2::splat(PREVIEW), egui::Sense::click());
+                    self.paint_preview(ui, look, id, preview);
+                    self.state_tabs(ui);
+                    (preview, response)
+                })
+                .inner;
+            let _ = preview;
             // Clicking the face opens the image choices, as the image button does.
             let open_image = self.inspection.is_some() && preview_response.clicked();
             if self.inspection.is_some() {
@@ -153,54 +222,67 @@ impl App {
             }
             ui.add_space(10.);
             if self.inspection.is_none() {
-                ui.spinner();
-                ui.label(look.muted_text(tr(self.es, "Loading…")));
-            } else {
-                egui::Grid::new("key-fields")
-                    .num_columns(2)
-                    .spacing([12., 8.])
-                    .show(ui, |ui| {
-                        ui.label(look.muted_text(tr(self.es, "Text on key")));
-                        // The placeholder says what an empty field shows: the name on a key
-                        // without image, nothing on one that has an image to speak for it.
-                        let placeholder = if self.draft.image.is_empty() {
-                            self.draft.name.clone()
-                        } else {
-                            tr(self.es, "No text").to_owned()
-                        };
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                look.field(&mut self.draft.text, &placeholder)
-                                    .desired_width(FIELD),
-                            );
-                            self.text_placement_menu(ui);
-                        });
-                        ui.end_row();
-                        ui.label(look.muted_text(tr(self.es, "Image")));
-                        self.image_menu(ui, look, open_image);
-                        ui.end_row();
-                        if !actions.is_empty() || self.draft.gesture != "press" {
-                            ui.label(look.muted_text(tr(self.es, "Gesture")));
-                            self.gesture_control(ui, &actions);
-                            ui.end_row();
-                        }
-                        if self.appearance_visible() {
-                            ui.label(look.muted_text(tr(self.es, "Appearance")))
-                                .on_hover_text(tr(
-                                    self.es,
-                                    "What draws this key: you, or a plugin",
-                                ));
-                            ui.horizontal(|ui| self.appearance_control(ui, id));
-                            ui.end_row();
-                        }
-                    });
+                // A quick read shows the key without a flash of "Loading…".
+                let waited = self.selected_at.elapsed();
+                if waited >= super::LOADING_DELAY {
+                    ui.spinner();
+                    ui.label(look.muted_text(tr(self.es, "Loading…")));
+                } else {
+                    ui.ctx()
+                        .request_repaint_after(super::LOADING_DELAY - waited);
+                }
+                return;
             }
+            ui.set_opacity(reveal);
+            egui::Grid::new("key-fields")
+                .num_columns(2)
+                .spacing([12., 8.])
+                .show(ui, |ui| {
+                    ui.label(look.muted_text(tr(self.es, "Text on key")));
+                    // The placeholder says what an empty field shows: the name on a key
+                    // without image, nothing on one that has an image to speak for it.
+                    let placeholder = if self.draft.state.is_none()
+                        && self.draft.image.is_empty()
+                        && !self.icon_library.dirty_for(id)
+                    {
+                        self.draft.name.clone()
+                    } else {
+                        tr(self.es, "No text").to_owned()
+                    };
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            look.field(&mut self.draft.text, &placeholder)
+                                .desired_width(FIELD),
+                        );
+                        self.text_placement_menu(ui);
+                    });
+                    ui.end_row();
+                    ui.label(look.muted_text(tr(self.es, "Image")));
+                    self.image_menu(ui, look, open_image);
+                    ui.end_row();
+                    if !actions.is_empty() || self.draft.gesture != "press" {
+                        ui.label(look.muted_text(tr(self.es, "Gesture")));
+                        self.gesture_control(ui, &actions);
+                        ui.end_row();
+                    }
+                    if self.appearance_visible() {
+                        ui.label(look.muted_text(tr(self.es, "Appearance")))
+                            .on_hover_text(tr(self.es, "What draws this key: you, or a plugin"));
+                        ui.horizontal(|ui| self.appearance_control(ui, id));
+                        ui.end_row();
+                    }
+                });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                // One click deletes: undo, a keystroke away, is the safety net.
-                if glyph_button(ui, look, "🗑", tr(self.es, "Delete (Ctrl+Z brings it back)"))
-                    .clicked()
+                // One click, or Delete, deletes: undo is the safety net.
+                if glyph_button(
+                    ui,
+                    look,
+                    "🗑",
+                    tr(self.es, "Delete (Del; Ctrl+Z brings it back)"),
+                )
+                .clicked()
                 {
-                    self.send(commands::delete_selection(id, &actions));
+                    self.delete_selected();
                 }
                 // A key without actions has nothing to run.
                 if !actions.is_empty()
@@ -212,7 +294,10 @@ impl App {
                     self.try_selected();
                 }
                 // Shown only when there is something to save; last, so it moves nothing.
-                if self.unsaved() && ui.add(look.primary(tr(self.es, "Save"))).clicked() {
+                if !self.icon_library.open
+                    && self.unsaved()
+                    && ui.add(look.primary(tr(self.es, "Save"))).clicked()
+                {
                     self.save();
                 }
             });
@@ -220,6 +305,7 @@ impl App {
         if self.inspection.is_none() {
             return;
         }
+        ui.set_opacity(reveal);
         ui.add_space(6.);
         ui.label(look.section(tr(self.es, "Actions")));
         if actions.is_empty() && !self.app_picker.adds_to(id) {
@@ -240,6 +326,86 @@ impl App {
             .id_salt("advanced")
             .show(ui, |ui| self.advanced(ui, look, id, &actions));
     }
+    fn state_entries(&self) -> Option<crate::plugins::CatalogEntry> {
+        let key = self.current_visual()?;
+        self.plugins
+            .catalog
+            .iter()
+            .find(|e| e.type_key == key && !e.states().is_empty())
+            .cloned()
+    }
+    fn prepare_state_tab(&mut self, ui: &egui::Ui) {
+        let Some(entry) = self.state_entries() else {
+            return;
+        };
+        let observed = self
+            .plugins
+            .visuals
+            .get(&self.draft.id)
+            .filter(|f| f.state == "current" || f.state == "stale")
+            .and_then(|f| f.visual_state.as_deref())
+            .filter(|id| entry.states().iter().any(|s| s.id == *id));
+        self.draft.initial_state(
+            observed,
+            &entry.states()[1].id,
+            self.icon_library.open || self.icon_library.dirty_for(&self.draft.id),
+        );
+        self.plugins.state_icons.retain(|key, _| {
+            self.plugins.catalog.iter().any(|e| {
+                e.states()
+                    .iter()
+                    .any(|state| key == &format!("{}:{}", e.type_key, state.id))
+            })
+        });
+        for state in entry.states() {
+            let Some(hex) = &state.icon else {
+                continue;
+            };
+            let key = format!("{}:{}", entry.type_key, state.id);
+            if self
+                .plugins
+                .state_icons
+                .get(&key)
+                .is_some_and(|(old, _)| old == hex)
+            {
+                continue;
+            }
+            let bytes = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+                .collect::<Result<Vec<_>, _>>();
+            if let Ok(bytes) = bytes
+                && let Ok(pixels) = crate::preview::decode(&bytes)
+            {
+                let texture = ui.ctx().load_texture(
+                    &key,
+                    egui::ColorImage::from_rgba_unmultiplied(pixels.size, &pixels.rgba),
+                    Default::default(),
+                );
+                self.plugins.state_icons.insert(key, (hex.clone(), texture));
+            }
+        }
+    }
+    fn state_tabs(&mut self, ui: &mut egui::Ui) {
+        let Some(entry) = self.state_entries() else {
+            return;
+        };
+        for state in entry.states() {
+            if ui
+                .selectable_label(
+                    self.draft.state.as_deref() == Some(&state.id),
+                    entry.texts.get(self.es, &state.label),
+                )
+                .clicked()
+            {
+                self.draft.state_initialized = true;
+                if self.draft.state.as_deref() != Some(&state.id) {
+                    self.icon_library.reset();
+                    self.draft.select_state(state.id.clone());
+                }
+            }
+        }
+    }
     /// The key face as the deck will show it; once loaded it follows the draft, so edits
     /// show before saving.
     fn paint_preview(&self, ui: &egui::Ui, look: &Look, id: &str, preview: egui::Rect) {
@@ -250,6 +416,48 @@ impl App {
         else {
             return;
         };
+        if let Some(texture) = self.icon_library.preview(id) {
+            paint_key(
+                ui,
+                look,
+                preview,
+                &key_label(&self.draft.text, &self.draft.name, true),
+                &self.draft.text_position,
+                Some((texture, 1.)),
+                None,
+            );
+            return;
+        }
+        if let Some(state) = &self.draft.state {
+            let key = format!("{}:{state}", string(&view.appearance["visual_type"]));
+            let image = self
+                .pictures
+                .get(&self.draft.image, ui.input(|i| i.time))
+                .or_else(|| {
+                    self.plugins
+                        .state_icons
+                        .get(&key)
+                        .map(|(_, texture)| (texture, 1.))
+                })
+                .or_else(|| {
+                    self.plugins
+                        .visuals
+                        .get(id)
+                        .filter(|f| f.visual_state.as_ref() == Some(state))
+                        .and_then(|f| f.texture.as_ref())
+                        .map(|t| (t, 1.))
+                });
+            paint_key(
+                ui,
+                look,
+                preview,
+                &self.draft.text,
+                &self.draft.text_position,
+                image,
+                None,
+            );
+            return;
+        }
         let published = view.appearance["image"].as_str();
         let icon = if self.draft.image.is_empty() && view.appearance["visual_type"].is_null() {
             native_icon(&view.appearance).or_else(|| {
@@ -292,9 +500,10 @@ impl App {
                 published,
             )
         };
-        let texture = image.and_then(|reference| self.textures.get(reference));
+        let now = ui.input(|i| i.time);
+        let picture = image.and_then(|reference| self.pictures.get(reference, now));
         if !self.plugin_face(ui, look, id, preview) {
-            paint_key(ui, look, preview, &label, &position, texture, icon);
+            paint_key(ui, look, preview, &label, &position, picture, icon);
         }
     }
     /// Button that opens how the text is placed: at the top, in the middle or at the
@@ -355,10 +564,11 @@ impl App {
                 .into();
             });
     }
-    /// Button with everything about the key's picture: import a PNG/JPEG, take the icon of
-    /// the application the key opens, or remove it. Imports and removals stick with Save.
+    /// Button with everything about the key's picture: open the icon library, take the icon
+    /// of the application the key opens, import a PNG/JPEG, or remove it. Imports and removals
+    /// stick with Save.
     fn image_menu(&mut self, ui: &mut egui::Ui, look: &Look, open_now: bool) {
-        let has_image = !self.draft.image.is_empty();
+        let has_image = !self.draft.image.is_empty() || self.icon_library.dirty_for(&self.draft.id);
         let label = if has_image {
             tr(self.es, "Change")
         } else {
@@ -377,6 +587,43 @@ impl App {
         egui::Popup::menu(&button)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
+                // egui draws menu entries as bare text until hovered; next to a label and a
+                // field they would read as text, so they keep the editor's button look.
+                ui.reset_style();
+                let manual = self
+                    .inspection
+                    .as_ref()
+                    .is_some_and(|i| i.appearance["visual_type"].is_null());
+                if (manual || self.draft.state.is_some())
+                    && ui.button(tr(self.es, "Icon library")).clicked()
+                {
+                    // Start from what drew the current image, when this computer remembers it.
+                    let recalled = crate::icon_memory::default_path()
+                        .and_then(|path| crate::icon_memory::recall(&path, &self.draft.image));
+                    self.icon_library.begin(&self.draft.id, recalled);
+                    ui.close();
+                }
+                if icon_available
+                    && ui
+                        .button(tr(self.es, "Use app icon"))
+                        .on_hover_text(tr(
+                            self.es,
+                            "Take the installed icon of the application this key opens first",
+                        ))
+                        .clicked()
+                    && self.command(Job::AppIcon {
+                        button: self.draft.id.clone(),
+                        application: None,
+                    })
+                {
+                    self.icon_library.reset();
+                    self.image_target = Some((self.draft.id.clone(), self.draft.state.clone()));
+                    self.icon_asked = true;
+                    ui.close();
+                }
+                if manual || icon_available {
+                    ui.separator();
+                }
                 ui.label(look.muted_text(tr(self.es, "From a PNG or JPEG file")));
                 ui.horizontal(|ui| {
                     ui.add(
@@ -397,32 +644,23 @@ impl App {
                             kind: TransferKind::Image,
                         })
                     {
+                        self.image_target = Some((self.draft.id.clone(), self.draft.state.clone()));
+                        self.icon_library.reset();
                         self.transfer_active = true;
                         ui.close();
                     }
                 });
-                if icon_available || has_image {
+                if has_image {
                     ui.separator();
-                }
-                if icon_available
-                    && ui
-                        .button(tr(self.es, "Use app icon"))
-                        .on_hover_text(tr(
-                            self.es,
-                            "Take the installed icon of the application this key opens first",
-                        ))
+                    if ui
+                        .add(look.dangerous(tr(self.es, "Remove image")))
                         .clicked()
-                    && self.command(Job::AppIcon {
-                        button: self.draft.id.clone(),
-                        application: None,
-                    })
-                {
-                    self.icon_asked = true;
-                    ui.close();
-                }
-                if has_image && ui.button(tr(self.es, "Remove image")).clicked() {
-                    self.draft.image.clear();
-                    ui.close();
+                    {
+                        self.icon_library.reset();
+                        self.draft.image.clear();
+                        self.discard_unused_imports();
+                        ui.close();
+                    }
                 }
             });
     }
@@ -456,10 +694,21 @@ impl App {
                         && icon_button(ui, look, Icon::Close, tr(self.es, "Remove action"))
                             .clicked()
                     {
-                        self.send(crate::Request::Delete {
-                            id: string(&action["id"]),
-                            confirm_contents: false,
-                        });
+                        let id = string(&action["id"]);
+                        let texts = self.plugins.texts(&kind);
+                        if texts.binds_visual(&kind) {
+                            self.command(Job::LinkedAction(crate::linked_actions::LinkedAction {
+                                button: self.draft.id.clone(),
+                                type_key: kind.clone(),
+                                texts,
+                                mutation: crate::linked_actions::Mutation::Remove { id },
+                            }));
+                        } else {
+                            self.send(crate::Request::Edit {
+                                changes: vec![rad_api::Change::RemoveAction { id }],
+                                expected_revision: None,
+                            });
+                        }
                     }
                     if display_index > 0
                         && icon_button(ui, look, Icon::Up, tr(self.es, "Move up")).clicked()
@@ -788,38 +1037,6 @@ mod brightness_tests {
     }
 
     #[test]
-    fn brightness_has_only_increase_and_decrease_controls_not_plugin_configuration() {
-        let mut app = app();
-        let action = app.inspection.as_ref().unwrap().actions[0].clone();
-        let output = egui::Context::default().run_ui(Default::default(), |ui| {
-            ui.horizontal(|ui| {
-                app.action_content(
-                    ui,
-                    &Look::new(&Default::default()),
-                    &action,
-                    "brightness",
-                    0,
-                );
-            });
-        });
-        let texts: Vec<_> = output
-            .shapes
-            .iter()
-            .filter_map(|shape| match &shape.shape {
-                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
-                _ => None,
-            })
-            .collect();
-        for expected in ["Brightness", "Increase (+10)", "Decrease (−10)"] {
-            assert!(
-                texts.iter().any(|text| text == expected),
-                "missing {expected}: {texts:?}"
-            );
-        }
-        assert!(!texts.iter().any(|text| text == "Configure…"));
-    }
-
-    #[test]
     fn changing_brightness_direction_is_an_unsaved_draft_until_one_atomic_save() {
         let mut app = app();
         assert!(!app.unsaved());
@@ -837,6 +1054,7 @@ mod brightness_tests {
                 plugin_dependencies: false,
                 plugin_form: false,
                 plugin_visual: false,
+                background: false,
                 connected: false,
                 transfer_job: false,
                 palette: Default::default(),

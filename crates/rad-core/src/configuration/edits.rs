@@ -136,7 +136,19 @@ impl Configuration {
                     button_mut(&mut data, *button)?.appearance = appearance.clone()
                 }
                 Edit::SetVisual { button, visual } => {
-                    button_mut(&mut data, *button)?.visual = visual.clone()
+                    let button = button_mut(&mut data, *button)?;
+                    let same_type = match (&button.visual, visual) {
+                        (VisualSource::Manual, VisualSource::Manual) => true,
+                        (
+                            VisualSource::External { type_key: old, .. },
+                            VisualSource::External { type_key: new, .. },
+                        ) => old == new,
+                        _ => false,
+                    };
+                    if !same_type {
+                        button.appearance.states.clear();
+                    }
+                    button.visual = visual.clone()
                 }
                 Edit::SetPlan {
                     button,

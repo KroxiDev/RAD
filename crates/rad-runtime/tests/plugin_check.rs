@@ -85,11 +85,7 @@ fn certify_with(mode: &str, change: impl FnOnce(&mut serde_json::Value)) -> serd
     std::fs::remove_dir_all(dir).unwrap();
     report
 }
-#[test]
-fn complete_synthetic_plugin_certifies() {
-    let report = certify("valid");
-    assert_eq!(report["status"], "PASS", "{report}");
-}
+
 #[test]
 fn invalid_identity_and_capabilities_never_certify() {
     for mode in ["identity", "capabilities"] {

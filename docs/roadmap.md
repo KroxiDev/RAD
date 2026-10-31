@@ -20,22 +20,36 @@ no se crea otra autoridad en el editor.
 Fuentes de la situación actual:
 [`App::advanced`](../crates/rad-editor/src/app/inspector.rs),
 [`App::settings_section`](../crates/rad-editor/src/app/settings.rs) y
-el manejo de `Reply::TransferProgress` en [`App`](../crates/rad-editor/src/app.rs).
+el manejo de `Reply::TransferProgress` en [`App::pump_replies`](../crates/rad-editor/src/app/replies.rs).
 El diseño se contrasta con el [checklist de UX](ux.md#checklist-para-cambios-en-la-interfaz)
 y se verifica con la [política de pruebas](testing.md).
 
+## Publicación de los plugins oficiales
+
+Media y Metrics 0.3.0, Audio y OBS 0.4.0 usan la capacidad `labels` y, OBS,
+el plazo fijo de respuesta ([ADR 0020](adr/0020-textos-de-plugins-y-plazo-fijo.md)).
+Audio y OBS 0.4.0 añaden `visual_states` y vínculos acción→visual
+([ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md)).
+Pendiente, con encargo y autorización de escritura remota:
+
+- Describir estas ampliaciones en la especificación y la guía para autores de
+  `KroxiDev/rad-plugins`.
+- Publicar allí las releases correspondientes después de una release de RAD que entienda el
+  contrato, y actualizar entonces sus entradas en
+  [official.rs](../crates/rad-editor/src/official.rs).
+
 ## Distribución y actualizaciones
 
-Código y receta preparados según [ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md)
-y [procedimiento de empaquetado](../packaging/README.md). Pendiente de cierre:
+Implementada según [ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md)
+y el [procedimiento de empaquetado](../packaging/README.md). La actualización
+integrada entre releases estables ya se comprobó con systemd, polkit y pacman
+reales. Pendiente de cierre:
 
-- Verificación del artefacto final y del flujo con systemd/polkit/pacman reales;
-  los dobles no certifican integración ni compatibilidad de Omarchy.
-- Actualización integrada desde una versión anterior mediante una release estable
-  superior; publicación, tags y acceso remoto de escritura requieren encargo separado.
+- Validar en una sesión Omarchy aislada lo que el uso normal no cubre: cancelación,
+  fallos antes y después de la transacción, desinstalación y reinstalación con
+  datos sintéticos. Los dobles no certifican esa integración.
 - Congelar y validar un snapshot de construcción Omarchy 4.0.6; el número de
   distribución no congela sus bibliotecas rolling.
 
-Las releases publicadas se consultan en el [origen oficial](https://github.com/KroxiDev/RAD/releases);
-existir la receta no demuestra que un artefacto se haya publicado. No introducir
-CI, AUR, canales beta, actualización de plugins o rollback automático por inferencia.
+No introducir CI, AUR, canales beta, actualización de plugins o rollback
+automático por inferencia.
