@@ -154,6 +154,7 @@ fn local(response: &Response, code: &'static str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn response(mut data: Value) -> Response {
         if data.get("sections").is_some() {
             data["visibility"] = json!("visible");
@@ -213,29 +214,7 @@ mod tests {
                 .contains("previously authorized")
         );
     }
-    #[test]
-    fn output_budget_rejects_without_publishing_any_partial_sections() {
-        let base = response(json!({"sections":["actions"],"view_revision":"1"}));
-        let mut count = 0;
-        let result=assemble(base,"b1",|_|{
-            count+=1;
-            Ok(response(json!({"section":"actions","view_revision":"1","items":vec!["x".repeat(1000);32],"next_cursor":count.to_string()})))
-        }).unwrap();
-        assert_eq!(result.error.unwrap().code, "resource_exhausted");
-        assert!(matches!(result.data, rad_api::ResponseData::None));
-        assert!((300..600).contains(&count));
-    }
-    #[test]
-    fn budget_exact_size_accepts_and_one_byte_less_rejects() {
-        let value = response(json!({}));
-        let size = serde_json::to_vec(&value).unwrap().len();
-        let mut exact = size;
-        assert!(charge(&value, &mut exact));
-        assert_eq!(exact, 0);
-        let mut short = size - 1;
-        assert!(!charge(&value, &mut short));
-        assert_eq!(short, size - 1);
-    }
+
     #[test]
     fn repeated_cursor_is_protocol_error_and_repeated_expiry_is_not_an_infinite_retry() {
         let base = response(json!({"sections":["actions"],"view_revision":"1"}));

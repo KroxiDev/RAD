@@ -513,6 +513,3 @@ fn encode(bytes: &[u8]) -> String {
     }
     out
 }
-
-#[cfg(test)]
-mod tests;

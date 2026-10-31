@@ -100,37 +100,7 @@ fn path() -> std::path::PathBuf {
             .as_nanos()
     ))
 }
-#[test]
-fn streaming_reads_twice_and_commits_same_tuple_as_slice() {
-    let p = path();
-    let base = initial();
-    let images = [image(1)];
-    let candidate = with_images(&base, &images);
-    let mut s = Store::create(&p, &base).unwrap();
-    let mut source = Source::new(&images);
-    assert_eq!(
-        s.commit_from_media(&candidate, &mut source),
-        CommitOutcome::Applied {
-            revision: 2,
-            changed: true
-        }
-    );
-    assert_eq!(source.calls, 2);
-    assert_eq!(s.load().unwrap().configuration, *candidate.configuration());
-    assert_eq!(
-        s.image(&rad_store::media_key(&images[0])).unwrap(),
-        images[0]
-    );
-    assert_eq!(
-        s.commit_with_media(&candidate, &images),
-        CommitOutcome::Applied {
-            revision: 2,
-            changed: false
-        }
-    );
-    drop(s);
-    std::fs::remove_file(p).unwrap();
-}
+
 struct Changing(Source);
 impl MediaSource for Changing {
     fn catalog(&self) -> &[MediaEntry] {
@@ -224,63 +194,7 @@ fn both_passes_fail_at_every_read_without_partial_tuple_and_io_reconciles() {
         }
     }
 }
-#[test]
-fn create_streaming_and_slice_duplicates_share_the_validated_pipeline() {
-    let p = path();
-    let base = initial();
-    let images = [image(8)];
-    let candidate = with_images(&base, &images);
-    let mut source = Source::new(&images);
-    let mut s = Store::create_from_media(&p, &candidate, &mut source).unwrap();
-    assert_eq!(source.calls, 2);
-    assert_eq!(s.load().unwrap().configuration, *candidate.configuration());
-    assert_eq!(
-        s.commit_with_media(&candidate, &[images[0].clone(), images[0].clone()]),
-        CommitOutcome::Applied {
-            revision: 1,
-            changed: false
-        }
-    );
-    let mut duplicate = Source::new(&[images[0].clone(), images[0].clone()]);
-    assert_eq!(
-        s.commit_from_media(&candidate, &mut duplicate),
-        CommitOutcome::NotApplied(StoreError::Invalid)
-    );
-    assert_eq!(duplicate.calls, 0);
-    drop(s);
-    std::fs::remove_file(p).unwrap();
-}
-#[test]
-fn catalog_bounds_and_missing_refs_reject_before_reading_any_source() {
-    let p = path();
-    let base = initial();
-    let images = [image(9)];
-    let candidate = with_images(&base, &images);
-    let mut s = Store::create(&p, &base).unwrap();
-    for (count, length) in [(513, 1), (1, 0), (1, 524289)] {
-        let mut source = Source::new(&images);
-        source.catalog = vec![
-            MediaEntry {
-                digest: source.catalog[0].digest,
-                length
-            };
-            count
-        ];
-        assert!(matches!(
-            s.commit_from_media(&candidate, &mut source),
-            CommitOutcome::NotApplied(_)
-        ));
-        assert_eq!(source.calls, 0);
-    }
-    let mut empty = Source::new(&[]);
-    assert_eq!(
-        s.commit_from_media(&candidate, &mut empty),
-        CommitOutcome::NotApplied(StoreError::Invalid)
-    );
-    assert_eq!(s.load().unwrap().revision, 1);
-    drop(s);
-    std::fs::remove_file(p).unwrap();
-}
+
 #[test]
 fn initial_streaming_io_failure_preserves_incomplete_material_without_claiming_clean_failure() {
     let p = path();

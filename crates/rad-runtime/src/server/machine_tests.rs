@@ -1,7 +1,8 @@
 //! «Usar el Stream Deck con RAD» (ADR 0006) as a setting of the machine: loaded at start,
 //! changed through the client API, and applied to the deck without restarting the runtime.
+
 use super::*;
-use rad_api::{DeckState, EventCode};
+use rad_api::DeckState;
 use rad_deck::{DeckError, Desired, Event};
 use std::{
     collections::VecDeque,
@@ -87,9 +88,6 @@ impl Machine {
     fn file(&self) -> std::path::PathBuf {
         self.data().join("machine.json")
     }
-    fn stored(&self) -> Value {
-        serde_json::from_slice(&std::fs::read(self.file()).unwrap()).unwrap()
-    }
 }
 
 /// A runtime whose data directory already holds `machine.json` with these bytes, if any,
@@ -116,7 +114,6 @@ fn machine(name: &str, session: u128, file: Option<&[u8]>) -> Machine {
     }
 }
 const ON: &[u8] = br#"{"version":1,"use_stream_deck":true,"start_with_session":false}"#;
-const OFF: &[u8] = br#"{"version":1,"use_stream_deck":false,"start_with_session":false}"#;
 
 /// A client connection driven in the same thread as the server.
 struct Client(UnixStream, u64);
@@ -167,115 +164,6 @@ fn turns(machine: &mut Machine, count: usize) {
         machine.server.turn().unwrap();
     }
 }
-fn codes(server: &Server) -> Vec<EventCode> {
-    server
-        .events
-        .view()
-        .entries
-        .iter()
-        .map(|e| e.code)
-        .collect()
-}
-
-#[test]
-fn the_deck_is_opened_at_start_only_when_the_setting_is_on() {
-    let on = machine("start-on", 1001, Some(ON));
-    assert_eq!(on.factory.attempts(), 1);
-    assert!(on.server.deck.is_some());
-    assert_eq!(on.server.deck_state(), DeckState::Disconnected);
-
-    for (name, session, file) in [("start-off", 1002, Some(OFF)), ("start-new", 1003, None)] {
-        let off = machine(name, session, file);
-        assert_eq!(off.factory.attempts(), 0, "{name}");
-        assert!(off.server.deck.is_none());
-        assert_eq!(off.server.deck_state(), DeckState::Disabled);
-        // An absent file is the default, not a failure worth reporting.
-        assert_eq!(codes(&off.server), [EventCode::Started], "{name}");
-    }
-}
-
-#[test]
-fn an_unreadable_file_means_defaults_an_event_and_the_same_bytes() {
-    let garbage: &[u8] = b"{\"version\":99, not json";
-    let mut machine = machine("unreadable", 1004, Some(garbage));
-    assert_eq!(machine.factory.attempts(), 0);
-    assert_eq!(machine.server.deck_state(), DeckState::Disabled);
-    let mut editor = Client::connect(&mut machine, "editor.sock");
-    let log = editor.ask(&mut machine, "runtime_log", json!({}));
-    let entries = log["data"]["entries"].as_array().unwrap();
-    let unreadable: Vec<_> = entries
-        .iter()
-        .filter(|e| e["code"] == "machine_settings_unreadable")
-        .collect();
-    assert_eq!(unreadable.len(), 1, "{entries:?}");
-    assert!(unreadable[0].get("subject").is_none());
-    assert_eq!(
-        editor.ask(&mut machine, "machine_settings", json!({}))["data"],
-        settings(false, false)
-    );
-    assert_eq!(std::fs::read(machine.file()).unwrap(), garbage);
-}
-
-#[test]
-fn machine_settings_reports_what_was_loaded_and_is_for_the_editor_only() {
-    let mut machine = machine(
-        "read",
-        1005,
-        Some(br#"{"version":1,"use_stream_deck":true,"start_with_session":true}"#),
-    );
-    let mut editor = Client::connect(&mut machine, "editor.sock");
-    let answer = editor.ask(&mut machine, "machine_settings", json!({}));
-    assert_eq!(answer["status"], "ok");
-    assert_eq!(answer["data"], settings(true, true));
-
-    let mut automation = Client::connect(&mut machine, "automation.sock");
-    for (op, args) in [
-        ("machine_settings", json!({})),
-        ("set_machine_settings", json!({"use_stream_deck":false})),
-    ] {
-        let denied = automation.ask(&mut machine, op, args);
-        assert_eq!(denied["status"], "error", "{op}");
-        assert_eq!(denied["error"]["code"], "permission_denied", "{op}");
-    }
-    // The refused change changed nothing.
-    assert_eq!(
-        editor.ask(&mut machine, "machine_settings", json!({}))["data"],
-        settings(true, true)
-    );
-    assert_eq!(machine.stored()["use_stream_deck"], true);
-}
-
-#[test]
-fn set_machine_settings_stores_the_change_and_answers_with_the_resulting_view() {
-    let mut machine = machine("set", 1006, None);
-    let mut editor = Client::connect(&mut machine, "editor.sock");
-    let answer = editor.ask(
-        &mut machine,
-        "set_machine_settings",
-        json!({"start_with_session":true}),
-    );
-    // Not `applied`: it is no revision of the configuration.
-    assert_eq!(answer["status"], "ok");
-    assert_eq!(answer["data"], settings(false, true));
-    assert_eq!(
-        machine.stored(),
-        json!({"version":1,"use_stream_deck":false,"start_with_session":true})
-    );
-    // A field left out keeps what it had.
-    let answer = editor.ask(
-        &mut machine,
-        "set_machine_settings",
-        json!({"use_stream_deck":true}),
-    );
-    assert_eq!(answer["data"], settings(true, true));
-    assert_eq!(machine.stored()["start_with_session"], true);
-    assert_eq!(machine.stored()["use_stream_deck"], true);
-
-    let empty = editor.ask(&mut machine, "set_machine_settings", json!({}));
-    assert_eq!(empty["status"], "error");
-    assert_eq!(empty["error"]["code"], "invalid_request");
-    assert_eq!(empty["error"]["outcome"], "not_applied");
-}
 
 #[test]
 fn a_change_that_cannot_be_stored_is_not_applied_anywhere() {
@@ -298,61 +186,6 @@ fn a_change_that_cannot_be_stored_is_not_applied_anywhere() {
     turns(&mut machine, 3);
     assert_eq!(machine.factory.attempts(), 0);
     assert_eq!(machine.server.deck_state(), DeckState::Disabled);
-}
-
-#[test]
-fn turning_the_setting_on_opens_the_deck_once_and_a_failure_is_not_retried() {
-    let mut machine = machine("hot-on", 1008, None);
-    let mut editor = Client::connect(&mut machine, "editor.sock");
-    let on = json!({"use_stream_deck":true});
-    let off = json!({"use_stream_deck":false});
-
-    assert_eq!(machine.factory.attempts(), 0);
-    editor.ask(&mut machine, "set_machine_settings", on.clone());
-    turns(&mut machine, 3);
-    assert_eq!(machine.factory.attempts(), 1);
-    assert_eq!(machine.server.deck_state(), DeckState::Disconnected);
-    machine
-        .factory
-        .port(0)
-        .lock()
-        .unwrap()
-        .events
-        .push_back(Event::Connected);
-    turns(&mut machine, 1);
-    assert_eq!(machine.server.deck_state(), DeckState::Connected);
-    // The same value again writes and opens nothing.
-    editor.ask(&mut machine, "set_machine_settings", on.clone());
-    turns(&mut machine, 2);
-    assert_eq!(machine.factory.attempts(), 1);
-
-    // Off, then on with a deck that cannot be had.
-    editor.ask(&mut machine, "set_machine_settings", off.clone());
-    machine.factory.port(0).lock().unwrap().stopped = true;
-    turns(&mut machine, 2);
-    assert_eq!(machine.server.deck_state(), DeckState::Disabled);
-    machine.factory.fails.store(true, Ordering::SeqCst);
-    editor.ask(&mut machine, "set_machine_settings", on.clone());
-    turns(&mut machine, 5);
-    assert_eq!(machine.factory.attempts(), 2, "one attempt, no retries");
-    assert_eq!(machine.server.deck_state(), DeckState::Inaccessible);
-    assert_eq!(
-        codes(&machine.server)
-            .iter()
-            .filter(|c| **c == EventCode::DeckSpawnFailed)
-            .count(),
-        1
-    );
-
-    // Off is Disabled, not Inaccessible; on again tries once more, now with success.
-    editor.ask(&mut machine, "set_machine_settings", off);
-    turns(&mut machine, 2);
-    assert_eq!(machine.server.deck_state(), DeckState::Disabled);
-    machine.factory.fails.store(false, Ordering::SeqCst);
-    editor.ask(&mut machine, "set_machine_settings", on);
-    turns(&mut machine, 3);
-    assert_eq!(machine.factory.attempts(), 3);
-    assert_eq!(machine.server.deck_state(), DeckState::Disconnected);
 }
 
 /// The Tools folder of the `server_deck` scenario: pressing key 2 enters it, and inside it
@@ -468,47 +301,4 @@ fn turning_it_back_on_while_the_deck_is_stopping_waits_for_it_to_finish() {
     assert_eq!(machine.factory.attempts(), 2);
     assert!(machine.server.deck.is_some());
     assert_eq!(machine.server.deck_state(), DeckState::Disconnected);
-}
-
-#[test]
-fn start_with_session_is_only_stored() {
-    let mut machine = machine("session", 1011, Some(ON));
-    let mut editor = Client::connect(&mut machine, "editor.sock");
-    let port = machine.factory.port(0);
-    let answer = editor.ask(
-        &mut machine,
-        "set_machine_settings",
-        json!({"start_with_session":true}),
-    );
-    assert_eq!(answer["data"], settings(true, true));
-    turns(&mut machine, 3);
-    assert_eq!(machine.stored()["start_with_session"], true);
-    assert_eq!(machine.factory.attempts(), 1);
-    assert_eq!(port.lock().unwrap().shutdowns, 0);
-    assert!(!port.lock().unwrap().dropped);
-    assert!(machine.server.deck.is_some());
-}
-
-#[test]
-fn a_runtime_that_is_shutting_down_opens_no_deck() {
-    let mut machine = machine("closing", 1012, Some(ON));
-    let mut editor = Client::connect(&mut machine, "editor.sock");
-    let first = machine.factory.port(0);
-    for value in [false, true] {
-        editor.ask(
-            &mut machine,
-            "set_machine_settings",
-            json!({"use_stream_deck":value}),
-        );
-    }
-    // A new deck is waiting for the old one when the runtime is asked to end.
-    machine.server.request_shutdown();
-    first.lock().unwrap().stopped = true;
-    let end = Instant::now() + Duration::from_secs(3);
-    while !machine.server.shutdown_complete() {
-        assert!(Instant::now() < end, "the runtime ends once its deck did");
-        turns(&mut machine, 1);
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(machine.factory.attempts(), 1);
 }

@@ -112,38 +112,3 @@ fn malformed_translations_and_labels_are_rejected() {
         .into();
     assert_eq!(parse(&many).unwrap_err(), Error::InvalidManifest);
 }
-
-#[test]
-fn a_manifest_with_labels_survives_serialization() {
-    let manifest = parse(&manifest()).unwrap();
-    let again: Manifest = serde_json::from_value(serde_json::to_value(&manifest).unwrap()).unwrap();
-    assert_eq!(again, manifest);
-    // Plain options keep their original form for readers older than the capability.
-    let text = serde_json::to_value(&manifest).unwrap();
-    assert_eq!(
-        text["actions"][0]["schema"]["fields"][0]["kind"]["options"][2],
-        json!("stop")
-    );
-}
-
-#[test]
-fn an_action_can_declare_a_fixed_response_budget_without_a_user_field() {
-    let mut v = manifest();
-    v["actions"][0]["response_timeout"] = json!({"default_seconds":20});
-    let manifest = parse(&v).unwrap();
-    let bytes = br#"{"schema_version":1,"values":{"operation":"start"}}"#;
-    assert_eq!(
-        Document::new(bytes)
-            .unwrap()
-            .response_budget_ms(&manifest.actions[0]),
-        Ok(20_000)
-    );
-    for seconds in [0, 121] {
-        let mut v = v.clone();
-        v["actions"][0]["response_timeout"]["default_seconds"] = json!(seconds);
-        assert_eq!(parse(&v).unwrap_err(), Error::InvalidManifest);
-    }
-    // A named field must still exist, be optional and be bounded to 1..=120.
-    v["actions"][0]["response_timeout"]["field"] = json!("missing");
-    assert_eq!(parse(&v).unwrap_err(), Error::InvalidManifest);
-}

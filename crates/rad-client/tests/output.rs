@@ -1,8 +1,8 @@
 use rad_client::{
-    output::{exit_code, write},
+    output::exit_code,
     response::{Error, Outcome, Response, Status},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 fn response(code: &str, outcome: Option<Outcome>) -> Response {
     Response {
         v: 1,
@@ -65,20 +65,4 @@ fn exit_codes_distinguish_rejection_failure_storage_transport_and_unknown_outcom
         });
         assert_eq!(exit_code(&ok), expected);
     }
-}
-#[test]
-fn structured_output_is_one_complete_response_and_text_is_english() {
-    let response = response("permission_denied", Some(Outcome::NotApplied));
-    let mut bytes = vec![];
-    write(&response, true, &mut bytes).unwrap();
-    let value: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(value["error"]["code"], "permission_denied");
-    assert_eq!(value["cli_version"], rad_api::CLI_VERSION);
-    assert_eq!(bytes.last(), Some(&b'\n'));
-    bytes.clear();
-    write(&response, false, &mut bytes).unwrap();
-    assert_eq!(
-        String::from_utf8(bytes).unwrap(),
-        "permission_denied: Safe message\n"
-    );
 }

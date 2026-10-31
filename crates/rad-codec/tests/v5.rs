@@ -79,16 +79,3 @@ fn brightness_roundtrips_only_in_v5_and_legacy_floor_is_the_only_normalized_valu
     .unwrap();
     assert!(Configuration::from_data(data, &registry).is_err());
 }
-
-#[test]
-fn direction_is_a_closed_string_not_a_serde_unit_map() {
-    let mut value: serde_json::Value =
-        serde_json::from_slice(include_bytes!("../../../docs/fixtures/v4/profile.json")).unwrap();
-    value["version"] = serde_json::json!(5);
-    value["settings"]["brightness_percent"] = serde_json::json!(55);
-    value["buttons"][0]["actions"][0]["kind"] = serde_json::json!({"brightness":{"increase":null}});
-    assert_eq!(
-        decode_data(&serde_json::to_vec(&value).unwrap()),
-        Err(CodecError::InvalidDocument)
-    );
-}

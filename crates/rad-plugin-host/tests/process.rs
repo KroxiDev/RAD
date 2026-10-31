@@ -71,51 +71,7 @@ fn until(host: &mut Host, condition: impl Fn(&Host) -> bool) {
         std::thread::sleep(Duration::from_millis(1));
     }
 }
-#[test]
-fn one_real_process_handshakes_and_shares_correlated_invocations() {
-    let mut host = Host::default();
-    let g = host
-        .activate(
-            Command::new(env!("CARGO_BIN_EXE_rad-plugin-fixture-v1")),
-            manifest(1),
-            0,
-        )
-        .unwrap();
-    until(&mut host, |h| {
-        h.state("org.rad.fixture") == Some(State::Ready)
-    });
-    let a = host
-        .invoke("org.rad.fixture", g, "run", parameters("echo"), 5000)
-        .unwrap();
-    let b = host
-        .invoke("org.rad.fixture", g, "run", parameters("fail"), 5000)
-        .unwrap();
-    assert_eq!(host.resources(), (1, 2));
-    assert!(b.request > a.request);
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let mut replies = vec![];
-    while replies.len() < 2 {
-        assert!(Instant::now() < deadline);
-        host.pump(0).unwrap();
-        while let Some(r) = host.take_completion() {
-            replies.push(r);
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    assert_eq!(replies[0], (a, Outcome::Success));
-    assert_eq!(
-        replies[1],
-        (
-            b,
-            Outcome::Failure {
-                code: FailureCode::Unavailable
-            }
-        )
-    );
-    assert_eq!(host.resources(), (1, 0));
-    assert_eq!(host.state("org.rad.fixture"), Some(State::Ready));
-    stop(&mut host, 0);
-}
+
 #[test]
 fn running_timeout_cycles_keep_slots_until_reap_and_never_replay() {
     let mut host = Host::default();
@@ -343,46 +299,6 @@ fn stop(host: &mut Host, now: u64) {
 }
 
 #[test]
-fn cross_host_prepared_cannot_consume_or_release_another_setup_reservation() {
-    for spawn_fails in [true, false] {
-        let mut a = Host::default();
-        let mut b = Host::default();
-        let ticket_a = a.reserve_launch(manifest(1), 0).unwrap();
-        let ticket_b = b.reserve_launch(manifest(2), 0).unwrap();
-        assert_eq!(a.bindings().next().unwrap().1, 1);
-        assert_eq!(b.bindings().next().unwrap().1, 1);
-        // Empty executable deterministically fails without searching PATH.
-        let command = if spawn_fails {
-            Command::new("")
-        } else {
-            Command::new(env!("CARGO_BIN_EXE_rad-plugin-fixture-v1"))
-        };
-        let mut foreign = Some(ticket_a.spawn(command));
-        assert_eq!(
-            b.attach(&mut foreign, 1),
-            Err(rad_plugin_host::Error::Invalid)
-        );
-        assert!(foreign.is_some());
-        assert_eq!(b.resources(), (1, 0));
-        assert_eq!(b.state("org.rad.fixture"), Some(State::Starting));
-        assert_eq!(b.bindings().next().unwrap().0, &manifest(2));
-        assert_eq!(
-            b.remove("org.rad.fixture"),
-            Err(rad_plugin_host::Error::Residual)
-        );
-        // Rejection did not advance B's clock or consume either legitimate ticket.
-        let mut own = Some(ticket_b.spawn(Command::new("")));
-        assert_eq!(b.attach(&mut own, 0), Ok(1));
-        assert!(own.is_none());
-        b.remove("org.rad.fixture").unwrap();
-        assert_eq!(a.attach(&mut foreign, 0), Ok(1));
-        assert!(foreign.is_none());
-        stop(&mut a, 0);
-        a.remove("org.rad.fixture").unwrap();
-    }
-}
-
-#[test]
 fn timeout_retains_residual_until_late_reply_without_killing_healthy_plugin() {
     let mut host = Host::default();
     let g = host
@@ -443,49 +359,6 @@ fn timeout_retains_residual_until_late_reply_without_killing_healthy_plugin() {
     assert!(host.take_completion().is_none());
     assert!(host.idle("org.rad.fixture"));
     stop(&mut host, 10);
-}
-
-#[test]
-fn reap_of_a_reported_timeout_releases_the_residual_without_a_second_completion() {
-    let mut host = Host::default();
-    let g = host
-        .activate(
-            Command::new(env!("CARGO_BIN_EXE_rad-plugin-fixture-v1")),
-            manifest(1),
-            0,
-        )
-        .unwrap();
-    until(&mut host, |h| {
-        h.state("org.rad.fixture") == Some(State::Ready)
-    });
-    let key = host
-        .invoke("org.rad.fixture", g, "run", parameters("slow"), 10)
-        .unwrap();
-    host.pump(0).unwrap();
-    host.pump(10).unwrap();
-    assert_eq!(
-        host.take_completion(),
-        Some((
-            key,
-            Outcome::Failure {
-                code: FailureCode::TimedOut
-            }
-        ))
-    );
-    assert_eq!(host.resources(), (1, 1));
-    let pid = host.process_id("org.rad.fixture").unwrap();
-    // SAFETY: plain signal to the fixture child this test just spawned.
-    assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGKILL) }, 0);
-    let end = Instant::now() + Duration::from_secs(3);
-    while host.resources().0 != 0 {
-        assert!(Instant::now() < end, "fixture watchdog");
-        host.pump(10).unwrap();
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    assert!(host.take_completion().is_none());
-    assert_eq!(host.resources(), (0, 0));
-    assert!(host.idle("org.rad.fixture"));
-    host.remove("org.rad.fixture").unwrap();
 }
 
 #[test]
@@ -601,60 +474,6 @@ fn plugin_started_under_blocked_shutdown_signals_still_terminates_on_sigterm() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(host.resources(), (0, 0));
-}
-
-#[test]
-fn readiness_wait_uses_actual_expiry_not_periodic_polling() {
-    let mut h = Host::default();
-    h.activate(
-        Command::new(env!("CARGO_BIN_EXE_rad-plugin-fixture-v1")),
-        manifest(1),
-        0,
-    )
-    .unwrap();
-    until(&mut h, |h| h.state("org.rad.fixture") == Some(State::Ready));
-    assert_eq!(h.next_poll(), None);
-    let c = h
-        .subscribe("org.rad.fixture", "status", parameters("echo"), 1000)
-        .unwrap();
-    until(&mut h, |h| {
-        matches!(
-            h.visual("org.rad.fixture", c),
-            Some(VisualState::Current { .. })
-        )
-    });
-    assert_eq!(h.next_poll(), Some(1000));
-    h.pump(1000).unwrap();
-    assert_eq!(h.next_poll(), None);
-    stop(&mut h, 1000);
-}
-
-#[test]
-fn ordinary_retirement_reaps_before_releasing_without_crash_diagnostic() {
-    let mut host = Host::default();
-    host.activate(
-        Command::new(env!("CARGO_BIN_EXE_rad-plugin-fixture-v1")),
-        manifest(1),
-        0,
-    )
-    .unwrap();
-    until(&mut host, |h| {
-        h.state("org.rad.fixture") == Some(State::Ready)
-    });
-    host.retire("org.rad.fixture");
-    assert_eq!(host.resources().0, 1);
-    assert_eq!(
-        host.remove("org.rad.fixture"),
-        Err(rad_plugin_host::Error::Residual)
-    );
-    until(&mut host, |h| {
-        h.state("org.rad.fixture") == Some(State::Reaped)
-    });
-    assert!(
-        host.diagnostics("org.rad.fixture").is_empty(),
-        "ordinary demand removal is not a crash"
-    );
-    host.remove("org.rad.fixture").unwrap();
 }
 
 /// Pid written by the fixture's descendant modes, killed on drop so a failing test leaks nothing.

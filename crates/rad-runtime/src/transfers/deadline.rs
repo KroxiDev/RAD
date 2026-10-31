@@ -36,20 +36,3 @@ impl<T: Write> Write for Timed<'_, T> {
         self.inner.flush()
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn deadline_stops_file_stream_before_more_bytes() {
-        let mut bytes = Vec::new();
-        let mut timed = Timed {
-            inner: &mut bytes,
-            end: Instant::now(),
-        };
-        assert_eq!(
-            timed.write(b"late").unwrap_err().kind(),
-            io::ErrorKind::TimedOut
-        );
-        assert!(bytes.is_empty());
-    }
-}

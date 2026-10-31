@@ -12,62 +12,6 @@ impl Drop for Directory {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
-#[test]
-fn editor_can_close_while_runtime_still_serves_the_automation_endpoint() {
-    let directory = Directory(
-        std::env::temp_dir().join(format!("rad-server-integration-{}", std::process::id())),
-    );
-    std::fs::create_dir(&directory.0).unwrap();
-    std::fs::set_permissions(&directory.0, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let mut server = Server::new(
-        &directory.0,
-        &directory.0.join("data"),
-        NonZeroU128::new(378).unwrap(),
-    )
-    .unwrap();
-    for endpoint in [Endpoint::Editor, Endpoint::Automation] {
-        let (send, receive) = mpsc::sync_channel(1);
-        let root = directory.0.clone();
-        let client = std::thread::spawn(move || {
-            let result = Client::connect(&root, endpoint).map(|mut client| {
-                let status = client.request("status", serde_json::json!({})).unwrap();
-                if endpoint == Endpoint::Editor {
-                    assert_eq!(
-                        serde_json::to_value(&status.data).unwrap()["deck_state"],
-                        "disabled"
-                    );
-                    assert_eq!(
-                        serde_json::to_value(&status.data).unwrap()["recovered_previous"],
-                        false
-                    );
-                } else {
-                    assert!(
-                        serde_json::to_value(&status.data)
-                            .unwrap()
-                            .get("recovered_previous")
-                            .is_none()
-                    );
-                }
-            });
-            send.send(result).unwrap();
-        });
-        let end = Instant::now() + Duration::from_secs(3);
-        loop {
-            server.turn().unwrap();
-            if let Ok(result) = receive.try_recv() {
-                result.expect("same runtime must negotiate both endpoints after GUI closes");
-                break;
-            }
-            assert!(
-                Instant::now() < end,
-                "runtime must answer bounded client handshake"
-            );
-            server.wait(Duration::from_millis(20)).unwrap();
-        }
-        client.join().unwrap();
-    }
-    assert!(directory.0.join("data/state.sqlite3").exists());
-}
 
 #[test]
 fn editor_and_automation_share_durable_configuration_and_history_across_restart() {

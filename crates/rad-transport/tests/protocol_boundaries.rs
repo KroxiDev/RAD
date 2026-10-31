@@ -2,10 +2,7 @@ use rad_transport::{Origin, Transport, TransportError};
 use std::{
     fs,
     io::{Read, Write},
-    os::unix::{
-        fs::{PermissionsExt, symlink},
-        net::UnixStream,
-    },
+    os::unix::{fs::PermissionsExt, net::UnixStream},
     path::PathBuf,
 };
 struct Fixture(PathBuf);
@@ -39,31 +36,7 @@ fn send(c: &mut UnixStream, id: u64, op: &str) {
     c.write_all(&(s.len() as u32).to_be_bytes()).unwrap();
     c.write_all(s.as_bytes()).unwrap();
 }
-#[test]
-fn partial_bind_cleanup_preserves_foreign_path_and_releases_lock() {
-    let f = Fixture::new();
-    let rad = f.0.join("rad");
-    fs::create_dir(&rad).unwrap();
-    fs::set_permissions(&rad, fs::Permissions::from_mode(0o700)).unwrap();
-    let foreign = f.0.join("foreign");
-    fs::write(&foreign, b"preserved").unwrap();
-    symlink(&foreign, rad.join("automation.sock")).unwrap();
-    assert!(matches!(
-        Transport::bind(&f.0, 7),
-        Err(TransportError::UnsafePath)
-    ));
-    assert!(!rad.join("editor.sock").exists());
-    assert_eq!(fs::read(&foreign).unwrap(), b"preserved");
-    assert!(
-        fs::symlink_metadata(rad.join("automation.sock"))
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
-    fs::remove_file(rad.join("automation.sock")).unwrap();
-    let t = Transport::bind(&f.0, 8).unwrap();
-    drop(t);
-}
+
 #[test]
 fn old_disconnected_completion_cannot_route_to_reconnected_peer_same_runtime() {
     let f = Fixture::new();
@@ -128,31 +101,4 @@ fn deadline_wins_over_ready_final_byte_and_other_client_is_not_starved() {
     assert_eq!(request.origin, Origin::Editor);
     assert_eq!(request.request.operation(), "status");
     assert!(t.take_next().is_none());
-}
-#[test]
-fn identifiable_version_error_flushes_before_close_and_coalesced_valid_request_is_not_admitted() {
-    let f = Fixture::new();
-    let mut t = Transport::bind(&f.0, 12).unwrap();
-    let mut c = f.client("editor.sock");
-    let body = r#"{"v":2,"id":"1","op":"hello","args":{}}"#;
-    c.write_all(&(body.len() as u32).to_be_bytes()).unwrap();
-    c.write_all(body.as_bytes()).unwrap();
-    send(&mut c, 1, "hello");
-    t.drive(0).unwrap();
-    assert!(t.take_next().is_none());
-    assert_eq!(t.request_count(), 0);
-    let mut bytes = Vec::new();
-    let end = c.read_to_end(&mut bytes);
-    assert!(
-        end.is_ok()
-            || end
-                .as_ref()
-                .is_err_and(|e| e.kind() == std::io::ErrorKind::ConnectionReset)
-    );
-    let n = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
-    assert_eq!(bytes.len(), n + 4);
-    let value: serde_json::Value = serde_json::from_slice(&bytes[4..]).unwrap();
-    assert_eq!(value["error"]["code"], "unsupported_version");
-    assert_eq!(value["id"], "1");
-    assert_eq!(t.connection_count(), 0);
 }

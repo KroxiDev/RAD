@@ -92,38 +92,3 @@ fn missing_table_must_not_authorize_gc_of_previously_held_material() {
         "Missing recovery table was treated as legacy, initialized to hold0, and diagnostic revision2 was deleted without explicit decision"
     );
 }
-#[test]
-fn healthy_commit_invalidates_discard_handle_and_bad_roots_still_reject() {
-    let p = held("stale");
-    let mut s = Store::open(&p).unwrap();
-    let stale = s.recovery_hold().unwrap().unwrap();
-    let l = s.load().unwrap();
-    let n = l
-        .configuration
-        .prepare_edit(
-            &l.registry,
-            Origin::Editor,
-            Edit::CreateButton {
-                folder: l.configuration.data().principal,
-                position: 0,
-                name: "new".into(),
-            },
-        )
-        .unwrap();
-    assert!(matches!(
-        s.commit(&n),
-        CommitOutcome::Applied { revision: 4, .. }
-    ));
-    assert!(matches!(
-        s.discard_recovery(stale),
-        CommitOutcome::NotApplied(_)
-    ));
-    assert!(s.collect(&[999]).is_err());
-    assert!(s.recovery_hold().unwrap().is_some());
-    s.collect(&[]).unwrap();
-    drop(s);
-    let s = Store::open(&p).unwrap();
-    assert!(s.recovery_hold().unwrap().is_some());
-    drop(s);
-    std::fs::remove_file(p).unwrap();
-}

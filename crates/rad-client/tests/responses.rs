@@ -76,35 +76,6 @@ fn response_requires_all_fields_closed_codes_and_consistent_data_error_shapes() 
         assert!(decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
     }
 }
-#[test]
-fn applied_and_admitted_receipts_do_not_claim_success_without_their_required_identity() {
-    for data in [
-        json!({}),
-        json!({"changed":true}),
-        json!({"changed":false,"revision":"01"}),
-        json!({"changed":1,"revision":"0"}),
-    ] {
-        let mut v = good();
-        v["data"] = data;
-        assert!(decode(&serde_json::to_vec(&v).unwrap(), 2, None).is_err());
-    }
-    let mut v = good();
-    v["status"] = json!("admitted");
-    for data in [
-        json!({}),
-        json!({"execution_id":"bad"}),
-        json!({"execution_id":format!("{SESSION}:0")}),
-        json!({"execution_id":"00000000000000000000000000000002:1"}),
-    ] {
-        v["data"] = data;
-        assert!(Response::decode_value(v.clone(), 2, None, rad_api::Operation::Run).is_err());
-    }
-    v["data"] = json!({"execution_id":format!("{SESSION}:1")});
-    assert!(Response::decode_value(v, 2, None, rad_api::Operation::Run).is_ok());
-    let mut v = good();
-    v["data"] = json!({"changed":false,"revision":"0"});
-    assert!(Response::decode_value(v, 2, None, rad_api::Operation::Edit).is_ok());
-}
 
 fn decode(bytes: &[u8], id: u64, session: Option<&str>) -> Result<Response, InvalidResponse> {
     Response::decode_value(

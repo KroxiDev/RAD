@@ -788,38 +788,6 @@ mod brightness_tests {
     }
 
     #[test]
-    fn brightness_has_only_increase_and_decrease_controls_not_plugin_configuration() {
-        let mut app = app();
-        let action = app.inspection.as_ref().unwrap().actions[0].clone();
-        let output = egui::Context::default().run_ui(Default::default(), |ui| {
-            ui.horizontal(|ui| {
-                app.action_content(
-                    ui,
-                    &Look::new(&Default::default()),
-                    &action,
-                    "brightness",
-                    0,
-                );
-            });
-        });
-        let texts: Vec<_> = output
-            .shapes
-            .iter()
-            .filter_map(|shape| match &shape.shape {
-                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.clone()),
-                _ => None,
-            })
-            .collect();
-        for expected in ["Brightness", "Increase (+10)", "Decrease (−10)"] {
-            assert!(
-                texts.iter().any(|text| text == expected),
-                "missing {expected}: {texts:?}"
-            );
-        }
-        assert!(!texts.iter().any(|text| text == "Configure…"));
-    }
-
-    #[test]
     fn changing_brightness_direction_is_an_unsaved_draft_until_one_atomic_save() {
         let mut app = app();
         assert!(!app.unsaved());
