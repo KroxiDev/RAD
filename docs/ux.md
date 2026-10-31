@@ -152,6 +152,10 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   y dice «Cargando…» solo si tarda más de 0,4 s.
 - **Borrar.** La papelera del panel o Supr borran la tecla seleccionada, o la
   carpeta a la que entra, sin confirmación; Ctrl+Z la recupera.
+- **Mover una tecla.** Al arrastrarla, su cara (imagen, texto o cara de plugin,
+  tal como se ve en el deck) sigue al puntero al tamaño de la tecla, tomada por el
+  mismo punto; la original queda atenuada hasta soltar. Las acciones y la carpeta
+  de la paleta se arrastran con su nombre.
 - **Progreso.** Las transferencias muestran una barra.
 - **Puesta en marcha.** El editor arranca RAD y ofrece «Iniciar RAD con el equipo»;
   el usuario nunca usa la terminal ([ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md)).
