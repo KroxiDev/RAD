@@ -169,6 +169,10 @@ visuales vinculados no se ofrecen en paleta ni combo; Multimedia y Métricas sig
 ofreciendo sus visuales independientes. Las teclas antiguas ganan el vínculo al
 guardar su acción, no mediante una migración automática.
 
+Cambiar el visual a otro plugin o tipo, o pasar a Manual, borra el texto y la
+imagen propios de cada estado; Ctrl+Z los recupera. Cambiar solo el dispositivo,
+la escena u otro parámetro los conserva.
+
 Solo para esos visuales, debajo de la vista previa aparecen dos pestañas con los
 textos traducidos del manifest. Abren en el estado observado disponible; texto,
 imagen importada y biblioteca de iconos editan la cara elegida, con una única

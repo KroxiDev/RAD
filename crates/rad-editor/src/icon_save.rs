@@ -34,10 +34,13 @@ impl From<Error> for Failed {
         }
     }
 }
+/// The runtime holds at most two transfers at once. With more tokens to drop, the
+/// editor cannot tell which are still live, so cleanup closes its own connection.
+pub(crate) const MAX_PREPARED_IMAGES: usize = 2;
 pub(crate) fn drop_images<P: Port>(session: &mut Session<P>, tokens: Vec<String>) -> Cleanup {
     let tokens: std::collections::BTreeSet<_> = tokens.into_iter().collect();
     let mut result = Cleanup::default();
-    if tokens.len() > 2 {
+    if tokens.len() > MAX_PREPARED_IMAGES {
         result.disconnect = true;
         return result;
     }

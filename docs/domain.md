@@ -174,8 +174,11 @@ Son tres distinciones que evitan inferir efectos a partir de lo mostrado:
   observada. La vigencia vence si no se renueva desde el camino que observa la
   fuente.
   Un visual binario declara dos estados observados; la apariencia guarda hasta
-  dos caras por identificador y una posición de texto compartida. El vínculo
-  acción→visual simplifica la edición sin convertir pulsaciones en estado.
+  dos caras por identificador y una posición de texto compartida. Las caras
+  pertenecen al tipo/plugin del visual actual: cambiarlo o pasar a Manual las
+  elimina en la misma edición y deshacer las recupera; cambiar solo parámetros
+  las conserva. El vínculo acción→visual simplifica la edición sin convertir
+  pulsaciones en estado.
   Contratos: [ADR 0008](adr/0008-frescura-declarada.md) y
   [ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md).
 - **Revisión visible no es revisión durable.** Navegación y ejecución pueden

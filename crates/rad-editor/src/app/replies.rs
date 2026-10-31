@@ -485,7 +485,7 @@ impl App {
                                 }
                                 self.warn(tr(
                                     self.es,
-                                    "The key changed. The imported image was not used.",
+                                    "The key changed. The imported image was not used; choose it again if you still need it.",
                                 ));
                             }
                             self.image_path.clear();

@@ -512,7 +512,7 @@ impl App {
         }
         for token in tokens {
             if !self.discarded_imports.contains(&token) {
-                if self.discarded_imports.len() < 2 {
+                if self.discarded_imports.len() < crate::icon_save::MAX_PREPARED_IMAGES {
                     self.discarded_imports.push(token);
                 } else {
                     self.image_cleanup_disconnect = true;

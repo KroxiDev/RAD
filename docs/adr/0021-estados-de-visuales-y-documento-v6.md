@@ -66,16 +66,9 @@ la escritura. Si sigue siendo el mismo tipo/plugin, se conservan las caras edita
 localmente por campo (texto e imagen independientes) y se actualizan los intactos; si cambió, se descarta el destino obsoleto
 y se informa que no se guardó. Una respuesta incierta nunca activa ese reintento.
 
-Excepción acotada: un rechazo tipado `ViewChanged` antes de iniciar persistencia
-devuelve el grupo de imágenes a preparado en la misma conexión, sin renovar el
-vencimiento original de 60 s ni ampliar la cuota de dos. Así, guardar explícitamente
-otra vez tras releer puede usar los mismos medios. Un fallo de escritura los libera
-como antes; la incertidumbre mantiene el grupo retenido y no permite replay.
-El editor cancela con `transfer_drop` los tokens conocidos de importaciones al
-abandonar la tecla o cambiar de tipo/plugin; una importación tardía también se
-descarta. Conserva cada token hasta confirmar la cancelación o su inexistencia;
-solo esa limpieza admite reintentos acotados ante ocupación, sin impedir lecturas
-ni repetir la edición. Si no puede completarla, cierra únicamente su conexión IPC
-cuando no hay otra petición pendiente y reconecta: descarta las imágenes aún no
-publicadas de esa conexión, conserva el texto y pide elegirlas otra vez. Cancelar,
-desconectar o vencer libera las imágenes preparadas.
+Excepción acotada: un rechazo `ViewChanged` previo a la persistencia devuelve el
+grupo de imágenes a preparado, sin renovar su vencimiento ni ampliar la cuota, para
+que guardar otra vez tras releer no obligue a importarlas de nuevo. El editor
+cancela las importaciones que abandona; si no puede confirmarlo, cierra solo su
+conexión IPC y nunca repite la edición. Contrato detallado en la
+[API de clientes](../client-api.md#caras-de-visuales-y-edición-atómica).

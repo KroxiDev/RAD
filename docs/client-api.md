@@ -468,10 +468,6 @@ curso o transferencias retenidas. El runtime captura ambas como un solo grupo
 antes de encolar la publicación y conserva sus leases ante desconexión e
 incertidumbre; se resuelven juntos sin replay.
 
-Framing sigue en v1. Las variantes nuevas requieren actualizar lectores cerrados;
-editor y runtime se distribuyen juntos. Compatibilidad documental y decisiones:
-[ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md).
-
 Excepción acotada: un rechazo tipado `ViewChanged` antes de iniciar persistencia
 devuelve el grupo de imágenes a preparado en la misma conexión, sin renovar el
 vencimiento original de 60 s ni ampliar la cuota de dos. Así, guardar explícitamente
@@ -485,3 +481,7 @@ ni repetir la edición. Si no puede completarla, cierra únicamente su conexión
 cuando no hay otra petición pendiente y reconecta: descarta las imágenes aún no
 publicadas de esa conexión, conserva el texto y pide elegirlas otra vez. Cancelar,
 desconectar o vencer libera las imágenes preparadas.
+
+Framing sigue en v1. Las variantes nuevas requieren actualizar lectores cerrados;
+editor y runtime se distribuyen juntos. Compatibilidad documental y decisiones:
+[ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md).
