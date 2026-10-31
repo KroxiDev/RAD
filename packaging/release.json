@@ -2,7 +2,7 @@
   "schema": 1,
   "product": "RAD",
   "package": "rust-action-deck",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "pkgrel": 1,
   "architecture": "x86_64",
   "base": "omarchy-4.0.6"
