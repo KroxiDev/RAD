@@ -58,9 +58,10 @@ enum NewAction {
 }
 #[derive(Clone)]
 enum Drag {
+    /// A key of the board, with where it lay around the point it was picked up at.
     Button {
         id: String,
-        label: String,
+        face: egui::Rect,
     },
     /// An action from the list, with the name shown while it is dragged.
     Add {
@@ -1429,7 +1430,7 @@ impl App {
             .show(ui, |ui| {
                 ui.add_enabled_ui(!self.transfer_active, |ui| self.deck(ui, look));
             });
-        deck::drag_ghost(ui.ctx(), look);
+        self.drag_ghost(ui.ctx(), look);
     }
     /// Esc goes back, as the Back button does, once no text field or menu holds it.
     fn escape(&mut self, ctx: &egui::Context) {
