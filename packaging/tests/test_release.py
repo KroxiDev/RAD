@@ -82,6 +82,9 @@ class ReleaseContract(unittest.TestCase):
             self.assertNotIn("target/release", unit + entry)
             self.assertTrue((stage / "usr/bin/rad-editor").is_symlink())
             self.assertTrue((stage / "usr/share/licenses/rust-action-deck/LICENSE").is_file())
+            self.assertEqual(
+                (stage / "usr/share/licenses/rust-action-deck/third-party/phosphor/LICENSE").read_bytes(),
+                (ROOT / "crates/rad-editor/assets/phosphor/LICENSE").read_bytes())
             self.assertFalse(any(p.name in {".env", "store.db", "editor.json", "examples"}
                                  for p in stage.rglob("*")))
 

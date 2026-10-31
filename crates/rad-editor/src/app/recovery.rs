@@ -19,6 +19,7 @@ impl App {
         if !self.recovery.is_normal() {
             return;
         }
+        self.icon_library.reset();
         self.recovery = Mode::Asking;
         self.recovery_due = true;
         self.recovery_reset_confirm = false;

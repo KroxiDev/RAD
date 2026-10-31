@@ -45,6 +45,14 @@ pub enum Job {
     },
     Inspect(String),
     Request(Request),
+    SaveIcon {
+        button: String,
+        ticket: u64,
+        png: std::sync::Arc<Vec<u8>>,
+        request: Request,
+        /// What drew `png`, remembered on this computer once the image is stored.
+        choice: crate::icon_library::Choice,
+    },
     Theme,
     Transfer {
         path: PathBuf,
@@ -79,6 +87,11 @@ pub enum Reply {
     PluginVisuals {
         revision: String,
         visuals: Vec<crate::plugins::Visual>,
+    },
+    IconSaved {
+        button: String,
+        ticket: u64,
+        result: Result<Response, Error>,
     },
     Connected,
     /// The runtime is in recovery mode and refused a request that is not about plugins.
@@ -431,6 +444,38 @@ pub fn start_with_clock(
                         .media_bytes(&id, &revision)
                         .and_then(|bytes| crate::preview::decode(&bytes))
                         .map(|pixels| Reply::Image { reference, pixels }),
+                    Job::SaveIcon {
+                        button,
+                        ticket,
+                        png,
+                        request,
+                        choice,
+                    } => {
+                        let result = if active.is_some() {
+                            Err(Error {
+                                code: "busy".into(),
+                                cause: None,
+                                source_change: None,
+                                unknown: false,
+                            })
+                        } else {
+                            crate::icon_save::save(s, &button, &png, request)
+                        };
+                        // A convenience for reopening the library: failing to remember
+                        // never changes the outcome of the save.
+                        if let Ok(saved) = &result
+                            && let Some(path) = crate::icon_memory::default_path()
+                            && let Err(error) =
+                                crate::icon_memory::remember(&path, &saved.image, choice)
+                        {
+                            eprintln!("RAD icon choice not remembered: {error}");
+                        }
+                        Ok(Reply::IconSaved {
+                            button,
+                            ticket,
+                            result: result.map(|saved| saved.response),
+                        })
+                    }
                     Job::Request(request) => {
                         let operation = request.operation().as_str().to_owned();
                         s.request(request).map(|response| Reply::Response {
