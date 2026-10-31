@@ -12,6 +12,8 @@ use serde_json::json;
 use std::collections::BTreeMap;
 /// Width of the list of installed plugins; the chosen one takes the rest.
 const LIST_WIDTH: f32 = 280.;
+/// How long after the board changes a plugin face may be missing before it reads unavailable.
+const PENDING_FACE: std::time::Duration = std::time::Duration::from_secs(1);
 #[derive(Default)]
 pub(super) struct PluginUi {
     pub catalog: Vec<CatalogEntry>,
@@ -1298,7 +1300,19 @@ impl App {
             return false;
         }
         let face = self.plugins.visuals.get(id);
-        let state = face.map(|f| f.state.as_str()).unwrap_or("unavailable");
+        // A face not read yet after the board changed shows plain for a moment, not as
+        // unavailable: it is usually a few milliseconds away.
+        let settling = PENDING_FACE.saturating_sub(self.board_since.elapsed());
+        if face.is_none() && !settling.is_zero() {
+            ui.ctx().request_repaint_after(settling);
+        }
+        let state = face
+            .map(|f| f.state.as_str())
+            .unwrap_or(if settling.is_zero() {
+                "unavailable"
+            } else {
+                "current"
+            });
         let text = face.and_then(|f| f.text.as_deref()).unwrap_or("");
         let mut look = super::look::Look::new(&self.palette);
         if let Some(c) = face.and_then(|f| f.color) {
@@ -1314,7 +1328,8 @@ impl App {
             rect,
             text,
             face.map(|f| f.position.as_str()).unwrap_or("middle"),
-            face.and_then(|f| f.texture.as_ref()),
+            face.and_then(|f| f.texture.as_ref())
+                .map(|texture| (texture, 1.)),
             None,
         );
         if state != "current" {

@@ -132,21 +132,55 @@ pub struct Board {
 pub struct Refresh {
     pub status: Value,
     pub board: Option<Board>,
+    /// The selected key's inspector, read with a board of a newer revision.
+    pub inspection: Option<Inspection>,
+}
+/// The key selected in the editor, and the revision its inspector on screen was read at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Selected {
+    pub id: String,
+    pub revision: Option<String>,
 }
 impl<P: Port> Session<P> {
     pub fn refresh(&mut self, force: bool) -> Result<Refresh, Error> {
-        self.refresh_views(force || self.revision.is_none(), true)
+        self.refresh_views(force || self.revision.is_none(), true, None)
     }
     /// Notices invalidate independent views; a board-only update never fetches the overview.
-    pub fn refresh_views(&mut self, board: bool, overview: bool) -> Result<Refresh, Error> {
+    /// A board of another revision brings the selected key's inspector with it, so the two
+    /// change on screen together instead of the inspector going blank in between.
+    pub fn refresh_views(
+        &mut self,
+        board: bool,
+        overview: bool,
+        selected: Option<&Selected>,
+    ) -> Result<Refresh, Error> {
         let status = if overview {
             self.overview()?
         } else {
             Value::Null
         };
+        let board = if board { Some(self.board()?) } else { None };
+        let inspection = match (&board, selected) {
+            (Some(board), Some(selected))
+                if board.folder["view_revision"].as_str() != selected.revision.as_deref()
+                    && board
+                        .buttons
+                        .iter()
+                        .any(|key| key.entity["id"] == selected.id.as_str()) =>
+            {
+                match self.inspect(&selected.id) {
+                    Ok(inspection) => Some(inspection),
+                    // Refused or already newer: it is read again on its own.
+                    Err(_) if self.is_open() => None,
+                    Err(error) => return Err(error),
+                }
+            }
+            _ => None,
+        };
         Ok(Refresh {
             status,
-            board: if board { Some(self.board()?) } else { None },
+            board,
+            inspection,
         })
     }
     pub fn overview(&mut self) -> Result<Value, Error> {
@@ -162,8 +196,16 @@ impl<P: Port> Session<P> {
         Ok(status)
     }
     pub fn board(&mut self) -> Result<Board, Error> {
-        let rad_api::ResponseData::Board(view) =
-            self.request(Request::Board { folder_id: None })?.data
+        let board = self.read_board(None)?;
+        self.revision = board.folder["view_revision"].as_str().map(str::to_owned);
+        Ok(board)
+    }
+    /// A folder other than the one on show, read ahead so changing to it shows it complete.
+    pub fn folder_board(&mut self, folder: &str) -> Result<Board, Error> {
+        self.read_board(Some(folder.into()))
+    }
+    fn read_board(&mut self, folder_id: Option<String>) -> Result<Board, Error> {
+        let rad_api::ResponseData::Board(view) = self.request(Request::Board { folder_id })?.data
         else {
             return Err(Error::protocol());
         };
@@ -178,7 +220,6 @@ impl<P: Port> Session<P> {
         {
             return Err(Error::protocol());
         }
-        self.revision = Some(view.view_revision);
         Ok(Board {
             grid,
             folder: serde_json::to_value(view.folder).map_err(|_| Error::protocol())?,

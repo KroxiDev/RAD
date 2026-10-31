@@ -12,6 +12,7 @@ fn event(connected: bool, result: Result<Reply, crate::session::Error>) -> Event
         plugin_dependencies: false,
         plugin_form: false,
         plugin_visual: false,
+        background: false,
         connected,
         transfer_job: false,
         palette: Palette::default(),

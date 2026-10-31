@@ -78,7 +78,6 @@ pub struct Server {
     transfer: Option<transfers::Flight>,
     exports: BTreeMap<String, (u64, rad_authority::ExportLease)>,
     prepared: BTreeMap<(u64, String), String>,
-    failed_images: BTreeSet<String>,
     display_dirty: bool,
     shutting_down: bool,
     reconciliation_attempted: bool,
@@ -93,7 +92,9 @@ pub struct Server {
     machine: crate::machine_settings::MachineSettings,
     data_dir: std::path::PathBuf,
     notices: client_api::Notices,
-    images: BTreeMap<String, Arc<rad_media::NormalizedImage>>,
+    pictures: crate::pictures::Pictures,
+    /// Pictures of the folders the deck may show next, for the folder and revision shown.
+    nearby_pictures: Option<(transfers::Shown, BTreeSet<String>)>,
     asleep: bool,
     brightness: u8,
     _wake: Arc<mio::Waker>,
@@ -170,7 +171,6 @@ impl Server {
             transfer: None,
             exports: BTreeMap::new(),
             prepared: BTreeMap::new(),
-            failed_images: BTreeSet::new(),
             display_dirty: true,
             shutting_down: false,
             deck: None,
@@ -182,7 +182,8 @@ impl Server {
             machine,
             data_dir: data.to_path_buf(),
             notices: client_api::Notices::default(),
-            images: BTreeMap::new(),
+            pictures: crate::pictures::Pictures::new(crate::pictures::SPARE_BYTES),
+            nearby_pictures: None,
             asleep: false,
             brightness,
             _wake: wake,
@@ -372,7 +373,7 @@ impl Server {
                     if matches!(effect, Effect::Reply { .. } | Effect::Rejected { .. }) {
                         // Includes valid no-ops: no Persist means the prepared media is unused.
                         self.persistence.release_media(*request);
-                        self.failed_images.clear();
+                        self.pictures.retry_failed();
                     }
                     if let Some(mut target) = self.requests.remove(request) {
                         if !target.sent {
@@ -491,9 +492,9 @@ impl Server {
     /// deck, says so, and does not try again until the setting is turned off and on.
     fn open_deck(&mut self) {
         self.deck_open_pending = false;
-        let desired = crate::display::project_with_plugins(
+        let desired = crate::display::project(
             &self.actor,
-            &self.images,
+            &self.pictures,
             self.brightness,
             self.asleep,
             self.plugin_visuals.as_ref(),
@@ -626,9 +627,9 @@ impl Server {
         }
         self.display_dirty = false;
         if let Some(deck) = &mut self.deck {
-            let desired = crate::display::project_with_plugins(
+            let desired = crate::display::project(
                 &self.actor,
-                &self.images,
+                &self.pictures,
                 self.brightness,
                 self.asleep,
                 self.plugin_visuals.as_ref(),

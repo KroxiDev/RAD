@@ -19,6 +19,8 @@ const PREVIEW: f32 = 80.;
 const ACTION_WIDTH: f32 = 560.;
 /// Longest wait the runtime accepts; checked here to explain it instead of a bare rejection.
 const MAX_WAIT_MS: u64 = 600_000;
+/// Seconds the panel of a newly selected key takes to fade in once it is read.
+const REVEAL_SECONDS: f32 = 0.12;
 
 impl App {
     pub(super) fn inspector(&mut self, ui: &mut egui::Ui, look: &Look) {
@@ -142,6 +144,12 @@ impl App {
             .as_ref()
             .map(|i| i.actions.clone())
             .unwrap_or_default();
+        // Fades in once read; a key read ahead shows at once, and edits replace it in place.
+        let reveal = ui.ctx().animate_bool_with_time(
+            egui::Id::new(("key-reveal", self.selection)),
+            self.inspection.is_some(),
+            REVEAL_SECONDS,
+        );
         ui.horizontal(|ui| {
             let (preview, preview_response) =
                 ui.allocate_exact_size(egui::Vec2::splat(PREVIEW), egui::Sense::click());
@@ -153,54 +161,64 @@ impl App {
             }
             ui.add_space(10.);
             if self.inspection.is_none() {
-                ui.spinner();
-                ui.label(look.muted_text(tr(self.es, "Loading…")));
-            } else {
-                egui::Grid::new("key-fields")
-                    .num_columns(2)
-                    .spacing([12., 8.])
-                    .show(ui, |ui| {
-                        ui.label(look.muted_text(tr(self.es, "Text on key")));
-                        // The placeholder says what an empty field shows: the name on a key
-                        // without image, nothing on one that has an image to speak for it.
-                        let placeholder = if self.draft.image.is_empty() {
-                            self.draft.name.clone()
-                        } else {
-                            tr(self.es, "No text").to_owned()
-                        };
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                look.field(&mut self.draft.text, &placeholder)
-                                    .desired_width(FIELD),
-                            );
-                            self.text_placement_menu(ui);
-                        });
-                        ui.end_row();
-                        ui.label(look.muted_text(tr(self.es, "Image")));
-                        self.image_menu(ui, look, open_image);
-                        ui.end_row();
-                        if !actions.is_empty() || self.draft.gesture != "press" {
-                            ui.label(look.muted_text(tr(self.es, "Gesture")));
-                            self.gesture_control(ui, &actions);
-                            ui.end_row();
-                        }
-                        if self.appearance_visible() {
-                            ui.label(look.muted_text(tr(self.es, "Appearance")))
-                                .on_hover_text(tr(
-                                    self.es,
-                                    "What draws this key: you, or a plugin",
-                                ));
-                            ui.horizontal(|ui| self.appearance_control(ui, id));
-                            ui.end_row();
-                        }
-                    });
+                // A quick read shows the key without a flash of "Loading…".
+                let waited = self.selected_at.elapsed();
+                if waited >= super::LOADING_DELAY {
+                    ui.spinner();
+                    ui.label(look.muted_text(tr(self.es, "Loading…")));
+                } else {
+                    ui.ctx()
+                        .request_repaint_after(super::LOADING_DELAY - waited);
+                }
+                return;
             }
+            ui.set_opacity(reveal);
+            egui::Grid::new("key-fields")
+                .num_columns(2)
+                .spacing([12., 8.])
+                .show(ui, |ui| {
+                    ui.label(look.muted_text(tr(self.es, "Text on key")));
+                    // The placeholder says what an empty field shows: the name on a key
+                    // without image, nothing on one that has an image to speak for it.
+                    let placeholder = if self.draft.image.is_empty() {
+                        self.draft.name.clone()
+                    } else {
+                        tr(self.es, "No text").to_owned()
+                    };
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            look.field(&mut self.draft.text, &placeholder)
+                                .desired_width(FIELD),
+                        );
+                        self.text_placement_menu(ui);
+                    });
+                    ui.end_row();
+                    ui.label(look.muted_text(tr(self.es, "Image")));
+                    self.image_menu(ui, look, open_image);
+                    ui.end_row();
+                    if !actions.is_empty() || self.draft.gesture != "press" {
+                        ui.label(look.muted_text(tr(self.es, "Gesture")));
+                        self.gesture_control(ui, &actions);
+                        ui.end_row();
+                    }
+                    if self.appearance_visible() {
+                        ui.label(look.muted_text(tr(self.es, "Appearance")))
+                            .on_hover_text(tr(self.es, "What draws this key: you, or a plugin"));
+                        ui.horizontal(|ui| self.appearance_control(ui, id));
+                        ui.end_row();
+                    }
+                });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                // One click deletes: undo, a keystroke away, is the safety net.
-                if glyph_button(ui, look, "🗑", tr(self.es, "Delete (Ctrl+Z brings it back)"))
-                    .clicked()
+                // One click, or Delete, deletes: undo is the safety net.
+                if glyph_button(
+                    ui,
+                    look,
+                    "🗑",
+                    tr(self.es, "Delete (Del; Ctrl+Z brings it back)"),
+                )
+                .clicked()
                 {
-                    self.send(commands::delete_selection(id, &actions));
+                    self.delete_selected();
                 }
                 // A key without actions has nothing to run.
                 if !actions.is_empty()
@@ -220,6 +238,7 @@ impl App {
         if self.inspection.is_none() {
             return;
         }
+        ui.set_opacity(reveal);
         ui.add_space(6.);
         ui.label(look.section(tr(self.es, "Actions")));
         if actions.is_empty() && !self.app_picker.adds_to(id) {
@@ -292,9 +311,10 @@ impl App {
                 published,
             )
         };
-        let texture = image.and_then(|reference| self.textures.get(reference));
+        let now = ui.input(|i| i.time);
+        let picture = image.and_then(|reference| self.pictures.get(reference, now));
         if !self.plugin_face(ui, look, id, preview) {
-            paint_key(ui, look, preview, &label, &position, texture, icon);
+            paint_key(ui, look, preview, &label, &position, picture, icon);
         }
     }
     /// Button that opens how the text is placed: at the top, in the middle or at the
@@ -805,6 +825,7 @@ mod brightness_tests {
                 plugin_dependencies: false,
                 plugin_form: false,
                 plugin_visual: false,
+                background: false,
                 connected: false,
                 transfer_job: false,
                 palette: Default::default(),
