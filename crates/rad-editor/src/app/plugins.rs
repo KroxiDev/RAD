@@ -784,32 +784,51 @@ fn dependency_list(
     ui.separator();
     credentials
 }
+#[derive(Clone, Copy)]
+enum PluginRead {
+    Status,
+    Dependencies,
+    Catalog,
+    Visuals,
+    Settings,
+}
 impl App {
     pub(super) fn poll_plugins(&mut self) -> bool {
-        match self.plugins.schedule.choose([
-            self.plugins.dependency_status_due,
-            self.plugins.dependencies.request().is_some(),
-            !self.plugins.catalog_loaded,
-            self.plugins.visual_due,
-            self.plugins.settings_reload.is_some(),
-        ]) {
-            Some(0) => {
+        let reads = [
+            PluginRead::Status,
+            PluginRead::Dependencies,
+            PluginRead::Catalog,
+            PluginRead::Visuals,
+            PluginRead::Settings,
+        ];
+        let ready = reads.map(|read| {
+            let ready = match read {
+                PluginRead::Status => self.plugins.dependency_status_due,
+                PluginRead::Dependencies => self.plugins.dependencies.request().is_some(),
+                PluginRead::Catalog => !self.plugins.catalog_loaded,
+                PluginRead::Visuals => self.plugins.visual_due,
+                PluginRead::Settings => self.plugins.settings_reload.is_some(),
+            };
+            (read, ready)
+        });
+        match self.plugins.schedule.choose(ready) {
+            Some(PluginRead::Status) => {
                 self.plugins.dependency_status_due = false;
                 let _ = self.worker.submit(Job::Plugins);
                 return true;
             }
-            Some(1) => {
+            Some(PluginRead::Dependencies) => {
                 if let Some(request) = self.plugins.dependencies.request() {
                     let _ = self.worker.submit(Job::Request(request));
                 }
                 return true;
             }
-            Some(2) => {
+            Some(PluginRead::Catalog) => {
                 self.plugins.catalog_loaded = true;
                 let _ = self.worker.submit(Job::PluginCatalog);
                 return true;
             }
-            Some(4) => {
+            Some(PluginRead::Settings) => {
                 let id = self
                     .plugins
                     .settings_reload
@@ -818,8 +837,8 @@ impl App {
                 self.open_plugin_form(&id, None, FormTarget::Settings(id.clone()));
                 return true;
             }
-            Some(3) => self.plugins.visual_due = false,
-            _ => return false,
+            Some(PluginRead::Visuals) => self.plugins.visual_due = false,
+            None => return false,
         }
         let ids: Vec<_> = self
             .board

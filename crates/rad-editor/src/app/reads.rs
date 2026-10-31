@@ -2,6 +2,22 @@
 use super::{App, ahead, launcher};
 use crate::{Request, native::Job};
 
+#[derive(Clone, Copy)]
+enum Read {
+    Refresh,
+    ExecutionResult,
+    Transfer,
+    Inspection,
+    ActionCatalog,
+    Plugins,
+    Pictures,
+    MachineSettings,
+    Recovery,
+    ApplicationPicker,
+    InspectAhead,
+    FolderAhead,
+}
+
 impl App {
     pub(super) fn pump_reads(&mut self) {
         if !self.worker.busy() && self.connected {
@@ -23,21 +39,41 @@ impl App {
                 .as_ref()
                 .and_then(|board| self.ahead.due_folder(board));
             let normal = self.recovery.is_normal();
-            match self.schedule.choose([
-                normal && (self.force || self.overview_due),
-                normal && self.result_due && self.control.result_request().is_some(),
-                self.transfer_active,
-                normal && self.inspect_needed,
-                normal && self.catalog_due.is_some_and(|due| now >= due),
-                normal && self.plugins.has_work(),
-                normal && !pictures.is_empty(),
-                normal && self.machine_due,
-                self.recovery_due,
-                normal && self.app_picker.is_due(now),
-                normal && inspect_ahead.is_some(),
-                normal && folder_ahead.is_some(),
-            ]) {
-                Some(0) => {
+            let reads = [
+                Read::Refresh,
+                Read::ExecutionResult,
+                Read::Transfer,
+                Read::Inspection,
+                Read::ActionCatalog,
+                Read::Plugins,
+                Read::Pictures,
+                Read::MachineSettings,
+                Read::Recovery,
+                Read::ApplicationPicker,
+                Read::InspectAhead,
+                Read::FolderAhead,
+            ];
+            let ready = reads.map(|read| {
+                let ready = match read {
+                    Read::Refresh => normal && (self.force || self.overview_due),
+                    Read::ExecutionResult => {
+                        normal && self.result_due && self.control.result_request().is_some()
+                    }
+                    Read::Transfer => self.transfer_active,
+                    Read::Inspection => normal && self.inspect_needed,
+                    Read::ActionCatalog => normal && self.catalog_due.is_some_and(|due| now >= due),
+                    Read::Plugins => normal && self.plugins.has_work(),
+                    Read::Pictures => normal && !pictures.is_empty(),
+                    Read::MachineSettings => normal && self.machine_due,
+                    Read::Recovery => self.recovery_due,
+                    Read::ApplicationPicker => normal && self.app_picker.is_due(now),
+                    Read::InspectAhead => normal && inspect_ahead.is_some(),
+                    Read::FolderAhead => normal && folder_ahead.is_some(),
+                };
+                (read, ready)
+            });
+            match self.schedule.choose(ready) {
+                Some(Read::Refresh) => {
                     let force = std::mem::take(&mut self.force);
                     let overview = std::mem::take(&mut self.overview_due)
                         || self.status.is_null()
@@ -59,56 +95,56 @@ impl App {
                         selected,
                     });
                 }
-                Some(1) => {
+                Some(Read::ExecutionResult) => {
                     self.result_due = false;
                     let _ = self
                         .worker
                         .submit(Job::Request(self.control.result_request().unwrap()));
                 }
-                Some(2) => {
+                Some(Read::Transfer) => {
                     let _ = self.worker.submit(Job::TransferStep);
                 }
-                Some(3) => {
+                Some(Read::Inspection) => {
                     self.inspect_needed = false;
                     if let Some(id) = self.selected() {
                         let _ = self.worker.submit(Job::Inspect(id));
                     }
                 }
-                Some(4) => {
+                Some(Read::ActionCatalog) => {
                     self.catalog_due = None;
                     self.request_application_catalog(launcher::CatalogTarget::Actions);
                 }
-                Some(5) => {
+                Some(Read::Plugins) => {
                     self.poll_plugins();
                 }
-                Some(6) => {
+                Some(Read::Pictures) => {
                     self.pictures.asked(&pictures);
                     let _ = self.worker.submit(Job::Pictures(pictures));
                 }
-                Some(7) => {
+                Some(Read::MachineSettings) => {
                     self.machine_due = false;
                     let _ = self
                         .worker
                         .submit(Job::Request(Request::MachineSettings {}));
                 }
-                Some(8) => {
+                Some(Read::Recovery) => {
                     self.recovery_due = false;
                     let _ = self.worker.submit(Job::Request(Request::Recovery {}));
                 }
-                Some(9) => {
+                Some(Read::ApplicationPicker) => {
                     self.request_application_catalog(launcher::CatalogTarget::Picker);
                 }
-                Some(10) => {
+                Some(Read::InspectAhead) => {
                     let id = inspect_ahead.expect("ready");
                     self.ahead.asked_inspection(&id);
                     let _ = self.worker.submit(Job::InspectAhead(id));
                 }
-                Some(11) => {
+                Some(Read::FolderAhead) => {
                     let id = folder_ahead.expect("ready");
                     self.ahead.asked_folder(&id);
                     let _ = self.worker.submit(Job::FolderBoard(id));
                 }
-                _ => {}
+                None => {}
             }
         }
     }
