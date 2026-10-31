@@ -66,22 +66,31 @@ impl App {
     }
     /// The draft differs from what the runtime last published for this key.
     pub(super) fn unsaved(&self) -> bool {
-        self.inspection.as_ref().is_some_and(|published| {
-            let published = Draft::load(published);
-            let draft = &self.draft;
-            published.name != draft.name
-                || published.text != draft.text
-                || published.image != draft.image
-                || published.text_position != draft.text_position
-                || published.mode != draft.mode
-                || published.gesture != draft.gesture
-                || published.order != draft.order
-                || published.waits != draft.waits
-                || published.entries != draft.entries
-                || published.brightness_directions != draft.brightness_directions
-        })
+        self.icon_library.dirty_for(&self.draft.id)
+            || self.inspection.as_ref().is_some_and(|published| {
+                let published = Draft::load(published);
+                let draft = &self.draft;
+                published.name != draft.name
+                    || published.text != draft.text
+                    || published.image != draft.image
+                    || published.text_position != draft.text_position
+                    || published.mode != draft.mode
+                    || published.gesture != draft.gesture
+                    || published.order != draft.order
+                    || published.waits != draft.waits
+                    || published.entries != draft.entries
+                    || published.brightness_directions != draft.brightness_directions
+            })
     }
-    fn save(&mut self) {
+    pub(super) fn save(&mut self) {
+        if self.icon_library.dirty_for(&self.draft.id)
+            && self
+                .inspection
+                .as_ref()
+                .is_none_or(|view| view.button["id"].as_str() != Some(self.draft.id.as_str()))
+        {
+            return; // A revision invalidated the inspection; wait before capturing action edits.
+        }
         let actions = self.inspection.iter().flat_map(|i| &i.actions);
         let waits: Option<Vec<_>> = actions
             .zip(&self.draft.waits)
@@ -134,7 +143,15 @@ impl App {
             launchers: &launchers,
             brightness: &brightness,
         });
-        self.send(request);
+        if self.icon_library.dirty_for(&self.draft.id) {
+            if let Some(job) = self.icon_library.save_job(request)
+                && self.command(job)
+            {
+                self.icon_library.saving();
+            }
+        } else {
+            self.send(request);
+        }
     }
     fn key_editor(&mut self, ui: &mut egui::Ui, look: &Look, id: &str) {
         let actions = self
@@ -163,11 +180,12 @@ impl App {
                         ui.label(look.muted_text(tr(self.es, "Text on key")));
                         // The placeholder says what an empty field shows: the name on a key
                         // without image, nothing on one that has an image to speak for it.
-                        let placeholder = if self.draft.image.is_empty() {
-                            self.draft.name.clone()
-                        } else {
-                            tr(self.es, "No text").to_owned()
-                        };
+                        let placeholder =
+                            if self.draft.image.is_empty() && !self.icon_library.dirty_for(id) {
+                                self.draft.name.clone()
+                            } else {
+                                tr(self.es, "No text").to_owned()
+                            };
                         ui.horizontal(|ui| {
                             ui.add(
                                 look.field(&mut self.draft.text, &placeholder)
@@ -212,7 +230,10 @@ impl App {
                     self.try_selected();
                 }
                 // Shown only when there is something to save; last, so it moves nothing.
-                if self.unsaved() && ui.add(look.primary(tr(self.es, "Save"))).clicked() {
+                if !self.icon_library.open
+                    && self.unsaved()
+                    && ui.add(look.primary(tr(self.es, "Save"))).clicked()
+                {
                     self.save();
                 }
             });
@@ -250,6 +271,18 @@ impl App {
         else {
             return;
         };
+        if let Some(texture) = self.icon_library.preview(id) {
+            paint_key(
+                ui,
+                look,
+                preview,
+                &key_label(&self.draft.text, &self.draft.name, true),
+                &self.draft.text_position,
+                Some(texture),
+                None,
+            );
+            return;
+        }
         let published = view.appearance["image"].as_str();
         let icon = if self.draft.image.is_empty() && view.appearance["visual_type"].is_null() {
             native_icon(&view.appearance).or_else(|| {
@@ -358,7 +391,7 @@ impl App {
     /// Button with everything about the key's picture: import a PNG/JPEG, take the icon of
     /// the application the key opens, or remove it. Imports and removals stick with Save.
     fn image_menu(&mut self, ui: &mut egui::Ui, look: &Look, open_now: bool) {
-        let has_image = !self.draft.image.is_empty();
+        let has_image = !self.draft.image.is_empty() || self.icon_library.dirty_for(&self.draft.id);
         let label = if has_image {
             tr(self.es, "Change")
         } else {
@@ -377,6 +410,17 @@ impl App {
         egui::Popup::menu(&button)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
+                if self
+                    .inspection
+                    .as_ref()
+                    .is_some_and(|i| i.appearance["visual_type"].is_null())
+                {
+                    if ui.button(tr(self.es, "Icon library")).clicked() {
+                        self.icon_library.begin(&self.draft.id);
+                        ui.close();
+                    }
+                    ui.separator();
+                }
                 ui.label(look.muted_text(tr(self.es, "From a PNG or JPEG file")));
                 ui.horizontal(|ui| {
                     ui.add(
@@ -397,6 +441,7 @@ impl App {
                             kind: TransferKind::Image,
                         })
                     {
+                        self.icon_library.reset();
                         self.transfer_active = true;
                         ui.close();
                     }
@@ -417,10 +462,12 @@ impl App {
                         application: None,
                     })
                 {
+                    self.icon_library.reset();
                     self.icon_asked = true;
                     ui.close();
                 }
                 if has_image && ui.button(tr(self.es, "Remove image")).clicked() {
+                    self.icon_library.reset();
                     self.draft.image.clear();
                     ui.close();
                 }

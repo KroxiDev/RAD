@@ -37,14 +37,17 @@ export XDG_RUNTIME_DIR="$PWD/target/test-session/runtime"
 export XDG_STATE_HOME="$PWD/target/test-session/state"
 cargo fmt --all -- --check
 cargo build --offline --locked --release --workspace --all-features --bins --examples
+(
+  export CARGO_TARGET_DIR="$PWD/target/plugins"
+  cargo fmt --manifest-path plugins/Cargo.toml --all -- --check
+  cargo build --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --bins --examples
+)
 export RAD_TEST_LAUNCHER_HELPER="$CARGO_TARGET_DIR/release/rad-launcher-helper"
 export RAD_TEST_LAUNCHER_FIXTURE="$CARGO_TARGET_DIR/release/rad-launcher-fixture"
 cargo test --offline --locked --release --workspace --all-features
 cargo clippy --offline --locked --release --workspace --all-features --all-targets -- -D warnings
 (
   export CARGO_TARGET_DIR="$PWD/target/plugins"
-  cargo fmt --manifest-path plugins/Cargo.toml --all -- --check
-  cargo build --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --bins --examples
   cargo test --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features
   cargo clippy --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --all-targets -- -D warnings
 )
@@ -54,7 +57,10 @@ bash scripts/conformance/metrics/run.sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s packaging/tests -v
 ```
 
-Los ejemplos/helpers deben compilarse antes de tests focalizados. Una comprobación
+Los binarios y ejemplos/helpers de **ambos workspaces** deben compilarse antes de
+los tests de la raíz o focalizados: el runtime también usa fixtures de plugins,
+como `held-converter-fixture`. No depender de artefactos de una ejecución anterior.
+Una comprobación
 focal crítica es `cargo test --offline --locked --release -p rad-core --test permissions`.
 Las conformidades usan fixtures de ambos workspaces y guardan salidas ignoradas
 en `target/conformance/`.
@@ -103,6 +109,7 @@ Casos que se conservan, o se añaden si falta cobertura.
 | Contrato | Casos |
 |---|---|
 | Cliente y UI | Desconexión tras el envío, worker muerto, sin replay, crédito único, vistas coherentes por revisión, avisos coalescidos, Unknown resuelto releyendo, cursor inválido o parcial, salida JSON de `rad-cli` |
+| Iconos integrados | PNG opaco y antialias idéntico al preview ([renderer](../crates/rad-editor/tests/icon_library.rs)); captura del destino y borrador completo, rechazo antes de subir, fallo de upload/finish y Unknown sin replay ([publicación](../crates/rad-editor/tests/icon_save.rs)); cancelar, cambio de tecla, render/respuesta tardíos y conservación del borrador ([estado local](../crates/rad-editor/src/app/icon_library.rs)); licencia Phosphor distribuida en el paquete |
 | Textos | Todas las claves existen en cada catálogo; ningún código en bruto en la UI; respaldo en inglés; cada texto de los plugins oficiales tiene traducción al español |
 | Publicación y Store | Fallos de escritura, sync o rollback; before/after; reinicio; hold de evidencia corrupta; medios cambiados en la segunda pasada |
 | Formatos | Golden real de cada versión; importadores de v1, v2, v3 y v4 en el Store y en la restauración; rechazo de versiones futuras; brillo histórico 0–9 normalizado a 10 sin aceptar valores mayores de 100 |

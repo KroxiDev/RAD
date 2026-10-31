@@ -16,6 +16,7 @@ mod actions;
 mod bar;
 mod credentials;
 mod deck;
+mod icon_library;
 mod inspector;
 mod launcher;
 mod look;
@@ -70,6 +71,8 @@ struct Draft {
     name: String,
     text: String,
     image: String,
+    /// Published reference when this draft was read; never a local prepared image.
+    published_image: String,
     /// `top`, `middle` or `bottom`, as the runtime resolved it or as just chosen.
     text_position: String,
     mode: String,
@@ -82,14 +85,17 @@ struct Draft {
     brightness_directions: Vec<rad_api::BrightnessDirection>,
     permissions: Value,
     action_permissions: Vec<Value>,
+    action_ids: Vec<String>,
 }
 impl Draft {
     fn load(v: &Inspection) -> Self {
         Self {
+            action_ids: v.actions.iter().map(|a| string(&a["id"])).collect(),
             id: string(&v.button["id"]),
             name: string(&v.button["fields"]["name"]),
             text: string(&v.appearance["text"]),
             image: string(&v.appearance["image"]),
+            published_image: string(&v.appearance["image"]),
             text_position: string(&v.appearance["text_position"]),
             mode: string(&v.button["fields"]["mode"]),
             gesture: v.button["fields"]["gesture"]
@@ -168,6 +174,7 @@ pub struct App {
     status: Value,
     inspection: Option<Inspection>,
     draft: Draft,
+    icon_library: icon_library::Library,
     selected_slot: Option<usize>,
     message: String,
     message_is_error: bool,
@@ -300,6 +307,7 @@ impl App {
             status: Value::Null,
             inspection: None,
             draft: Draft::default(),
+            icon_library: Default::default(),
             selected_slot: None,
             message: String::new(),
             message_is_error: false,
@@ -420,6 +428,7 @@ impl App {
     fn worker_lost(&mut self, ctx: &egui::Context, in_flight: bool, unsent: bool) {
         ctx.request_repaint();
         self.connected = false;
+        self.icon_library.reset();
         self.attempted = true;
         self.transfer_active = false;
         self.pending_action = None;
@@ -471,6 +480,7 @@ impl App {
             .map(str::to_owned)
     }
     fn select(&mut self, position: usize, id: Option<String>) {
+        self.icon_library.reset();
         self.app_picker.cancel();
         self.credentials.clear();
         self.plugins.dependency_credentials = None;
@@ -493,6 +503,7 @@ impl App {
                 } else {
                     self.app_picker.cancel();
                     self.plugins.clear_form();
+                    self.icon_library.reset();
                     self.control.select(None);
                     self.inspection = None;
                     self.draft = Draft::default();
@@ -876,6 +887,7 @@ impl App {
                         }
                         self.board = Some(board);
                         if changed_folder {
+                            self.icon_library.reset();
                             self.app_picker.cancel();
                             self.plugins.clear_form();
                             self.control.select(None);
@@ -904,8 +916,7 @@ impl App {
                         return;
                     }
                     if v.button["id"].as_str() == self.control.selected() {
-                        self.draft = Draft::load(&v);
-                        self.inspection = Some(v);
+                        self.adopt_inspection(v);
                     }
                 }
                 Ok(Reply::Response { operation, .. }) if operation == "launcher_catalog" => {} // Handled by finish_application_catalog.
@@ -1030,6 +1041,11 @@ impl App {
                         );
                     }
                 }
+                Ok(Reply::IconSaved {
+                    button,
+                    ticket,
+                    result,
+                }) => self.icon_saved(&button, ticket, result),
                 Ok(Reply::Theme) => {}
                 Ok(Reply::TransferProgress(n)) => {
                     self.transfer_active = true;
@@ -1191,6 +1207,15 @@ impl App {
     /// Results of the credential and option-list workers; a dead one is replaced, within
     /// the same bound as the main worker.
     fn pump_auxiliary(&mut self, ctx: &egui::Context) {
+        if !self.connected {
+            self.icon_library.reset();
+        }
+        if self.icon_library.open
+            && (self.key_form_open() || self.navigation.screen() != crate::screens::Screen::Keys)
+        {
+            self.icon_library.cancel();
+        }
+        self.icon_library.pump(ctx);
         match self.credentials.pump(&mut self.credential_worker) {
             Pulse::Answered => self.credential_respawn.answered(),
             Pulse::Lost => {
@@ -1249,7 +1274,13 @@ impl App {
             .default_size(260.)
             .frame(look.panel(look.surface, 12))
             .show(ui, |ui| {
-                ui.add_enabled_ui(editable, |ui| self.actions(ui, look));
+                ui.add_enabled_ui(editable, |ui| {
+                    if self.icon_library.open && !self.key_form_open() {
+                        self.icon_library_panel(ui, look, editable);
+                    } else {
+                        self.actions(ui, look);
+                    }
+                });
             });
         // The keys come first: the inspector takes what a comfortable grid leaves over,
         // and in a short tile never more than what still shows all four rows.
@@ -1268,7 +1299,9 @@ impl App {
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .show(ui, |ui| {
-                        ui.add_enabled_ui(editable, |ui| self.inspector(ui, look));
+                        ui.add_enabled_ui(editable && !self.icon_library.pending(), |ui| {
+                            self.inspector(ui, look)
+                        });
                     });
             });
         egui::CentralPanel::default()
@@ -1280,6 +1313,13 @@ impl App {
     }
     /// Esc goes back, as the Back button does, once no text field or menu holds it.
     fn escape(&mut self, ctx: &egui::Context) {
+        if self.icon_library.open
+            && !egui::Popup::is_any_open(ctx)
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.icon_library.cancel();
+            return;
+        }
         let keys = self.navigation.screen() == crate::screens::Screen::Keys;
         if (keys && !self.key_form_open())
             || ctx.egui_wants_keyboard_input()

@@ -99,6 +99,19 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   posición vacía, la tecla se crea recién al elegir, con el nombre de la aplicación y
   su ícono cuando está disponible; cancelar no deja una tecla vacía. Los cambios de aplicación de un
   lanzador existente se guardan con «Guardar», también desde «Avanzado».
+- **Biblioteca de iconos.** En Imagen → Biblioteca de iconos (apariencia manual),
+  200 iconos Phosphor regulares se buscan por nombres y etiquetas en español o
+  inglés y se recorren por grupos. El panel sustituye temporalmente la paleta
+  derecha: no abre otra ventana ni duplica la vista previa del inspector. Elegir
+  un icono habilita colores sólidos de icono y fondo, con muestras y selector
+  personalizado; abrir la biblioteca por sí solo no cambia la tecla. «Guardar»
+  es la única acción primaria y publica también el resto del borrador; «Cancelar»
+  o Esc descarta solo la elección del icono, sin borrar los otros campos editados.
+  Cambiar de tecla, entrar a Ajustes o a un formulario, o perder la conexión
+  invalida la elección local aún no enviada. Importar
+  PNG/JPEG propio sigue disponible. Los SVG son exclusivamente los incluidos:
+  no se aceptan SVG externos. Se guarda un PNG, incluido en las copias, no una
+  receta editable; al reabrir hay que elegir de nuevo para cambiar colores.
 - **Suspender.** Acción nativa con media luna en el grupo RAD. Activa
   inmediatamente el mismo reposo configurado por inactividad, incluso
   cuando el reposo automático está desactivado. Cualquier tecla despierta sin
