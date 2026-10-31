@@ -9,6 +9,7 @@ pub const LABELS: &str = "labels";
 pub const RESPONSE_TIMEOUT: &str = "response_timeout";
 pub const CONTROLS: &str = "controls";
 pub const SETTINGS: &str = "settings";
+pub const VISUAL_STATES: &str = "visual_states";
 pub const VISUAL_FRESHNESS: &str = "visual_freshness";
 pub const SUPPORTED_CAPABILITIES: &[&str] = &[
     CONTROLS,
@@ -19,6 +20,7 @@ pub const SUPPORTED_CAPABILITIES: &[&str] = &[
     RESPONSE_TIMEOUT,
     SETTINGS,
     VISUAL_FRESHNESS,
+    VISUAL_STATES,
 ];
 pub fn validate_capabilities(values: &[String]) -> Result<(), Error> {
     if values.len() > 32

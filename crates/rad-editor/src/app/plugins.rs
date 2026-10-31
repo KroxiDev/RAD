@@ -16,6 +16,7 @@ const LIST_WIDTH: f32 = 280.;
 const PENDING_FACE: std::time::Duration = std::time::Duration::from_secs(1);
 #[derive(Default)]
 pub(super) struct PluginUi {
+    pub state_icons: BTreeMap<String, (String, egui::TextureHandle)>,
     pub catalog: Vec<CatalogEntry>,
     pub status: Value,
     pub dependencies: crate::dependencies::Dependencies,
@@ -86,7 +87,7 @@ impl PluginUi {
         self.form_loading = false;
         if std::mem::take(&mut self.form_load_current) {
             if let Some(form) = loaded.form.as_mut() {
-                form.texts = self.texts(&loaded.type_key);
+                form.set_texts(&loaded.type_key, self.texts(&loaded.type_key));
             }
             self.form = Some((target, loaded));
         }
@@ -290,6 +291,7 @@ impl PluginUi {
     }
 }
 pub(super) struct Face {
+    pub visual_state: Option<String>,
     pub revision: String,
     pub state: String,
     pub text: Option<String>,
@@ -1027,7 +1029,7 @@ impl App {
             .map(|entry| entry.shown(self.es).to_owned())
             .unwrap_or_else(|| type_key.to_owned())
     }
-    fn current_visual(&self) -> Option<String> {
+    pub(super) fn current_visual(&self) -> Option<String> {
         self.inspection
             .as_ref()
             .and_then(|i| i.appearance["visual_type"].as_str())
@@ -1060,6 +1062,7 @@ impl App {
             .show_ui(ui, |ui| {
                 if ui.selectable_label(current.is_none(), manual).clicked() && current.is_some() {
                     self.send(crate::Request::Edit {
+                        expected_revision: None,
                         changes: vec![rad_api::Change::Set {
                             id: id.into(),
                             edit: rad_api::FieldEdit::Visual(rad_api::VisualSource {
@@ -1074,7 +1077,7 @@ impl App {
                     .catalog
                     .clone()
                     .into_iter()
-                    .filter(|entry| entry.visual && entry.ready)
+                    .filter(|entry| entry.visual && entry.ready && !entry.linked_visual())
                 {
                     let chosen = current.as_deref() == Some(entry.type_key.as_str());
                     if ui.selectable_label(chosen, entry.shown(self.es)).clicked() {
@@ -1082,7 +1085,14 @@ impl App {
                     }
                 }
             });
-        if current.is_some() && ui.button(tr(self.es, "Configure…")).clicked() {
+        if current.as_ref().is_some_and(|key| {
+            !self
+                .plugins
+                .catalog
+                .iter()
+                .any(|e| &e.type_key == key && e.linked_visual())
+        }) && ui.button(tr(self.es, "Configure…")).clicked()
+        {
             self.open_plugin_form("", Some(id.into()), FormTarget::Visual(id.into()));
         }
     }
@@ -1103,6 +1113,12 @@ impl App {
         let mut request = None;
         if !self.plugins.form_pending && self.connected {
             if let Some(form) = loaded.form.as_mut() {
+                if matches!(target, FormTarget::Action(_))
+                    && self.current_visual().is_none()
+                    && form.definition.visual.is_some()
+                {
+                    form.dirty = true;
+                }
                 if form.compatible() {
                     form_ui(ui, look, form, self.es);
                 } else {
@@ -1112,7 +1128,37 @@ impl App {
                 match form.publish() {
                     Ok(Some(value)) => {
                         if ui.add(look.primary(tr(self.es, "Apply"))).clicked() {
-                            request = Some(target.request(&loaded.type_key, value));
+                            let linked = form.texts.binds_visual(&loaded.type_key);
+                            let destination = match &target {
+                                FormTarget::AddAction(button) => Some((
+                                    button.clone(),
+                                    crate::linked_actions::Mutation::Add {
+                                        parameters: value.clone(),
+                                    },
+                                )),
+                                FormTarget::Action(id) => self.selected().map(|button| {
+                                    (
+                                        button,
+                                        crate::linked_actions::Mutation::Edit {
+                                            id: id.clone(),
+                                            parameters: value.clone(),
+                                        },
+                                    )
+                                }),
+                                _ => None,
+                            };
+                            request = Some(
+                                if let Some((button, mutation)) = destination.filter(|_| linked) {
+                                    Job::LinkedAction(crate::linked_actions::LinkedAction {
+                                        button,
+                                        type_key: loaded.type_key.clone(),
+                                        texts: form.texts.clone(),
+                                        mutation,
+                                    })
+                                } else {
+                                    Job::PluginApply(target.request(&loaded.type_key, value))
+                                },
+                            );
                         }
                     }
                     Ok(None) => {
@@ -1166,7 +1212,7 @@ impl App {
             ui.label(look.muted_text(&loaded.type_key).small());
         });
         if let Some(request) = request
-            && self.command(Job::PluginApply(request))
+            && self.command(request)
         {
             self.plugins.form_pending = true;
         }
@@ -1261,7 +1307,7 @@ impl App {
                 )
             });
             let texture = texture.or_else(|| {
-                if v.has_image && v.availability != "unavailable" {
+                if v.has_image {
                     self.plugins
                         .visuals
                         .get(&v.id)
@@ -1274,6 +1320,7 @@ impl App {
             self.plugins.visuals.insert(
                 v.id,
                 Face {
+                    visual_state: v.state,
                     revision: v.revision,
                     state: v.availability,
                     text: v.text,
@@ -1322,14 +1369,28 @@ impl App {
                 (u16::from(c[2]) * u16::from(c[3]) / 255) as u8,
             );
         }
+        let custom = face
+            .and_then(|f| f.visual_state.as_ref())
+            .and_then(|state| {
+                self.board
+                    .as_ref()?
+                    .buttons
+                    .iter()
+                    .find(|b| b.entity["id"] == id)?
+                    .appearance["states"][state]["image"]
+                    .as_str()
+            });
+        let custom_picture = custom.and_then(|key| self.pictures.get(key, ui.input(|i| i.time)));
         super::deck::paint_key(
             ui,
             &look,
             rect,
             text,
             face.map(|f| f.position.as_str()).unwrap_or("middle"),
-            face.and_then(|f| f.texture.as_ref())
-                .map(|texture| (texture, 1.)),
+            custom_picture.or_else(|| {
+                face.and_then(|f| f.texture.as_ref())
+                    .map(|texture| (texture, 1.))
+            }),
             None,
         );
         if state != "current" {

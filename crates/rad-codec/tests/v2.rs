@@ -16,7 +16,7 @@ fn original_v1_fixture_imports_and_reencodes_without_legacy_fields() {
     let c = Configuration::from_data(data, &registry).unwrap();
     let bytes = encode(&c).unwrap();
     let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(doc["version"], 5);
+    assert_eq!(doc["version"], 6);
     assert!(doc["settings"].get("gui_language").is_none());
     assert_eq!(doc["buttons"][0]["name"], "Fixture launch");
 }
@@ -63,7 +63,7 @@ fn v2_golden_preserves_plugin_hints_settings_and_exact_canonical_bytes() {
         encode(&Configuration::from_data(data, &registry).unwrap()).unwrap(),
         std::str::from_utf8(bytes)
             .unwrap()
-            .replacen("\"version\":2", "\"version\":5", 1)
+            .replacen("\"version\":2", "\"version\":6", 1)
             .into_bytes()
     );
 }

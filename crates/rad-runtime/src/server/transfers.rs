@@ -225,12 +225,12 @@ impl Server {
         key: RequestKey,
         c: IncomingContext,
         command: Command,
-        media: Option<String>,
+        media: Option<Vec<String>>,
     ) -> Result<(), RuntimeError> {
-        if let Some(media_ref) = media {
+        if let Some(media_refs) = media {
             return self.start_transfer(
                 Some((key, c)),
-                Operation::RetainImage { media_ref },
+                Operation::RetainImages { media_refs },
                 FlightKind::Retain(command),
             );
         }
@@ -289,22 +289,32 @@ impl Server {
         &self,
         c: IncomingContext,
         request: &rad_wire::Request,
-    ) -> Option<String> {
+    ) -> Option<Vec<String>> {
         if request.operation() != "edit" {
             return None;
         }
-        request
+        let refs: std::collections::BTreeSet<_> = request
             .args()
             .get("changes")?
             .as_array()?
             .iter()
             .filter(|v| v["field"] == "appearance")
-            .filter_map(|v| v["value"]["image"].as_str())
-            .find(|key| {
+            .flat_map(|v| {
+                v["value"]["image"].as_str().into_iter().chain(
+                    v["value"]["states"]
+                        .as_object()
+                        .into_iter()
+                        .flat_map(|states| states.values())
+                        .filter_map(|face| face["image"].as_str()),
+                )
+            })
+            .filter(|key| {
                 self.prepared
                     .contains_key(&(c.connection, (*key).to_owned()))
             })
             .map(str::to_owned)
+            .collect();
+        (!refs.is_empty()).then(|| refs.into_iter().collect())
     }
     pub(super) fn poll_transfers(&mut self) -> Result<(), RuntimeError> {
         for token in self.persistence.take_released() {
@@ -379,7 +389,7 @@ impl Server {
                     && !self
                         .actor
                         .appearance(c.origin, id)
-                        .is_some_and(|v| v.appearance.image.as_ref() == Some(media_ref))
+                        .is_some_and(|v| v.appearance.images().any(|image| image == media_ref))
                 {
                     return self.respond(key, self.error(c, "not_found", false));
                 }
@@ -542,12 +552,13 @@ impl Server {
             .into_iter()
             .flat_map(|f| f.slots)
             .flatten()
-            .filter_map(|v| match v {
+            .flat_map(|v| match v {
                 rad_authority::Visible::Visible(b) => self
                     .actor
                     .appearance(Origin::Editor, b.short())
-                    .and_then(|v| v.appearance.image),
-                _ => None,
+                    .map(|v| v.appearance.images().cloned().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+                _ => vec![],
             })
             .collect()
     }

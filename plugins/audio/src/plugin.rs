@@ -17,7 +17,7 @@ pub fn config() -> Config {
         "org.rad.audio",
         Version {
             major: 0,
-            minor: 3,
+            minor: 4,
             patch: 0,
         },
         1..=1,
@@ -26,6 +26,7 @@ pub fn config() -> Config {
         "dynamic_options".into(),
         "labels".into(),
         "visual_freshness".into(),
+        "visual_states".into(),
     ])
 }
 

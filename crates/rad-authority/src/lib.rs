@@ -149,6 +149,11 @@ pub type EditPreparation =
     Box<dyn FnOnce(&Configuration) -> Result<Vec<Edit>, ConfigurationError> + Send>;
 pub enum Command {
     PrepareEdits(Vec<EditPreparation>),
+    /// Compare the origin's view token at the queued turn, before preparing any candidate.
+    CheckedEdits {
+        expected_revision: u64,
+        steps: Vec<EditPreparation>,
+    },
     RunId {
         id: rad_core::identity::ShortId,
     },
@@ -173,7 +178,7 @@ impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Internal preparation closures and configuration payloads are not diagnostics.
         f.write_str(match self {
-            Self::PrepareEdits(_) => "Command::PrepareEdits",
+            Self::PrepareEdits(_) | Self::CheckedEdits { .. } => "Command::PrepareEdits",
             Self::Edits(_) => "Command::Edits",
             Self::RunId { .. } => "Command::RunId",
             Self::Run { .. } => "Command::Run",
@@ -506,6 +511,14 @@ impl Authority {
                 break;
             };
             let origin = self.tickets[&request].origin;
+            if let Command::CheckedEdits {
+                expected_revision, ..
+            } = &command
+                && self.view_revision(origin).map(|r| r.value()) != Some(*expected_revision)
+            {
+                effects.push(self.reject(request, Rejection::ViewChanged));
+                continue;
+            }
             match command {
                 Command::Run { .. } | Command::RunId { .. } => {
                     effects.push(self.reject(request, Rejection::Invalid))
@@ -547,7 +560,7 @@ impl Authority {
                         }
                     }
                 }
-                Command::PrepareEdits(steps) => {
+                Command::PrepareEdits(steps) | Command::CheckedEdits { steps, .. } => {
                     let candidate =
                         steps
                             .into_iter()
@@ -831,6 +844,7 @@ pub enum Rejection {
     Expired,
     Capacity,
     PublicationPending,
+    ViewChanged,
 }
 impl Authority {
     pub fn disconnect(&mut self, connection: u64) {

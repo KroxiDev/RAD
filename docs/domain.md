@@ -173,7 +173,11 @@ Son tres distinciones que evitan inferir efectos a partir de lo mostrado:
   ejecución se admite, y un proceso de plugin vivo no demuestra que su fuente siga
   observada. La vigencia vence si no se renueva desde el camino que observa la
   fuente.
-  Contrato: [ADR 0008](adr/0008-frescura-declarada.md).
+  Un visual binario declara dos estados observados; la apariencia guarda hasta
+  dos caras por identificador y una posición de texto compartida. El vínculo
+  acción→visual simplifica la edición sin convertir pulsaciones en estado.
+  Contratos: [ADR 0008](adr/0008-frescura-declarada.md) y
+  [ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md).
 - **Revisión visible no es revisión durable.** Navegación y ejecución pueden
   cambiar una vista sin guardar configuración. La revisión de un aviso invalida
   una consulta: no es un historial reproducible. Ante un resultado `Unknown`, el

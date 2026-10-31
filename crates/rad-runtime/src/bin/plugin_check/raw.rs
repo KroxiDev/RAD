@@ -12,6 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 struct Peer {
+    definitions: Vec<Definition>,
+    subscriptions: std::collections::BTreeMap<u64, String>,
     child: Child,
     input: Option<ChildStdin>,
     output: ChildStdout,
@@ -43,6 +45,8 @@ impl Peer {
         let output = child.stdout.take().ok_or("raw_stdout")?;
         let stderr = child.stderr.take().ok_or("raw_stderr")?;
         let mut p = Self {
+            definitions: m.visuals.clone(),
+            subscriptions: Default::default(),
             child,
             input: Some(input),
             output,
@@ -144,6 +148,9 @@ impl Peer {
             request: self.next,
         };
         self.next += 1;
+        if let Message::Subscribe { source, .. } = &message {
+            self.subscriptions.insert(c.request, source.clone());
+        }
         Ok((
             c,
             encode(&Envelope {
@@ -194,7 +201,17 @@ impl Peer {
                 self.rx.drain(..n);
                 if !e.message.permitted(&self.capabilities) {
                     return Err("raw_unnegotiated_reply");
-                };
+                }
+                if let Message::Visual { state, .. } = &e.message
+                    && let Some(source) = self.subscriptions.get(&e.correlation.request)
+                    && !self
+                        .definitions
+                        .iter()
+                        .find(|d| &d.id == source)
+                        .is_some_and(|d| d.accepts_state(state))
+                {
+                    return Err("raw_undeclared_state");
+                }
                 if serde_json::to_string(&e)
                     .map_err(|_| "raw_encode_reply")?
                     .contains(SECRET)

@@ -104,6 +104,7 @@ pub(super) fn take<T: Clone>(table: &mut Table<T>) -> Option<(u64, T)> {
     }
 }
 pub(super) struct Visual {
+    pub source: String,
     pub observed_current: bool,
     pub received_state: bool,
     pub renewals: u64,
@@ -602,6 +603,16 @@ impl Worker {
                 ) || !carries_jpeg(&state)) =>
             {
                 if let Some(v) = self.visuals.get_mut(&envelope.correlation.request) {
+                    if !self
+                        .manifest
+                        .visuals
+                        .iter()
+                        .find(|d| d.id == v.source)
+                        .is_some_and(|d| d.accepts_state(&state))
+                    {
+                        self.fail(Diagnostic::Protocol);
+                        return;
+                    }
                     v.received_state = true;
                     v.observed_current = matches!(state, VisualState::Current { .. });
                     v.state = state;
@@ -971,12 +982,67 @@ mod options_protocol_tests {
             valid_for_ms: 1000,
             state: VisualState::Current {
                 content: VisualContent {
+                    state: None,
                     text: None,
                     png_hex: None,
                     jpeg_hex: Some("ffd8ffd9".into()),
                     color: None,
                 },
             },
+        }
+    }
+
+    #[test]
+    fn visual_states_require_negotiation_and_source_membership() {
+        for (negotiated, observed, accepted) in [
+            (false, "on", false),
+            (true, "on", true),
+            (true, "undeclared", false),
+        ] {
+            let mut worker = waiting(true);
+            if negotiated {
+                worker.capabilities.push(VISUAL_STATES.into());
+            }
+            worker.manifest.visuals[0].states = ["on", "off"]
+                .into_iter()
+                .map(|id| VisualStateDefinition {
+                    id: id.into(),
+                    label: id.into(),
+                    icon: None,
+                })
+                .collect();
+            worker.visuals.insert(
+                7,
+                Visual {
+                    source: "status".into(),
+                    observed_current: false,
+                    received_state: false,
+                    renewals: 0,
+                    credential_revision: None,
+                    state: VisualState::Unavailable,
+                    expires: 1000,
+                    ttl: 1000,
+                },
+            );
+            receive(
+                &mut worker,
+                7,
+                Message::Visual {
+                    valid_for_ms: 1000,
+                    state: VisualState::Current {
+                        content: VisualContent {
+                            state: Some(observed.into()),
+                            ..Default::default()
+                        },
+                    },
+                },
+                0,
+            );
+            assert_eq!(
+                worker.state == State::Ready,
+                accepted,
+                "{negotiated}/{observed}"
+            );
         }
     }
 
@@ -993,6 +1059,7 @@ mod options_protocol_tests {
         new.visuals.insert(
             7,
             Visual {
+                source: "status".into(),
                 observed_current: false,
                 received_state: false,
                 renewals: 0,

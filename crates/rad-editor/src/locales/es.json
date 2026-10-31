@@ -566,5 +566,6 @@
   "Could not draw the icon": "No se pudo dibujar el icono",
   "Try again": "Intentar de nuevo",
   "No matching icons": "No hay iconos que coincidan",
-  "Custom color": "Color personalizado"
+  "Custom color": "Color personalizado",
+  "Key changed; draft retained. Apply again to reread.": "La tecla cambió; el borrador se conserva. Aplica otra vez para releer."
 }

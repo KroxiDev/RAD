@@ -566,5 +566,6 @@
   "Could not draw the icon": "Could not draw the icon",
   "Try again": "Try again",
   "No matching icons": "No matching icons",
-  "Custom color": "Custom color"
+  "Custom color": "Custom color",
+  "Key changed; draft retained. Apply again to reread.": "Key changed; draft retained. Apply again to reread."
 }

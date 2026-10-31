@@ -59,7 +59,14 @@ pub(crate) fn project(
             None
         };
         if external {
-            image = visuals.and_then(|v| v.image(binding.short()));
+            let custom = plugin
+                .as_ref()
+                .and_then(|p| p.view.state.as_ref())
+                .and_then(|state| view.appearance.states.get(state))
+                .and_then(|face| face.image.as_deref());
+            image = custom
+                .and_then(|key| pictures.get(key))
+                .or_else(|| visuals.and_then(|v| v.image(binding.short())));
         }
         let unavailable = plugin.as_ref().is_some_and(|v| {
             v.view.availability == crate::plugin_visuals::Availability::Unavailable

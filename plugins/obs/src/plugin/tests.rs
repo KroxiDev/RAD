@@ -137,7 +137,7 @@ fn scripted(
     send(
         &mut host,
         1,
-        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":3,"patch":0}}),
+        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":4,"patch":0}}),
     );
     recv(&mut host);
     send(
@@ -265,7 +265,7 @@ fn disconnect_after_effect_never_replays_on_next_action() {
     send(
         &mut host,
         1,
-        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":3,"patch":0}}),
+        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":4,"patch":0}}),
     );
     recv(&mut host);
     send(
@@ -338,7 +338,7 @@ fn record_effect_is_sent_once_and_confirmed_through_sdk() {
     send(
         &mut host,
         1,
-        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":3,"patch":0}}),
+        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":4,"patch":0}}),
     );
     recv(&mut host);
     send(
@@ -406,7 +406,7 @@ fn challenged_and_unchallenged_actions_release_socket_before_ack() {
         send(
             &mut host,
             1,
-            json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":3,"patch":0}}),
+            json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":4,"patch":0}}),
         );
         assert_eq!(recv(&mut host)["message"]["kind"], "ready");
         send(
@@ -483,7 +483,7 @@ fn event_during_snapshot_drains_old_reply_before_resync_and_never_publishes_it()
     send(
         &mut host,
         1,
-        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":3,"patch":0}}),
+        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":4,"patch":0}}),
     );
     recv(&mut host);
     send(
@@ -562,7 +562,7 @@ fn stalled_or_flooded_old_revision_does_not_block_new_revision() {
         send(
             &mut host,
             1,
-            json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":3,"patch":0}}),
+            json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":4,"patch":0}}),
         );
         recv(&mut host);
         send(
@@ -673,7 +673,7 @@ fn an_action_waits_fifteen_seconds_for_obs_to_accept_then_says_it_is_unavailable
     send(
         &mut host,
         1,
-        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":3,"patch":0}}),
+        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":4,"patch":0}}),
     );
     recv(&mut host);
     send(
@@ -756,7 +756,7 @@ fn a_request_obs_does_not_announce_fails_without_being_sent() {
     send(
         &mut host,
         1,
-        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":3,"patch":0}}),
+        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":4,"patch":0}}),
     );
     recv(&mut host);
     send(
@@ -842,7 +842,7 @@ fn revision_churn_child() {
     send(
         &mut host,
         1,
-        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":3,"patch":0}}),
+        json!({"kind":"hello","capabilities":["credentials","dynamic_options","response_timeout","visual_freshness"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":4,"patch":0}}),
     );
     recv(&mut host);
     std::thread::sleep(Duration::from_millis(20));
@@ -1075,7 +1075,7 @@ fn settings_port_separates_live_sessions_with_the_same_credentials() {
     send(
         &mut host,
         1,
-        json!({"kind":"hello","capabilities":["credentials","settings"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":3,"patch":0}}),
+        json!({"kind":"hello","capabilities":["credentials","settings"],"host_api":1,"target":"x86_64-unknown-linux-gnu","plugin_id":"org.rad.obs","plugin_version":{"major":0,"minor":4,"patch":0}}),
     );
     recv(&mut host);
     send(
@@ -1171,4 +1171,41 @@ fn settings_port_is_bounded_loopback_and_test_mode_never_reaches_personal_obs() 
         Err(FailureCode::InvalidParameters)
     );
     assert_eq!(test.endpoint_for(None).unwrap().port(), 12345);
+}
+
+#[test]
+fn binary_visuals_report_observed_state_not_button_presses() {
+    let p = Parameters {
+        schema_version: 1,
+        values: Default::default(),
+    };
+    for (source, data, expected) in [
+        (
+            "record",
+            json!({"outputActive":true,"outputPaused":true}),
+            "recording",
+        ),
+        ("record", json!({"outputActive":false}), "stopped"),
+        (
+            "pause",
+            json!({"outputActive":true,"outputPaused":true}),
+            "paused",
+        ),
+        (
+            "pause",
+            json!({"outputActive":false,"outputPaused":false}),
+            "running",
+        ),
+        ("stream", json!({"outputActive":true}), "live"),
+        ("mute", json!({"inputMuted":false}), "unmuted"),
+        ("item", json!({"sceneItemEnabled":false}), "hidden"),
+        ("filter", json!({"filterEnabled":true}), "on"),
+        ("virtualcam", json!({"outputActive":false}), "off"),
+        ("replay", json!({"outputActive":true}), "on"),
+    ] {
+        let VisualState::Current { content } = visual_state(source, &p, &data) else {
+            panic!("current {source}");
+        };
+        assert_eq!(content.state.as_deref(), Some(expected), "{source}");
+    }
 }

@@ -58,6 +58,8 @@ pub enum TextPosition {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Appearance {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub states: std::collections::BTreeMap<String, StateFace>,
     pub text: String,
     #[serde(deserialize_with = "required_nullable")]
     pub image: Option<String>,
@@ -101,6 +103,14 @@ pub enum FieldEdit {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Change {
+    AddAction {
+        button_id: String,
+        type_key: String,
+        parameters: ActionParameters,
+    },
+    RemoveAction {
+        id: String,
+    },
     Set {
         id: String,
         #[serde(flatten)]
@@ -241,7 +251,7 @@ requests! {
     CreateButton => "create_button", true { folder_id:String, position:usize, name:String },
     CreateFolder => "create_folder", true { parent_id:String, position:usize, name:String },
     AddAction => "add_action", true { button_id:String, #[serde(rename="type")] type_key:String, parameters:ActionParameters },
-    Edit => "edit", true { changes:Vec<Change> },
+    Edit => "edit", true { changes:Vec<Change>, #[serde(default,skip_serializing_if="Option::is_none")] expected_revision:Option<String> },
     Duplicate => "duplicate", true { id:String, folder_id:String, position:usize },
     Delete => "delete", true { id:String, confirm_contents:bool },
     MoveFolder => "move_folder", true { id:String, parent_id:String, position:usize },
@@ -255,7 +265,7 @@ requests! {
     TransferFinish => "transfer_finish", true { transfer_id:String },
     TransferDrop => "transfer_drop", true { transfer_id:String },
     RestoreCommit => "restore_commit", true { transfer_id:String, confirm_replace:bool },
-    MediaRead => "media_read", false { id:String, offset:String },
+    MediaRead => "media_read", false { id:String, offset:String, #[serde(default,skip_serializing_if="Option::is_none")] media_ref:Option<String> },
     LauncherCatalog => "launcher_catalog", false { query:String, #[serde(deserialize_with="required_nullable")] cursor:Option<String> }
 }
 impl Request {
@@ -316,4 +326,11 @@ impl TryFrom<String> for BrightnessDirection {
             _ => Err("invalid brightness direction"),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StateFace {
+    pub text: String,
+    pub image: Option<String>,
 }

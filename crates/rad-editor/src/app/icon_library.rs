@@ -137,6 +137,7 @@ impl Library {
             return None;
         }
         Some(crate::native::Job::SaveIcon {
+            state: None,
             button: self.owner.clone(),
             ticket: self.generation,
             png: self.prepared.as_ref()?.png.clone(),
@@ -498,11 +499,16 @@ fn color_row(ui: &mut egui::Ui, look: &Look, language: Language, label: &str, co
 }
 impl App {
     pub(super) fn adopt_inspection(&mut self, view: crate::session::Inspection) {
-        let fresh = super::Draft::load(&view);
+        let mut fresh = super::Draft::load(&view);
+        if fresh.id == self.draft.id
+            && let Some(state) = &self.draft.state
+        {
+            fresh.select_state(state.clone());
+        }
         if !self.icon_library.owns_draft(&fresh.id)
             || self.draft.action_ids != fresh.action_ids
             || self.draft.published_image != fresh.published_image
-            || !view.appearance["visual_type"].is_null()
+            || (fresh.state.is_none() && !view.appearance["visual_type"].is_null())
         {
             self.icon_library.reset();
             self.draft = fresh;

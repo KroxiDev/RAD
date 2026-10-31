@@ -1,7 +1,7 @@
 # Plugin de OBS para RAD
 
 Referencia de la integración oficial para desarrolladores y agentes. Plugin
-independiente `org.rad.obs` (`rad-plugin-obs`), versión 0.3.0, contrato de plugins v1
+independiente `org.rad.obs` (`rad-plugin-obs`), versión 0.4.0, contrato de plugins v1
 con capacidades negociadas de credenciales, ajustes, opciones, textos traducidos y
 plazo de respuesta ([ADR 0020](../../docs/adr/0020-textos-de-plugins-y-plazo-fijo.md)).
 Consultar el [contrato y la guía para autores](../README.md).
@@ -91,3 +91,14 @@ delimita las consultas OBS medidas mediante relay de solo lectura; no certifica
 acciones, autenticación directa ni todas las versiones, compilaciones o
 distribuciones de OBS.
 `--licenses` imprime las licencias incorporadas.
+
+## Caras por estado
+
+Las acciones vinculan su visual automáticamente al guardarse en RAD. El plugin
+publica el identificador del estado observado mediante la capacidad negociada
+`visual_states`; no alterna un contador local de pulsaciones. El manifest incluye
+dos etiquetas traducibles e iconos PNG por visual, con fuentes originales SVG en
+`icons/`. Las imágenes propias y textos por estado se editan desde las pestañas de
+la tecla. Por defecto se muestra solo el icono; sin fuente disponible se usa el
+segundo estado con marca roja. Los iconos caben en el límite existente de 64 KiB
+del manifest. El texto anterior sigue como respaldo para un host sin la capacidad.

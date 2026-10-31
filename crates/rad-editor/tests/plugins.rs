@@ -66,3 +66,12 @@ fn catalog_entries_read_their_plugin_texts_in_the_user_language() {
     // A plugin without readable translations keeps its own texts.
     assert_eq!(catalog[1].shown(Language::Es), "Recording");
 }
+
+#[test]
+fn new_plugin_action_uses_edit_so_visual_can_join_the_same_transaction() {
+    let request = rad_editor::plugins::FormTarget::AddAction("b1".into()).request(
+        "org.rad.audio:microphone",
+        serde_json::json!({"schema_version":1,"values":{"device":"default","operation":"toggle"}}),
+    );
+    assert!(matches!(request, rad_api::Request::Edit { .. }));
+}

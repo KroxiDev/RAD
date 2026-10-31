@@ -26,6 +26,7 @@ pub mod catalog;
 pub mod commands;
 pub mod desktop;
 pub mod icons;
+pub mod linked_actions;
 pub mod native;
 pub mod options;
 pub mod preview;

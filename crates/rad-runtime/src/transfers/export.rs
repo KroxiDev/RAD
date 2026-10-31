@@ -29,7 +29,7 @@ pub(super) fn write(
         .data()
         .buttons
         .iter()
-        .filter_map(|b| b.appearance.image.as_ref())
+        .flat_map(|b| b.appearance.images())
         .collect();
     let mut entries = Vec::with_capacity(refs.len());
     for key in refs {

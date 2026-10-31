@@ -29,6 +29,8 @@ fn manifest() -> Manifest {
         targets: vec!["x86_64-unknown-linux-gnu".into()],
         actions: vec![Definition {
             gestures: vec![Gesture::Press],
+            states: vec![],
+            visual: None,
             response_timeout: None,
             id: "run".into(),
             label: "run".into(),

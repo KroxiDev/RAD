@@ -9,6 +9,8 @@ mod v3;
 mod v3_document;
 mod v4;
 mod v4_document;
+mod v5;
+mod v5_document;
 use document as d;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecError {
@@ -17,13 +19,13 @@ pub enum CodecError {
     InvalidValue,
     TooLarge,
 }
-/// Encode the canonical v5 deck document.
+/// Encode the canonical v6 deck document.
 /// No historical ledger, media bytes or runtime state.
 pub fn encode(config: &Configuration) -> Result<Vec<u8>, CodecError> {
     let data = config.data();
     let doc = d::Document {
         settings: write_settings(data.settings),
-        version: 5,
+        version: 6,
         grid: [data.grid.columns(), data.grid.rows()],
         plugin_dependencies: data
             .plugin_dependencies
@@ -77,7 +79,8 @@ pub fn decode_data(bytes: &[u8]) -> Result<ConfigurationData, CodecError> {
         2 => v2::import(bytes)?,
         3 => v3::import(bytes)?,
         4 => v4::import(bytes)?,
-        5 => serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?,
+        5 => v5::import(bytes)?,
+        6 => serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?,
         _ => return Err(CodecError::UnsupportedVersion),
     };
     if version < 5 && doc.settings.brightness_percent < 10 {
@@ -237,6 +240,20 @@ fn write_button(v: &ButtonData) -> d::Button {
         binding: write_binding(v.binding),
         name: v.name.clone(),
         appearance: d::Appearance {
+            states: v
+                .appearance
+                .states
+                .iter()
+                .map(|(id, face)| {
+                    (
+                        id.clone(),
+                        d::StateFace {
+                            text: face.text.clone(),
+                            image: face.image.clone(),
+                        },
+                    )
+                })
+                .collect(),
             text: v.appearance.text.clone(),
             image: v.appearance.image.clone(),
             text_position: v.appearance.text_position.map(|position| match position {
@@ -302,6 +319,20 @@ fn read_button(v: d::Button) -> Result<ButtonData, CodecError> {
         binding: read_binding(v.binding)?,
         name: v.name,
         appearance: Appearance {
+            states: v
+                .appearance
+                .states
+                .into_iter()
+                .map(|(id, face)| {
+                    (
+                        id,
+                        StateFace {
+                            text: face.text,
+                            image: face.image,
+                        },
+                    )
+                })
+                .collect(),
             text: v.appearance.text,
             image: v.appearance.image,
             text_position: v.appearance.text_position.map(|position| match position {
@@ -429,6 +460,18 @@ fn check_strings(doc: &d::Document) -> Result<(), CodecError> {
     for button in &doc.buttons {
         text(&button.name)?;
         text(&button.appearance.text)?;
+        if button.appearance.states.len() > 2 {
+            return Err(CodecError::InvalidValue);
+        }
+        for (id, face) in &button.appearance.states {
+            if !StateFace::valid_identifier(id) {
+                return Err(CodecError::InvalidValue);
+            }
+            text(&face.text)?;
+            if let Some(image) = &face.image {
+                text(image)?;
+            }
+        }
         if let Some(image) = &button.appearance.image {
             text(image)?;
         }

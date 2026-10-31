@@ -253,6 +253,8 @@ mod conversation_tests {
         };
         Definition {
             gestures: rad_plugin_contract::default_gestures(),
+            states: vec![],
+            visual: None,
             response_timeout: None,
             id: "pick".into(),
             label: "pick".into(),

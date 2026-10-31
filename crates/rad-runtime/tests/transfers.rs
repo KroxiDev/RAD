@@ -187,6 +187,7 @@ fn with_image(store: &rad_store::Store, key: String) -> rad_core::configuration:
             Edit::SetAppearance {
                 button: c.configuration().data().buttons[0].binding.identity(),
                 appearance: Appearance {
+                    states: Default::default(),
                     text: "Image".into(),
                     image: Some(key),
                     text_position: None,
@@ -307,6 +308,172 @@ fn admitted_image_lease_survives_client_close_before_queued_commit() {
     let result = t.commit(&mut store, &c, 1, &id);
     assert!(matches!(result, rad_store::CommitOutcome::Applied { .. }));
     t.resolved(&id, &result).unwrap();
+    drop(t);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn two_prepared_state_images_commit_together_and_survive_reload() {
+    use rad_core::configuration::{Appearance, Edit, StateFace};
+    let (path, mut store, mut t) = fixture();
+    let mut images = vec![];
+    for (index, bytes) in [
+        include_bytes!("../../../plugins/audio/icons/microphone-muted.png").as_slice(),
+        include_bytes!("../../../plugins/audio/icons/microphone-unmuted.png").as_slice(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = begin(
+            &mut t,
+            &mut store,
+            ctx(1, index as u64 * 3),
+            Kind::ImageImport,
+            Some(bytes.len() as u64),
+        );
+        t.execute(
+            &mut store,
+            ctx(1, index as u64 * 3 + 1),
+            Operation::Write {
+                transfer_id: id.clone(),
+                offset: 0,
+                bytes: bytes.to_vec(),
+            },
+        )
+        .unwrap();
+        let Output::ImagePrepared { media_ref } = t
+            .execute(
+                &mut store,
+                ctx(1, index as u64 * 3 + 2),
+                Operation::Finish {
+                    transfer_id: id.clone(),
+                },
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        images.push((id, media_ref));
+    }
+    assert!(matches!(
+        t.execute(
+            &mut store,
+            ctx(1, 6),
+            Operation::Begin {
+                kind: Kind::ImageImport,
+                size: Some(1),
+                export_revision: None,
+                export_snapshot: None
+            }
+        ),
+        Err(Error::Capacity)
+    ));
+    for refs in [
+        vec![images[0].1.clone(), "missing".into()],
+        vec![images[0].1.clone(); 3],
+    ] {
+        assert!(
+            t.execute(
+                &mut store,
+                ctx(1, 6),
+                Operation::RetainImages { media_refs: refs }
+            )
+            .is_err()
+        );
+    }
+    assert!(matches!(
+        t.execute(
+            &mut store,
+            ctx(2, 6),
+            Operation::RetainImages {
+                media_refs: vec![images[0].1.clone()]
+            }
+        ),
+        Err(Error::NotFound)
+    ));
+    let c = with_image(&store, images[0].1.clone());
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
+            Edit::SetAppearance {
+                button: c.configuration().data().buttons[0].binding.identity(),
+                appearance: Appearance {
+                    states: [
+                        (
+                            "muted".into(),
+                            StateFace {
+                                text: "Quiet".into(),
+                                image: Some(images[0].1.clone()),
+                            },
+                        ),
+                        (
+                            "unmuted".into(),
+                            StateFace {
+                                text: "Live".into(),
+                                image: Some(images[1].1.clone()),
+                            },
+                        ),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    let Output::Retained { transfer_id } = t
+        .execute(
+            &mut store,
+            ctx(1, 6),
+            Operation::RetainImages {
+                media_refs: images.iter().map(|(_, key)| key.clone()).collect(),
+            },
+        )
+        .unwrap()
+    else {
+        panic!()
+    };
+    t.execute(&mut store, ctx(1, 7), Operation::Disconnect)
+        .unwrap();
+    t.execute(&mut store, ctx(2, 100_000), Operation::Reap)
+        .unwrap();
+    assert_eq!(t.metadata().handles.len(), 2);
+    let outcome = t.commit(&mut store, &c, 1, &transfer_id);
+    assert!(
+        matches!(outcome, rad_store::CommitOutcome::Applied { .. }),
+        "{outcome:?}"
+    );
+    t.resolved(
+        &transfer_id,
+        &rad_store::CommitOutcome::Uncertain {
+            revision: 2,
+            error: rad_store::StoreError::Uncertain,
+        },
+    )
+    .unwrap();
+    t.execute(&mut store, ctx(2, 200_000), Operation::Reap)
+        .unwrap();
+    assert_eq!(t.metadata().handles.len(), 2);
+    assert!(
+        matches!(
+            t.commit(&mut store, &c, 1, &transfer_id),
+            rad_store::CommitOutcome::NotApplied(_)
+        ),
+        "an uncertain edit is never replayed"
+    );
+    t.resolved(&transfer_id, &outcome).unwrap();
+    assert!(t.metadata().handles.is_empty());
+    assert!(store.image(&images[0].1).is_ok());
+    assert!(store.image(&images[1].1).is_ok());
+    assert_eq!(
+        store.load().unwrap().configuration.data().buttons[0]
+            .appearance
+            .states
+            .len(),
+        2
+    );
     drop(t);
     drop(store);
     std::fs::remove_dir_all(path).unwrap();

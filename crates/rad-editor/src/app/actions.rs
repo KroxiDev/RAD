@@ -241,7 +241,9 @@ impl App {
         }
         let mut groups = std::collections::BTreeMap::<String, Vec<_>>::new();
         for entry in self.plugins.catalog.iter().filter(|entry| {
-            entry.ready && self.action_matches(&NewAction::Plugin((*entry).clone()))
+            entry.ready
+                && !entry.linked_visual()
+                && self.action_matches(&NewAction::Plugin((*entry).clone()))
         }) {
             if let Some(id) = crate::plugins::plugin_id(&entry.type_key) {
                 groups.entry(id.to_owned()).or_default().push(entry.clone());

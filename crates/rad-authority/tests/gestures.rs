@@ -93,6 +93,8 @@ fn setup(mode: Mode) -> Authority {
                 fields: vec![],
             },
             credential_slots: vec![],
+            states: vec![],
+            visual: None,
             response_timeout: None,
             gestures: vec![rad_plugin_contract::Gesture::Hold],
         }],

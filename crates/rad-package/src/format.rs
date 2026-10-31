@@ -16,7 +16,7 @@ pub(crate) fn references(c: &Configuration) -> BTreeSet<String> {
     c.data()
         .buttons
         .iter()
-        .filter_map(|b| b.appearance.image.clone())
+        .flat_map(|b| b.appearance.images().cloned())
         .collect()
 }
 pub(crate) fn catalog(

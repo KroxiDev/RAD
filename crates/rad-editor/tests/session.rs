@@ -49,7 +49,7 @@ fn action() -> Value {
     )
 }
 fn appearance() -> Value {
-    json!({"text":"Go","image":"owned-media","text_position":"bottom","visual_type":null})
+    json!({"text":"Go","image":"owned-media","states":{},"text_position":"bottom","visual_type":null})
 }
 fn board() -> Value {
     let mut slots = vec![Value::Null; 32];

@@ -14,7 +14,7 @@ pub fn config() -> Config {
         "org.rad.obs",
         Version {
             major: 0,
-            minor: 3,
+            minor: 4,
             patch: 0,
         },
         1..=1,
@@ -26,6 +26,7 @@ pub fn config() -> Config {
         "labels".into(),
         "response_timeout".into(),
         "visual_freshness".into(),
+        "visual_states".into(),
     ])
     .credential_slots(vec!["password".into()])
 }
@@ -890,8 +891,25 @@ fn visual_state(source: &str, params: &Parameters, data: &Value) -> VisualState 
         }
         _ => return VisualState::Unavailable,
     };
+    let state = match (source, text) {
+        ("scene", "Program") => "active",
+        ("scene", _) => "inactive",
+        ("record", "Stopped") => "stopped",
+        ("record", _) => "recording",
+        ("pause", "Paused") => "paused",
+        ("pause", _) => "running",
+        ("stream", "Streaming") => "live",
+        ("stream", _) => "off",
+        ("mute", "Muted") => "muted",
+        ("mute", _) => "unmuted",
+        ("item", "Visible") => "visible",
+        ("item", _) => "hidden",
+        ("filter", "Enabled") | ("virtualcam" | "replay", "On") => "on",
+        _ => "off",
+    };
     VisualState::Current {
         content: VisualContent {
+            state: Some(state.into()),
             text: Some(text.into()),
             ..VisualContent::default()
         },

@@ -273,10 +273,10 @@ fn v3_document_migration_preserves_separate_evidence_and_refuses_future_document
     let current: Vec<u8> = db
         .query_row("SELECT document FROM revisions LIMIT 1", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(rad_codec::document_version(&current).unwrap(), 5);
+    assert_eq!(rad_codec::document_version(&current).unwrap(), 6);
     let future = String::from_utf8(current)
         .unwrap()
-        .replacen("\"version\":5", "\"version\":6", 1);
+        .replacen("\"version\":6", "\"version\":7", 1);
     db.execute(
         "UPDATE revisions SET document=?1,digest=?2",
         rusqlite::params![
@@ -341,5 +341,46 @@ fn v4_migration_preserves_source_and_normalizes_only_legacy_low_brightness() {
     let current: Vec<u8> = db
         .query_row("SELECT document FROM revisions LIMIT 1", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(rad_codec::document_version(&current).unwrap(), 5);
+    assert_eq!(rad_codec::document_version(&current).unwrap(), 6);
+}
+
+#[test]
+fn v5_migration_keeps_exact_backup_and_state_faces_start_empty() {
+    use rad_core::{configuration::*, identity::*};
+    use sha2::{Digest, Sha256};
+    let path = path("v5-states");
+    let original = include_bytes!("../../../docs/fixtures/v5/profile.json");
+    let data = rad_codec::decode_data(original).unwrap();
+    let base =
+        Configuration::prepare_new(&IdentityRegistry::new(data.principal.installation()).unwrap())
+            .unwrap();
+    let c = base
+        .configuration()
+        .prepare_restore(base.registry(), Origin::Editor, true, data)
+        .unwrap();
+    drop(Store::create(&path, &c).unwrap());
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute(
+        "UPDATE revisions SET document=?1,digest=?2",
+        rusqlite::params![original.as_slice(), Sha256::digest(original).as_slice()],
+    )
+    .unwrap();
+    drop(db);
+    let before = std::fs::read(&path).unwrap();
+    let store = Store::open(&path).unwrap();
+    assert!(
+        store
+            .load()
+            .unwrap()
+            .configuration
+            .data()
+            .buttons
+            .iter()
+            .all(|b| b.appearance.states.is_empty())
+    );
+    drop(store);
+    let backup = PathBuf::from(format!("{}.document-v5-backup", path.display()));
+    assert_eq!(std::fs::read(&backup).unwrap(), before);
+    drop(Store::open(&path).unwrap());
+    assert_eq!(std::fs::read(backup).unwrap(), before);
 }

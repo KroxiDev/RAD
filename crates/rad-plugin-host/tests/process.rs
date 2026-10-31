@@ -31,6 +31,8 @@ fn manifest(major: u32) -> Manifest {
 fn definition(id: &str) -> Definition {
     Definition {
         gestures: vec![rad_plugin_contract::Gesture::Press],
+        states: vec![],
+        visual: None,
         response_timeout: None,
         id: id.into(),
         label: id.into(),

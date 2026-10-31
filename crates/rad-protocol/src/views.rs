@@ -147,7 +147,17 @@ pub(super) fn appearance(
         } else {
             None
         };
-    let position = if native_icon.is_some() {
+    let stateful = match &v.visual {
+        rad_authority::VisualView::External(key) => a.plugin_manifests().any(|(manifest, _, _)| {
+            manifest.id == key.plugin()
+                && manifest
+                    .visuals
+                    .iter()
+                    .any(|visual| visual.id == key.name() && visual.states.len() == 2)
+        }),
+        _ => false,
+    };
+    let position = if native_icon.is_some() || stateful {
         v.appearance.text_position.unwrap_or(P::Bottom)
     } else {
         v.appearance.effective_text_position()
@@ -166,6 +176,20 @@ pub(super) fn appearance(
         }
     };
     Ok(AppearanceView {
+        states: v
+            .appearance
+            .states
+            .into_iter()
+            .map(|(id, f)| {
+                (
+                    id,
+                    rad_api::StateFace {
+                        text: f.text,
+                        image: f.image,
+                    },
+                )
+            })
+            .collect(),
         text: v.appearance.text,
         image: v.appearance.image,
         text_position,

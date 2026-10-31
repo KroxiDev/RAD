@@ -156,6 +156,32 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
 - **Puesta en marcha.** El editor arranca RAD y ofrece «Iniciar RAD con el equipo»;
   el usuario nunca usa la terminal ([ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md)).
 
+## Teclas con dos estados observados
+
+Al guardar una acción con visual vinculado, la tecla muestra su estado sin elegir
+otro visual. Cambiar sus parámetros sincroniza el visual; retirarla vuelve a
+Manual si era el visual vinculado. Un visual externo ajeno se conserva. Los
+visuales vinculados no se ofrecen en paleta ni combo; Multimedia y Métricas siguen
+ofreciendo sus visuales independientes. Las teclas antiguas ganan el vínculo al
+guardar su acción, no mediante una migración automática.
+
+Solo para esos visuales, debajo de la vista previa aparecen dos pestañas con los
+textos traducidos del manifest. Abren en el estado observado disponible; texto,
+imagen importada y biblioteca de iconos editan la cara elegida, con una única
+posición de texto compartida. Cambiar de pestaña conserva el borrador de texto y
+medios de ambas caras; invalida la elección local aún no guardada de la biblioteca,
+como cambiar su destino. Una respuesta tardía nunca se aplica a otra cara.
+
+La primera observación que llega tarde selecciona la pestaña real solo mientras
+no se haya elegido una pestaña ni editado su cara o abierto la biblioteca. Después
+la selección del usuario no sigue alternando con la fuente. «Usar icono de la
+aplicación» solo se ofrece en apariencia manual: ese atajo escribe la imagen base,
+no una cara externa. Las caras conservan importación de imagen y biblioteca.
+
+Cada estado trae un icono reemplazable. Sin texto propio, solo icono, también en
+escenas. Una fuente no disponible muestra el segundo estado con marca roja; una
+observación vencida conserva la marca ámbar. No se cuenta cuántas veces se pulsó.
+
 ## Actualizaciones de RAD
 
 Ajustes → Actualizaciones funciona también sin conexión con el runtime o durante

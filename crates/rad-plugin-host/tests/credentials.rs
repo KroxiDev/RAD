@@ -198,6 +198,7 @@ fn fixture_options_and_visuals_identify_only_the_captured_revision() {
         let expected = if revision == 2 {
             VisualState::Current {
                 content: VisualContent {
+                    state: None,
                     text: Some(marker),
                     png_hex: None,
                     jpeg_hex: None,

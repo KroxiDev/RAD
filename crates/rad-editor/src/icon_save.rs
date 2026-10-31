@@ -20,9 +20,18 @@ pub fn save<P: Port>(
     session: &mut Session<P>,
     button: &str,
     png: &[u8],
+    edit: Request,
+) -> Result<Saved, Error> {
+    save_to_state(session, button, None, png, edit)
+}
+pub fn save_to_state<P: Port>(
+    session: &mut Session<P>,
+    button: &str,
+    state: Option<&str>,
+    png: &[u8],
     mut edit: Request,
 ) -> Result<Saved, Error> {
-    let Request::Edit { changes } = &mut edit else {
+    let Request::Edit { changes, .. } = &mut edit else {
         return Err(Error::protocol());
     };
     let appearances: Vec<_> = changes
@@ -66,7 +75,7 @@ pub fn save<P: Port>(
                     .to_owned();
             }
         };
-        let Request::Edit { changes } = &mut edit else {
+        let Request::Edit { changes, .. } = &mut edit else {
             unreachable!()
         };
         let rad_api::Change::Set {
@@ -76,7 +85,11 @@ pub fn save<P: Port>(
         else {
             unreachable!()
         };
-        appearance.image = Some(reference.clone());
+        if let Some(state) = state {
+            appearance.states.entry(state.into()).or_default().image = Some(reference.clone());
+        } else {
+            appearance.image = Some(reference.clone());
+        }
         session.request(edit).map(|response| Saved {
             response,
             image: reference,

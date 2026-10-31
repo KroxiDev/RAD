@@ -35,6 +35,7 @@ fn full() -> (Configuration, IdentityRegistry) {
         .unwrap();
     button.permissions = LocalPermissions::own(data.global_permissions);
     button.appearance = Appearance {
+        states: Default::default(),
         text: "á\nquoted\"".into(),
         image: Some("owned-media-reference".into()),
         text_position: None,

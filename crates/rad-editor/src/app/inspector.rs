@@ -70,9 +70,13 @@ impl App {
     pub(super) fn unsaved(&self) -> bool {
         self.icon_library.dirty_for(&self.draft.id)
             || self.inspection.as_ref().is_some_and(|published| {
-                let published = Draft::load(published);
+                let mut published = Draft::load(published);
+                if let Some(state) = &self.draft.state {
+                    published.select_state(state.clone());
+                }
                 let draft = &self.draft;
-                published.name != draft.name
+                published.states != draft.state_faces()
+                    || published.name != draft.name
                     || published.text != draft.text
                     || published.image != draft.image
                     || published.text_position != draft.text_position
@@ -132,7 +136,7 @@ impl App {
             .filter(|(action, _)| action["fields"]["type"] == "brightness")
             .map(|(action, direction)| (string(&action["id"]), *direction))
             .collect();
-        let request = commands::save_button(&commands::KeySave {
+        let mut request = commands::save_button(&commands::KeySave {
             id: &self.draft.id,
             name: &self.draft.name,
             text: &self.draft.text,
@@ -145,17 +149,36 @@ impl App {
             launchers: &launchers,
             brightness: &brightness,
         });
+        if let crate::Request::Edit { changes, .. } = &mut request {
+            for change in changes {
+                if let rad_api::Change::Set {
+                    edit: rad_api::FieldEdit::Appearance(a),
+                    ..
+                } = change
+                {
+                    a.states = self.draft.state_faces();
+                    if self.draft.state.is_some() {
+                        a.text = self.draft.base_face.text.clone();
+                        a.image = self.draft.base_face.image.clone();
+                    }
+                }
+            }
+        }
         if self.icon_library.dirty_for(&self.draft.id) {
-            if let Some(job) = self.icon_library.save_job(request)
-                && self.command(job)
-            {
-                self.icon_library.saving();
+            if let Some(mut job) = self.icon_library.save_job(request) {
+                if let Job::SaveIcon { state, .. } = &mut job {
+                    *state = self.draft.state.clone();
+                }
+                if self.command(job) {
+                    self.icon_library.saving();
+                }
             }
         } else {
             self.send(request);
         }
     }
     fn key_editor(&mut self, ui: &mut egui::Ui, look: &Look, id: &str) {
+        self.prepare_state_tab(ui);
         let actions = self
             .inspection
             .as_ref()
@@ -168,9 +191,16 @@ impl App {
             REVEAL_SECONDS,
         );
         ui.horizontal(|ui| {
-            let (preview, preview_response) =
-                ui.allocate_exact_size(egui::Vec2::splat(PREVIEW), egui::Sense::click());
-            self.paint_preview(ui, look, id, preview);
+            let (preview, preview_response) = ui
+                .vertical(|ui| {
+                    let (preview, response) =
+                        ui.allocate_exact_size(egui::Vec2::splat(PREVIEW), egui::Sense::click());
+                    self.paint_preview(ui, look, id, preview);
+                    self.state_tabs(ui);
+                    (preview, response)
+                })
+                .inner;
+            let _ = preview;
             // Clicking the face opens the image choices, as the image button does.
             let open_image = self.inspection.is_some() && preview_response.clicked();
             if self.inspection.is_some() {
@@ -197,12 +227,14 @@ impl App {
                     ui.label(look.muted_text(tr(self.es, "Text on key")));
                     // The placeholder says what an empty field shows: the name on a key
                     // without image, nothing on one that has an image to speak for it.
-                    let placeholder =
-                        if self.draft.image.is_empty() && !self.icon_library.dirty_for(id) {
-                            self.draft.name.clone()
-                        } else {
-                            tr(self.es, "No text").to_owned()
-                        };
+                    let placeholder = if self.draft.state.is_none()
+                        && self.draft.image.is_empty()
+                        && !self.icon_library.dirty_for(id)
+                    {
+                        self.draft.name.clone()
+                    } else {
+                        tr(self.es, "No text").to_owned()
+                    };
                     ui.horizontal(|ui| {
                         ui.add(
                             look.field(&mut self.draft.text, &placeholder)
@@ -280,6 +312,86 @@ impl App {
             .id_salt("advanced")
             .show(ui, |ui| self.advanced(ui, look, id, &actions));
     }
+    fn state_entries(&self) -> Option<crate::plugins::CatalogEntry> {
+        let key = self.current_visual()?;
+        self.plugins
+            .catalog
+            .iter()
+            .find(|e| e.type_key == key && !e.states().is_empty())
+            .cloned()
+    }
+    fn prepare_state_tab(&mut self, ui: &egui::Ui) {
+        let Some(entry) = self.state_entries() else {
+            return;
+        };
+        let observed = self
+            .plugins
+            .visuals
+            .get(&self.draft.id)
+            .filter(|f| f.state == "current" || f.state == "stale")
+            .and_then(|f| f.visual_state.as_deref())
+            .filter(|id| entry.states().iter().any(|s| s.id == *id));
+        self.draft.initial_state(
+            observed,
+            &entry.states()[1].id,
+            self.icon_library.open || self.icon_library.dirty_for(&self.draft.id),
+        );
+        self.plugins.state_icons.retain(|key, _| {
+            self.plugins.catalog.iter().any(|e| {
+                e.states()
+                    .iter()
+                    .any(|state| key == &format!("{}:{}", e.type_key, state.id))
+            })
+        });
+        for state in entry.states() {
+            let Some(hex) = &state.icon else {
+                continue;
+            };
+            let key = format!("{}:{}", entry.type_key, state.id);
+            if self
+                .plugins
+                .state_icons
+                .get(&key)
+                .is_some_and(|(old, _)| old == hex)
+            {
+                continue;
+            }
+            let bytes = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+                .collect::<Result<Vec<_>, _>>();
+            if let Ok(bytes) = bytes
+                && let Ok(pixels) = crate::preview::decode(&bytes)
+            {
+                let texture = ui.ctx().load_texture(
+                    &key,
+                    egui::ColorImage::from_rgba_unmultiplied(pixels.size, &pixels.rgba),
+                    Default::default(),
+                );
+                self.plugins.state_icons.insert(key, (hex.clone(), texture));
+            }
+        }
+    }
+    fn state_tabs(&mut self, ui: &mut egui::Ui) {
+        let Some(entry) = self.state_entries() else {
+            return;
+        };
+        for state in entry.states() {
+            if ui
+                .selectable_label(
+                    self.draft.state.as_deref() == Some(&state.id),
+                    entry.texts.get(self.es, &state.label),
+                )
+                .clicked()
+            {
+                self.draft.state_initialized = true;
+                if self.draft.state.as_deref() != Some(&state.id) {
+                    self.icon_library.reset();
+                    self.draft.select_state(state.id.clone());
+                }
+            }
+        }
+    }
     /// The key face as the deck will show it; once loaded it follows the draft, so edits
     /// show before saving.
     fn paint_preview(&self, ui: &egui::Ui, look: &Look, id: &str, preview: egui::Rect) {
@@ -298,6 +410,36 @@ impl App {
                 &key_label(&self.draft.text, &self.draft.name, true),
                 &self.draft.text_position,
                 Some((texture, 1.)),
+                None,
+            );
+            return;
+        }
+        if let Some(state) = &self.draft.state {
+            let key = format!("{}:{state}", string(&view.appearance["visual_type"]));
+            let image = self
+                .pictures
+                .get(&self.draft.image, ui.input(|i| i.time))
+                .or_else(|| {
+                    self.plugins
+                        .state_icons
+                        .get(&key)
+                        .map(|(_, texture)| (texture, 1.))
+                })
+                .or_else(|| {
+                    self.plugins
+                        .visuals
+                        .get(id)
+                        .filter(|f| f.visual_state.as_ref() == Some(state))
+                        .and_then(|f| f.texture.as_ref())
+                        .map(|t| (t, 1.))
+                });
+            paint_key(
+                ui,
+                look,
+                preview,
+                &self.draft.text,
+                &self.draft.text_position,
+                image,
                 None,
             );
             return;
@@ -438,7 +580,9 @@ impl App {
                     .inspection
                     .as_ref()
                     .is_some_and(|i| i.appearance["visual_type"].is_null());
-                if manual && ui.button(tr(self.es, "Icon library")).clicked() {
+                if (manual || self.draft.state.is_some())
+                    && ui.button(tr(self.es, "Icon library")).clicked()
+                {
                     // Start from what drew the current image, when this computer remembers it.
                     let recalled = crate::icon_memory::default_path()
                         .and_then(|path| crate::icon_memory::recall(&path, &self.draft.image));
@@ -459,6 +603,7 @@ impl App {
                     })
                 {
                     self.icon_library.reset();
+                    self.image_target = Some((self.draft.id.clone(), self.draft.state.clone()));
                     self.icon_asked = true;
                     ui.close();
                 }
@@ -485,6 +630,7 @@ impl App {
                             kind: TransferKind::Image,
                         })
                     {
+                        self.image_target = Some((self.draft.id.clone(), self.draft.state.clone()));
                         self.icon_library.reset();
                         self.transfer_active = true;
                         ui.close();
@@ -533,10 +679,21 @@ impl App {
                         && icon_button(ui, look, Icon::Close, tr(self.es, "Remove action"))
                             .clicked()
                     {
-                        self.send(crate::Request::Delete {
-                            id: string(&action["id"]),
-                            confirm_contents: false,
-                        });
+                        let id = string(&action["id"]);
+                        let texts = self.plugins.texts(&kind);
+                        if texts.binds_visual(&kind) {
+                            self.command(Job::LinkedAction(crate::linked_actions::LinkedAction {
+                                button: self.draft.id.clone(),
+                                type_key: kind.clone(),
+                                texts,
+                                mutation: crate::linked_actions::Mutation::Remove { id },
+                            }));
+                        } else {
+                            self.send(crate::Request::Edit {
+                                changes: vec![rad_api::Change::RemoveAction { id }],
+                                expected_revision: None,
+                            });
+                        }
                     }
                     if display_index > 0
                         && icon_button(ui, look, Icon::Up, tr(self.es, "Move up")).clicked()

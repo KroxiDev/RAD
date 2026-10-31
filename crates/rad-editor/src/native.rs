@@ -27,6 +27,7 @@ pub enum TransferKind {
 #[derive(Debug)]
 pub enum Job {
     PluginApply(Request),
+    LinkedAction(crate::linked_actions::LinkedAction),
     PluginCatalog,
     Plugins,
     PluginForm {
@@ -52,6 +53,7 @@ pub enum Job {
     FolderBoard(String),
     Request(Request),
     SaveIcon {
+        state: Option<String>,
         button: String,
         ticket: u64,
         png: std::sync::Arc<Vec<u8>>,
@@ -135,7 +137,7 @@ fn read_pictures<P: crate::session::Port>(
     let mut read = Vec::with_capacity(pictures.len());
     for picture in pictures {
         let pixels = s
-            .media_bytes(&picture.button, &picture.revision)
+            .media_bytes_for(&picture.button, &picture.revision, Some(&picture.reference))
             .and_then(|bytes| crate::preview::decode(&bytes));
         match pixels {
             Ok(pixels) => read.push((picture.reference, Some(pixels))),
@@ -262,8 +264,9 @@ fn app_icon(
         Err(_) if s.is_open() => return Ok(Reply::NoAppIcon),
         Err(error) => return Err(error),
     };
-    let appearance = json!({"text":inspection.appearance["text"],"image":image});
+    let appearance = application_appearance(&inspection.appearance, image);
     s.request(crate::Request::Edit {
+        expected_revision: None,
         changes: vec![rad_api::Change::Set {
             id: button.into(),
             edit: rad_api::FieldEdit::Appearance(
@@ -329,7 +332,7 @@ pub fn start_with_clock(
     let mut visual_epoch = String::new();
     let mut visual_revisions = std::collections::BTreeMap::new();
     Worker::spawn(move |job| {
-        let plugin_apply = matches!(&job, Job::PluginApply(_));
+        let plugin_apply = matches!(&job, Job::PluginApply(_) | Job::LinkedAction(_));
         let plugin_admin = matches!(&job,Job::Request(r) if r.operation().as_str()=="plugin_admin");
         let plugin_manifest = matches!(&job, Job::Request(Request::PluginManifest { .. }));
         let plugin_dependencies =
@@ -418,6 +421,7 @@ pub fn start_with_clock(
                 }),
                 Some(s) => match other {
                     Job::PluginApply(request) => s.request(request).map(Reply::PluginApplied),
+                    Job::LinkedAction(action) => action.publish(s).map(Reply::PluginApplied),
                     Job::PluginCatalog => s.plugin_catalog().map(Reply::PluginCatalog),
                     Job::Plugins => s.plugin_catalog().and_then(|catalog| {
                         s.request(crate::Request::PluginStatus {})
@@ -481,6 +485,7 @@ pub fn start_with_clock(
                     Job::FolderBoard(folder) => s.folder_board(&folder).map(Reply::FolderBoard),
                     Job::Pictures(pictures) => read_pictures(pictures, s),
                     Job::SaveIcon {
+                        state,
                         button,
                         ticket,
                         png,
@@ -495,7 +500,13 @@ pub fn start_with_clock(
                                 unknown: false,
                             })
                         } else {
-                            crate::icon_save::save(s, &button, &png, request)
+                            crate::icon_save::save_to_state(
+                                s,
+                                &button,
+                                state.as_deref(),
+                                &png,
+                                request,
+                            )
                         };
                         // A convenience for reopening the library: failing to remember
                         // never changes the outcome of the save.
@@ -636,4 +647,22 @@ fn options_session<'a>(
     let (session, used) = connection.as_mut().expect("connected above");
     *used = Instant::now();
     Ok(session)
+}
+
+fn application_appearance(
+    appearance: &serde_json::Value,
+    image: serde_json::Value,
+) -> serde_json::Value {
+    json!({"text":appearance["text"],"image":image,"states":appearance.get("states").cloned().unwrap_or_else(|| json!({}))})
+}
+#[cfg(test)]
+mod state_tests {
+    use super::*;
+    #[test]
+    fn application_icon_keeps_state_faces() {
+        let appearance = json!({"text":"Base","image":null,"states":{"muted":{"text":"Quiet","image":"state-image"}}});
+        let changed = application_appearance(&appearance, json!("application-image"));
+        assert_eq!(changed["states"], appearance["states"]);
+        assert_eq!(changed["image"], "application-image");
+    }
 }

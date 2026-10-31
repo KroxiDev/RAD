@@ -29,7 +29,7 @@ fn brightness_roundtrips_only_in_v5_and_legacy_floor_is_the_only_normalized_valu
             )
             .unwrap();
         let bytes = encode(c.configuration()).unwrap();
-        assert_eq!(rad_codec::document_version(&bytes).unwrap(), 5);
+        assert_eq!(rad_codec::document_version(&bytes).unwrap(), 6);
         assert_eq!(decode_data(&bytes).unwrap(), *c.configuration().data());
         let mut invalid = decode_data(&bytes).unwrap();
         invalid.buttons[0].gesture = Gesture::Hold;

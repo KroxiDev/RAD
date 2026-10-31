@@ -418,6 +418,8 @@ impl Authority {
                 label: "Settings".into(),
                 schema: schema.clone(),
                 credential_slots: vec![],
+                states: vec![],
+                visual: None,
                 response_timeout: None,
                 gestures: rad_plugin_contract::default_gestures(),
             };

@@ -266,6 +266,7 @@ fn retained_image_binds_to_authority_commit_and_rejected_candidate_cleans_on_wor
         Command::Edits(vec![Edit::SetAppearance {
             button,
             appearance: Appearance {
+                states: Default::default(),
                 text: "Image".into(),
                 image: Some(key.clone()),
                 text_position: None,
@@ -295,6 +296,7 @@ fn retained_image_binds_to_authority_commit_and_rejected_candidate_cleans_on_wor
         Command::Edits(vec![Edit::SetAppearance {
             button: rad_core::identity::EntityIdentity::new(999, 1).unwrap(),
             appearance: Appearance {
+                states: Default::default(),
                 text: "bad".into(),
                 image: Some(key),
                 text_position: None,

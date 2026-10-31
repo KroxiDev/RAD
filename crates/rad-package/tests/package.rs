@@ -462,7 +462,7 @@ fn frozen_v2_package_imports_then_roundtrips_v3_with_portable_settings_and_count
     assert_eq!(
         rad_codec::encode(&configuration).unwrap(),
         include_str!("../../../docs/fixtures/v2/profile.json")
-            .replacen("\"version\":2", "\"version\":5", 1)
+            .replacen("\"version\":2", "\"version\":6", 1)
             .as_bytes()
     );
     let mut encoded = vec![];

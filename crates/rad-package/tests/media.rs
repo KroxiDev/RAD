@@ -47,6 +47,7 @@ fn with_images(initial: &Candidate, images: &[rad_media::NormalizedImage]) -> Ca
                 Edit::SetAppearance {
                     button: id,
                     appearance: Appearance {
+                        states: Default::default(),
                         text: "".into(),
                         image: Some(rad_store::media_key(image)),
                         text_position: None,
@@ -377,6 +378,7 @@ fn valid_digest_of_noncanonical_png_still_rejects() {
             Edit::SetAppearance {
                 button: c.configuration().data().buttons[0].binding.identity(),
                 appearance: Appearance {
+                    states: Default::default(),
                     text: "".into(),
                     image: Some(key),
                     text_position: None,
@@ -588,4 +590,77 @@ fn last_second_pass_failure_rolls_back_and_uncertain_retains_prepared_ownership(
         std::fs::remove_file(db).unwrap();
         std::fs::remove_dir(root).unwrap();
     }
+}
+
+#[test]
+fn both_state_images_are_copy_restore_and_gc_roots_even_without_base_image() {
+    use rad_core::configuration::StateFace;
+    let base = initial();
+    let images = [image(18), image(45)];
+    let c = with_images(&base, &images[..1]);
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
+            Edit::SetAppearance {
+                button: c.configuration().data().buttons[0].binding.identity(),
+                appearance: Appearance {
+                    states: [
+                        (
+                            "muted".into(),
+                            StateFace {
+                                text: "Quiet".into(),
+                                image: Some(rad_store::media_key(&images[0])),
+                            },
+                        ),
+                        (
+                            "unmuted".into(),
+                            StateFace {
+                                text: "Live".into(),
+                                image: Some(rad_store::media_key(&images[1])),
+                            },
+                        ),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    let data = bytes(&c, &images);
+    let (root, area) = area();
+    let prepared = prepare(&mut data.as_slice(), &area).unwrap();
+    assert_eq!(prepared.summary().media_count, 2);
+    let (candidate, mut media) = prepared
+        .confirm(base.configuration(), base.registry(), Origin::Editor, true)
+        .unwrap();
+    let path = root.join("store.db");
+    let mut store = Store::create(&path, &base).unwrap();
+    assert!(matches!(
+        store.commit_from_media(&candidate, &mut media),
+        CommitOutcome::Applied { .. }
+    ));
+    store.collect(&[2]).unwrap();
+    for image in &images {
+        assert_eq!(
+            store
+                .image(&rad_store::media_key(image))
+                .unwrap()
+                .png_bytes(),
+            image.png_bytes()
+        );
+    }
+    drop(media);
+    drop(store);
+    let reopened = Store::open(&path).unwrap();
+    assert_eq!(
+        reopened.load().unwrap().configuration.data().buttons[0]
+            .appearance
+            .states,
+        c.configuration().data().buttons[0].appearance.states
+    );
+    drop(reopened);
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir(root).unwrap();
 }

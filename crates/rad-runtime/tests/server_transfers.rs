@@ -89,6 +89,46 @@ fn editor_image_export_and_confirmed_restore_cross_the_real_store_lane() {
         );
         assert_eq!(image["eof"], true);
         assert!(image["base64"].as_str().unwrap().len() > 20);
+        ok(
+            &mut c,
+            "edit",
+            json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":{"text":"Red","image":key,"states":{"muted":{"text":"Quiet","image":key}}}}]}),
+        );
+        assert_eq!(
+            ok(
+                &mut automation,
+                "media_read",
+                json!({"id":"b1","media_ref":key,"offset":"0"})
+            ),
+            image
+        );
+        let denied = automation
+            .request(
+                "media_read",
+                json!({"id":"b1","media_ref":"0".repeat(64),"offset":"0"}),
+            )
+            .unwrap();
+        assert!(denied.error.is_some(), "cannot read an unrelated digest");
+        ok(
+            &mut c,
+            "set_permissions",
+            json!({"target":"b1","value":{"own":{"consult":false,"modify":false,"execute":false}}}),
+        );
+        assert!(
+            automation
+                .request(
+                    "media_read",
+                    json!({"id":"b1","media_ref":key,"offset":"0"})
+                )
+                .unwrap()
+                .error
+                .is_some()
+        );
+        ok(
+            &mut c,
+            "set_permissions",
+            json!({"target":"b1","value":{"inherit":true}}),
+        );
         let token = ok(
             &mut c,
             "transfer_begin",
