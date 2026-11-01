@@ -2,6 +2,7 @@
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import shutil
@@ -19,20 +20,24 @@ TOOL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TOOL)
 
 
+def synthetic_package(directory, version=None, startdir=None):
+    path = Path(directory) / FILENAME
+    info = (f"pkgname = rust-action-deck\npkgver = {version or SOURCE['version'] + '-' + str(SOURCE['pkgrel'])}\narch = x86_64\n").encode()
+    with tarfile.open(path, "w") as archive:
+        member = tarfile.TarInfo(".PKGINFO")
+        member.size = len(info)
+        archive.addfile(member, io.BytesIO(info))
+        if startdir is not None:
+            buildinfo = f"format = 2\nstartdir = {startdir}\nbuilddir = /tmp/rad-package-fixture\n".encode()
+            entry = tarfile.TarInfo(".BUILDINFO")
+            entry.size = len(buildinfo)
+            archive.addfile(entry, io.BytesIO(buildinfo))
+    return path
+
+
 class ReleaseContract(unittest.TestCase):
     def package(self, directory, version=None, startdir=None):
-        path = Path(directory) / FILENAME
-        info = (f"pkgname = rust-action-deck\npkgver = {version or SOURCE['version'] + '-' + str(SOURCE['pkgrel'])}\narch = x86_64\n").encode()
-        with tarfile.open(path, "w") as archive:
-            member = tarfile.TarInfo(".PKGINFO")
-            member.size = len(info)
-            archive.addfile(member, io.BytesIO(info))
-            if startdir is not None:
-                buildinfo = f"format = 2\nstartdir = {startdir}\nbuilddir = /tmp/rad-package-fixture\n".encode()
-                entry = tarfile.TarInfo(".BUILDINFO")
-                entry.size = len(buildinfo)
-                archive.addfile(entry, io.BytesIO(buildinfo))
-        return path
+        return synthetic_package(directory, version, startdir)
 
     def run_metadata(self, path):
         return subprocess.run([
@@ -156,6 +161,124 @@ class ReleaseContract(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("neutral", result.stderr.lower())
             self.assertEqual(result.stdout, "")
+
+
+TAG = f"v{SOURCE['version']}-{SOURCE['pkgrel']}"
+# Records every call and answers like gh: no releases unless told otherwise.
+FAKE_GH = """#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_GH_LOG"], "a") as log:
+    log.write(json.dumps(args) + "\\n")
+if args[:2] == ["release", "list"]:
+    print(os.environ.get("FAKE_GH_RELEASES", "[]"))
+elif args[:2] == ["release", "create"]:
+    print("https://github.com/KroxiDev/RAD/releases/tag/" + args[2])
+else:
+    sys.exit(2)
+"""
+
+
+class PublishContract(unittest.TestCase):
+    """A release is created only from a verified production build of the current main."""
+
+    def setUp(self):
+        self.base = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.base)
+        bindir = self.base / "bin"
+        bindir.mkdir()
+        (bindir / "gh").write_text(FAKE_GH)
+        (bindir / "gh").chmod(0o755)
+        self.log = self.base / "gh.log"
+        self.env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                    "FAKE_GH_LOG": str(self.log), "GIT_CONFIG_GLOBAL": "/dev/null",
+                    "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "Synthetic",
+                    "GIT_AUTHOR_EMAIL": "synthetic@example.invalid",
+                    "GIT_COMMITTER_NAME": "Synthetic",
+                    "GIT_COMMITTER_EMAIL": "synthetic@example.invalid"}
+        self.origin = self.base / "origin.git"
+        self.repo = self.base / "repo"
+        self.git("init", "--quiet", "--bare", "--initial-branch=main", str(self.origin), cwd=self.base)
+        self.git("init", "--quiet", "--initial-branch=main", str(self.repo), cwd=self.base)
+        (self.repo / "packaging").mkdir()
+        for name in ("release.py", "release.json"):
+            shutil.copyfile(ROOT / "packaging" / name, self.repo / "packaging" / name)
+        self.git("add", "packaging")
+        self.git("commit", "--quiet", "-m", "source")
+        self.git("remote", "add", "origin", str(self.origin))
+        self.git("push", "--quiet", "origin", "main")
+        self.commit = self.git("rev-parse", "HEAD")
+        self.dist = self.base / "dist"
+        self.dist.mkdir()
+        self.package = synthetic_package(self.dist)
+        recorded = subprocess.run([
+            "python3", str(self.repo / "packaging/release.py"), "metadata",
+            "--package", str(self.package), "--commit", self.commit,
+        ], text=True, capture_output=True, check=True).stdout
+        (self.dist / "rad-update.json").write_text(recorded)
+        digest = json.loads(recorded)["sha256"]
+        (self.dist / "SHA256SUMS").write_text(f"{digest}  {FILENAME}\n")
+
+    def git(self, *args, cwd=None):
+        return subprocess.run(["git", *args], cwd=cwd or self.repo, env=self.env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def publish(self, *extra, releases="[]"):
+        return subprocess.run([
+            "python3", str(self.repo / "packaging/release.py"), "publish", "--dist", str(self.dist), *extra,
+        ], cwd=self.repo, env={**self.env, "FAKE_GH_RELEASES": releases}, text=True, capture_output=True)
+
+    def created(self):
+        calls = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+        return [call for call in calls if call[:2] == ["release", "create"]]
+
+    def test_creates_a_draft_titled_by_version_with_empty_notes_and_the_three_assets(self):
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.created(), [[
+            "release", "create", TAG, "--repo", "KroxiDev/RAD", "--target", self.commit,
+            "--title", f"RAD {SOURCE['version']}-{SOURCE['pkgrel']}", "--notes", "", "--draft",
+            str(self.package), str(self.dist / "rad-update.json"), str(self.dist / "SHA256SUMS"),
+        ]])
+
+    def test_publish_flag_makes_it_visible_to_update_rad_at_once(self):
+        result = self.publish("--publish")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.created()), 1)
+        self.assertNotIn("--draft", self.created()[0])
+
+    def test_refuses_a_build_that_is_no_longer_the_current_main(self):
+        (self.repo / "later.txt").write_text("merged later\n")
+        self.git("add", "later.txt")
+        self.git("commit", "--quiet", "-m", "later")
+        self.git("push", "--quiet", "origin", "main")
+        result = self.publish()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("main", result.stderr)
+        self.assertEqual(self.created(), [])
+
+    def test_refuses_a_version_that_already_has_a_tag_or_a_draft(self):
+        self.git("tag", TAG)
+        self.git("push", "--quiet", "origin", TAG)
+        tagged = self.publish()
+        self.assertNotEqual(tagged.returncode, 0)
+        self.assertIn("release.json", tagged.stderr)
+        self.git("push", "--quiet", "--delete", "origin", TAG)
+        drafted = self.publish(releases=json.dumps([{"tagName": TAG}]))
+        self.assertNotEqual(drafted.returncode, 0)
+        self.assertIn(TAG, drafted.stderr)
+        self.assertEqual(self.created(), [])
+
+    def test_refuses_development_or_altered_artifacts_before_contacting_github(self):
+        (self.dist / "SHA256SUMS").write_text(f"{'0' * 64}  {FILENAME}\n")
+        altered = self.publish()
+        self.assertNotEqual(altered.returncode, 0)
+        (self.dist / "SHA256SUMS").unlink()
+        (self.dist / "DEVELOPMENT-NOT-FOR-RELEASE").write_text("local only\n")
+        development = self.publish()
+        self.assertNotEqual(development.returncode, 0)
+        self.assertIn("development", development.stderr.lower())
+        self.assertFalse(self.log.exists(), "GitHub must not be contacted for an invalid artifact")
 
 
 if __name__ == "__main__":
