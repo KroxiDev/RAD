@@ -85,7 +85,7 @@ personal ni una publicación:
 | Recolección de temporales, dueños/namespace, enlaces y leases | [`staging_gc.rs`](../crates/rad-update/tests/staging_gc.rs) y pruebas sintéticas de IPC/herencia en `coordinator.rs`/`installer.rs` |
 | Exclusión de arranque, relevo/consentimiento y recuperación | [`lifecycle_gate.rs`](../crates/rad-update/tests/lifecycle_gate.rs), [`lifecycle_transaction.rs`](../crates/rad-update/tests/lifecycle_transaction.rs), [`lifecycle_recovery.rs`](../crates/rad-update/tests/lifecycle_recovery.rs) |
 | Clic explícito, duplicados, cancelación y respuesta tardía | [`updates.rs`](../crates/rad-editor/tests/updates.rs) y pruebas headless de [`app/updates.rs`](../crates/rad-editor/src/app/updates.rs) |
-| Layout, identidad del paquete, notices y entorno de build | [`test_release.py`](../packaging/tests/test_release.py) |
+| Layout, identidad del paquete, notices, entorno de build y publicación solo desde el `main` vigente | [`test_release.py`](../packaging/tests/test_release.py) |
 
 ## Ciclo de vida de los tests
 

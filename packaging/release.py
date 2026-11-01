@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Construcción y metadata local de RAD. No instala ni publica."""
+"""Construcción, metadata y publicación de RAD. Construir nunca instala ni publica."""
 import argparse
+import contextlib
 import hashlib
 import json
 from pathlib import Path
@@ -16,6 +17,8 @@ import fcntl
 import shlex
 
 ROOT = Path(__file__).resolve().parents[1]
+# The updater trusts only this origin (ADR 0018); releases are created nowhere else.
+REPOSITORY = "KroxiDev/RAD"
 
 
 def release_source():
@@ -337,6 +340,72 @@ def build(development=False, plan=False, reuse_build=False):
             "Local behavior check only. No update metadata is emitted. Do not upload as an official stable release.\n")
     print(directory)
     print("No installation or publication performed.")
+    return directory
+
+
+def release_assets(directory):
+    """The verified files of a production build, still matching the metadata it recorded."""
+    if (directory / "DEVELOPMENT-NOT-FOR-RELEASE").exists():
+        raise ValueError("development builds are never published")
+    package = directory / filename(release_source())
+    recorded = json.loads((directory / "rad-update.json").read_text())
+    if metadata(package, recorded.get("commit", "")) != recorded:
+        raise ValueError("the package no longer matches its rad-update.json")
+    sums = directory / "SHA256SUMS"
+    if sums.is_symlink() or sums.read_text() != f"{recorded['sha256']}  {package.name}\n":
+        raise ValueError("SHA256SUMS does not match the package")
+    return recorded["commit"], [package, directory / "rad-update.json", sums]
+
+
+def check_publishable(commit, tag):
+    """Only the current main is released, and a version is never published twice."""
+    if not shutil.which("gh"):
+        raise ValueError("the GitHub CLI (gh) is required to create the release")
+    git("fetch", "--quiet", "origin", "main")
+    if git("rev-parse", "origin/main") != commit:
+        raise ValueError("releases are built from the current main; merge into main and build there")
+    if git("ls-remote", "--tags", "origin", f"refs/tags/{tag}"):
+        raise ValueError(f"{tag} already exists; raise version or pkgrel in packaging/release.json")
+    releases = run("gh", "release", "list", "--repo", REPOSITORY, "--limit", "1000",
+                   "--json", "tagName", capture_output=True, text=True).stdout
+    if any(release["tagName"] == tag for release in json.loads(releases)):
+        raise ValueError(f"a release for {tag} already exists, possibly as a draft")
+
+
+def publish(directory=None, draft=True, plan=False):
+    """Create the GitHub release of the current main with the three files the updater reads."""
+    source = release_source()
+    version = f"{source['version']}-{source['pkgrel']}"
+    tag = f"v{version}"
+    if directory is None:
+        if git("status", "--porcelain", "--untracked-files=normal"):
+            raise ValueError("dirty source tree: releases are built from a clean checkout of main")
+        commit = git("rev-parse", "HEAD")
+        check_publishable(commit, tag)
+        if plan:
+            print(f"{tag}: build {commit} and create release 'RAD {version}'"
+                  f"{' as a draft' if draft else ''} in {REPOSITORY}")
+            return
+        directory = build()
+    commit, assets = release_assets(directory)
+    check_publishable(commit, tag)
+    if plan:
+        print(f"{tag}: create release 'RAD {version}' from {directory}{' as a draft' if draft else ''}")
+        return
+    url = run("gh", "release", "create", tag, "--repo", REPOSITORY, "--target", commit,
+              "--title", f"RAD {version}", "--notes", "", *(["--draft"] if draft else []),
+              *map(str, assets), capture_output=True, text=True).stdout.strip()
+    print(url)
+    if draft:
+        print("Draft release: publish it on GitHub to offer it in Settings > Updates.")
+
+
+@contextlib.contextmanager
+def validation_lock():
+    (ROOT / "target").mkdir(exist_ok=True)
+    with (ROOT / "target/rad-validation.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 def main():
@@ -352,16 +421,21 @@ def main():
     package_build.add_argument("--development", action="store_true", help="allow dirty source; emit no public update metadata")
     package_build.add_argument("--plan", action="store_true", help="check source/base and print intended build without executing it")
     package_build.add_argument("--reuse-build", action="store_true", help="development only: use existing binaries, not release evidence")
+    release = commands.add_parser("publish", help="build the current main and create its GitHub release (draft by default)")
+    release.add_argument("--dist", type=Path, help="publish this verified production build instead of building")
+    release.add_argument("--publish", action="store_true", help="publish at once instead of creating a draft")
+    release.add_argument("--plan", action="store_true", help="run the checks and print the intended release only")
     args = parser.parse_args()
     if args.command == "metadata":
         print(json.dumps(metadata(args.package, args.commit), indent=2))
     elif args.command == "stage":
         stage(args.bin_dir, args.output)
     elif args.command == "build":
-        (ROOT / "target").mkdir(exist_ok=True)
-        with (ROOT / "target/rad-validation.lock").open("w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with validation_lock():
             build(args.development, args.plan, args.reuse_build)
+    elif args.command == "publish":
+        with validation_lock():
+            publish(args.dist, draft=not args.publish, plan=args.plan)
 
 
 if __name__ == "__main__":
