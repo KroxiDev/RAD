@@ -24,20 +24,6 @@ el manejo de `Reply::TransferProgress` en [`App::pump_replies`](../crates/rad-ed
 El diseño se contrasta con el [checklist de UX](ux.md#checklist-para-cambios-en-la-interfaz)
 y se verifica con la [política de pruebas](testing.md).
 
-## Publicación de los plugins oficiales
-
-Media y Metrics 0.3.0, Audio y OBS 0.4.0 usan la capacidad `labels` y, OBS,
-el plazo fijo de respuesta ([ADR 0020](adr/0020-textos-de-plugins-y-plazo-fijo.md)).
-Audio y OBS 0.4.0 añaden `visual_states` y vínculos acción→visual
-([ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md)).
-Pendiente, con encargo y autorización de escritura remota:
-
-- Describir estas ampliaciones en la especificación y la guía para autores de
-  `KroxiDev/rad-plugins`.
-- Publicar allí las releases correspondientes después de una release de RAD que entienda el
-  contrato, y actualizar entonces sus entradas en
-  [official.rs](../crates/rad-editor/src/official.rs).
-
 ## Distribución y actualizaciones
 
 Implementada según [ADR 0018](adr/0018-distribucion-y-actualizacion-de-la-instalacion.md)
