@@ -8,8 +8,8 @@ los tipos del protocolo.
 La documentación canónica para autores está en
 **[KroxiDev/rad-plugins](https://github.com/KroxiDev/rad-plugins)**:
 
-- [Contrato de plugins v1](https://github.com/KroxiDev/rad-plugins/blob/sdk-v0.2.0/docs/contract-v1.md)
-- [Guía para autores](https://github.com/KroxiDev/rad-plugins/blob/sdk-v0.2.0/docs/author-guide.md)
+- [Contrato de plugins v1](https://github.com/KroxiDev/rad-plugins/blob/sdk-v0.3.0/docs/contract-v1.md)
+- [Guía para autores](https://github.com/KroxiDev/rad-plugins/blob/sdk-v0.3.0/docs/author-guide.md)
 - [Paquetes publicados](https://github.com/KroxiDev/rad-plugins/releases)
 
 Para trabajar en este repositorio, consultar el [índice técnico](../docs/README.md)

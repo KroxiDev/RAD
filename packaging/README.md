@@ -95,6 +95,27 @@ Esta modalidad permite un Working Tree sucio y marca `DEVELOPMENT-NOT-FOR-RELEAS
 **No genera metadata de actualización publicable.** No subir ese artefacto como
 release estable ni confundir `--reuse-build` con un build reproducible.
 
+## Publicar una release
+
+Con `beta` ya fusionada en `main` y `release.json` con la versión nueva, desde un
+checkout limpio de `main` y con `gh` autenticado con permiso de escritura en
+`KroxiDev/RAD`:
+
+```bash
+python3 packaging/release.py publish --plan     # Solo comprobaciones
+python3 packaging/release.py publish            # Construye y crea la release como borrador
+python3 packaging/release.py publish --publish  # Igual, pero la publica en el acto
+```
+
+Antes de construir y otra vez antes de crear la release comprueba que el checkout
+es exactamente el `main` remoto vigente y que la versión no tiene tag ni release,
+tampoco en borrador. Construye con el procedimiento de producción, vuelve a validar
+el paquete contra `rad-update.json` y `SHA256SUMS`, y crea `RAD <version>-<pkgrel>`
+con descripción vacía, el tag canónico sobre ese commit y los tres archivos. Un
+borrador no aparece en Actualizar RAD hasta publicarlo en GitHub. Si la build
+terminó pero la creación falló, `--dist <directorio de target/dist>` reutiliza esa
+misma build. Una build de desarrollo nunca se publica.
+
 ## Preparar la primera publicación
 
 1. Probar el paquete local con la sesión de RAD cerrada, conservando los datos y
@@ -110,9 +131,9 @@ release estable ni confundir `--reuse-build` con un build reproducible.
    procedimiento de producción y repetir la prueba sobre **ese artefacto**. Los
    paquetes `DEVELOPMENT-NOT-FOR-RELEASE` y `--reuse-build` no son candidatos públicos.
 5. Verificar identidad, dependencias/ABI, notices, ausencia de datos/rutas privadas,
-   digest, metadata y nombre disponible. Preparar una release con el tag canónico,
-   adjuntar el paquete, `rad-update.json` y checksum, revisar y sólo entonces
-   publicar como estable si realmente está lista. No marcar una beta como estable
+   digest, metadata y nombre disponible. Preparar la release como borrador con
+   [`publish`](#publicar-una-release), revisarla y sólo entonces
+   publicarla como estable si realmente está lista. No marcar una beta como estable
    para hacerla visible al actualizador. [Procedimiento de GitHub](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
 
 La instalación inicial y el reemplazo de paquete usan `pacman -U`; no requieren
