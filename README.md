@@ -126,10 +126,10 @@ Official plugins and releases: [KroxiDev/rad-plugins](https://github.com/KroxiDe
 
 | Plugin | Release | Controls |
 | --- | --- | --- |
-| Audio | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.2.0) | Output and microphone mute; status indicators |
-| Media | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/media-v0.2.0) | Playback controls and now playing |
-| OBS | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.2.0) | Program scene, filters, scene items, recording and streaming |
-| Metrics | [0.2.0](https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.2.0) | CPU, RAM, NVIDIA GPU and VRAM visuals |
+| Audio | [0.4.0](https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.4.0) | Output and microphone mute; status indicators |
+| Media | [0.3.0](https://github.com/KroxiDev/rad-plugins/releases/tag/media-v0.3.0) | Playback controls and now playing |
+| OBS | [0.4.0](https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.4.0) | Program scene, filters, scene items, recording and streaming |
+| Metrics | [0.3.0](https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.3.0) | CPU, RAM, NVIDIA GPU and VRAM visuals |
 
 In **Settings → Plugins → + Add plugin**, install an official plugin with its
 button, or paste a public GitHub release URL for another one, confirm that you
@@ -138,7 +138,7 @@ plugin offers **Update** when a newer release is out; any other plugin updates
 from the origin it was installed from. Reinstall and rollback are under
 **View details**.
 Releases 0.1.x predate plugin contract v1: RAD keeps them installed but does not
-run them until you update to 0.2.0.
+run them until you update them.
 Plugins run as native processes, **not in a security sandbox**; install only code
 you trust. See the [plugin author guide](plugins/README.md) for the SDK and protocol.
 
