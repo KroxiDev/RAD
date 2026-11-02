@@ -86,7 +86,8 @@ If dependencies are missing from that cache, download them first with
 `CARGO_HOME="$PWD/target/cargo-home" cargo fetch --locked` (requires network access).
 If RAD is already open, choose "Quit RAD" in the tray before rebuilding so the
 next launch uses the new binaries. `make up-full` opens your normal RAD session,
-with its data and services; it is not an isolated test.
+with its data and services; it is not an isolated test. For one, use
+`bash scripts/dev-run.sh` ([trying it by hand](docs/testing.md#probar-a-mano)).
 
 Without Make, you can also build and open it directly:
 
