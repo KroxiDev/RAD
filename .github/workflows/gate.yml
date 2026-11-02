@@ -19,6 +19,11 @@ concurrency:
 env:
   # Mismo toolchain que el desarrollo local; subirlo junto con él.
   RUST_TOOLCHAIN: "1.99.0"
+  CACHE_PATHS: |
+    target/cargo-home/registry/index
+    target/cargo-home/registry/cache
+    target/release
+    target/plugins/release
 
 jobs:
   gate:
@@ -38,18 +43,19 @@ jobs:
           # El kernel del runner (Ubuntu 24.04) restringe los user namespaces sin privilegios.
           sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 ||
             echo "::warning::No se pudo habilitar user namespaces; bwrap puede fallar."
-          # Los tests comprueban permisos: corren como usuario normal, no como root.
-          useradd --create-home ci
+          # Los tests comprueban permisos: corren como usuario normal, no como root, y
+          # rad-update solo confía en temporales cuyos padres son de root o del usuario.
+          # Por eso ci recibe el uid del dueño de los directorios sobre el checkout.
+          stat -c '%u %a %n' / "$(dirname "$GITHUB_WORKSPACE")" "$GITHUB_WORKSPACE"
+          useradd --create-home --uid "$(stat -c %u "$(dirname "$GITHUB_WORKSPACE")")" ci
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restaurar caché
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            target/cargo-home/registry/index
-            target/cargo-home/registry/cache
-            target/release
-            target/plugins/release
+          path: ${{ env.CACHE_PATHS }}
           key: gate-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'plugins/Cargo.lock') }}
           restore-keys: gate-${{ env.RUST_TOOLCHAIN }}-
 
@@ -64,6 +70,14 @@ jobs:
             cargo fetch --locked --manifest-path plugins/Cargo.toml
             bash scripts/gate.sh
           '
+
+      # También si el gate falló: lo compilado sirve para la próxima corrida.
+      - name: Guardar caché
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Logs del gate
         if: failure()
