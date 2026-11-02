@@ -37,8 +37,8 @@ claros.
 - Para comportamiento ejecutable: aplicar `.agentic/skills/tdd.md`.
 - Para revisar estándares y requisitos: `.agentic/skills/code-review.md`.
 - Para recuperar o guardar contexto: `.agentic/skills/usar-engram.md`.
-- Antes de localizar o comprender código: `.agentic/skills/usar-codegraph.md`;
-  consultar el índice disponible o recurrir a búsqueda y lectura directa.
+- Para seguir un flujo, las relaciones de un símbolo o el impacto de un cambio:
+  `.agentic/skills/usar-codegraph.md`.
 - Para tareas complejas ya especificadas: `.agentic/skills/orquestar.md`, con los
   roles de `.agentic/agents/`. Las tareas simples se resuelven directamente.
 - Para editar instrucciones de agentes: aplicar el skill de escritura para
