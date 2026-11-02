@@ -23,43 +23,36 @@ iterar, pero no sustituyen la validación completa de cambios ejecutables.
 
 ## Validación completa
 
-Ejecutar en serie desde la raíz, sin hardware ni ventanas. Reutilizar la caché;
-no descargar dependencias ni instalar herramientas por inferencia. El target debe
-quedar en el disco del repo: los builds en tmpfs agotaron su cuota.
+Ejecutar `bash scripts/gate.sh`: es el gate canónico. Corre en serie, sin hardware
+ni ventanas, reutiliza la caché y no descarga dependencias ni instala herramientas.
+El target queda en el disco del repo: los builds en tmpfs agotaron su cuota.
 
-```bash
-export CARGO_HOME="$PWD/target/cargo-home"
-export CARGO_TARGET_DIR="$PWD/target"
-export CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
-# Los tests de recuperación y limpieza nunca deben heredar el runtime/estado personal.
-install -d -m 700 "$PWD/target/test-session/runtime" "$PWD/target/test-session/state"
-export XDG_RUNTIME_DIR="$PWD/target/test-session/runtime"
-export XDG_STATE_HOME="$PWD/target/test-session/state"
-cargo fmt --all -- --check
-cargo build --offline --locked --release --workspace --all-features --bins --examples
-(
-  export CARGO_TARGET_DIR="$PWD/target/plugins"
-  cargo fmt --manifest-path plugins/Cargo.toml --all -- --check
-  cargo build --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --bins --examples
-)
-export RAD_TEST_LAUNCHER_HELPER="$CARGO_TARGET_DIR/release/rad-launcher-helper"
-export RAD_TEST_LAUNCHER_FIXTURE="$CARGO_TARGET_DIR/release/rad-launcher-fixture"
-cargo test --offline --locked --release --workspace --all-features
-cargo clippy --offline --locked --release --workspace --all-features --all-targets -- -D warnings
-(
-  export CARGO_TARGET_DIR="$PWD/target/plugins"
-  cargo test --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features
-  cargo clippy --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --all-targets -- -D warnings
-)
-bash scripts/conformance/audio-media/run.sh
-bash scripts/conformance/obs/run.sh
-bash scripts/conformance/metrics/run.sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s packaging/tests -v
-```
+- Cada corrida deja en `target/gate/<corrida>/` un log por paso, `resumen.tsv`
+  (paso, código de salida, segundos) y `estado.txt` con el commit y el árbol
+  probados. Termina en `GATE OK`, o con código distinto de 0 si falló un paso o el
+  árbol cambió durante la corrida.
+- Compila con hasta 8 trabajos simultáneos, el mismo límite que `make up`;
+  `CARGO_BUILD_JOBS` lo cambia.
+- El entorno vive en [`scripts/gate-env.sh`](../scripts/gate-env.sh): caché,
+  target y estado aislado de los tests. En un worktree secundario usa la caché
+  del checkout principal y siembra `target/` desde él con copias reflink, así que
+  solo recompila los crates del repo.
+
+Un gate completo en verde certifica el árbol de su `estado.txt`. Antes de
+repetirlo, comparar con `git diff --stat <árbol> HEAD`:
+
+- Sin diferencias, como al llevar la misma rama a `beta` y a `main`: citar ese
+  resumen.
+- Solo documentación o `packaging/release.json`: la comprobación de documentación
+  y `bash scripts/gate.sh version`, que prueba `rad-update` (compila
+  `release.json`) y `packaging/tests`.
+- Cualquier otro cambio: el gate completo.
 
 Los binarios y ejemplos/helpers de **ambos workspaces** deben compilarse antes de
 los tests de la raíz o focalizados: el runtime también usa fixtures de plugins,
 como `held-converter-fixture`. No depender de artefactos de una ejecución anterior.
+Las pruebas focales corren en el mismo entorno: `source scripts/gate-env.sh` en una
+shell dedicada y, para el workspace de plugins, `CARGO_TARGET_DIR="$CARGO_TARGET_DIR/plugins"`.
 Una comprobación
 focal crítica es `cargo test --offline --locked --release -p rad-core --test permissions`.
 Las conformidades usan fixtures de ambos workspaces y guardan salidas ignoradas
