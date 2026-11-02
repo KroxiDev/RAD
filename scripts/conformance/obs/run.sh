@@ -2,7 +2,7 @@
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 cd "$(dirname "$0")/../../.."
-export CARGO_HOME="$PWD/target/cargo-home" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
+export CARGO_HOME="${CARGO_HOME:-$PWD/target/cargo-home}" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(( $(nproc) < 8 ? $(nproc) : 8 ))}" CARGO_INCREMENTAL=0
 export CARGO_TARGET_DIR="$PWD/target"
 export RAD_TEST_LAUNCHER_HELPER="$PWD/target/release/rad-launcher-helper"
 export RAD_TEST_PLUGIN_FIXTURE="$PWD/target/release/rad-plugin-fixture"

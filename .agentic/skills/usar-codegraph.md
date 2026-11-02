@@ -1,13 +1,24 @@
 # Usar CodeGraph
 
-Antes de localizar o comprender código, seguir la documentación de CodeGraph disponible
-en el entorno. Esta skill no instala ni configura la integración.
+CodeGraph responde preguntas de relación: cómo llega un flujo de un punto a otro,
+quién llama a un símbolo, qué afecta cambiarlo o qué contiene un área desconocida.
+Esta skill no instala ni configura la integración; crear o reconstruir el índice
+requiere autorización explícita.
 
-1. Si existe `.codegraph/` y la herramienta está disponible, consultar `codegraph_explore`
-   (MCP) o `codegraph explore "<consulta>"` antes de buscar o leer código. Limitar la consulta
-   al proyecto y alcance autorizados; indicar archivos o símbolos concretos.
-2. Aprovechar las fuentes y relaciones devueltas; contrastar el detalle relevante con el código
-   actual y leer directamente lo omitido o desactualizado. Respetar las rutas protegidas y
-   secretos también en los resultados del índice.
-3. Sin índice o herramienta disponible, o si la consulta falla, usar `rg` y lectura directa e
-   informar la limitación. Crear o reconstruir el índice requiere autorización explícita.
+1. Elegir la consulta más angosta que responda la pregunta, dentro del proyecto y
+   alcance autorizados. La salida crece con cada término: un símbolo devuelve unos
+   4K caracteres y una lista de siete términos, unos 25K.
+   - Archivo o línea ya ubicados (por la tarea, el diff o un resultado anterior):
+     leer ese tramo directo con `rg` o `sed -n`.
+   - Un símbolo y sus relaciones: `codegraph_node`, `codegraph_callers` o
+     `codegraph_impact` (MCP), o `codegraph node|callers|impact <símbolo>` en la
+     terminal. Devuelven cientos de caracteres.
+   - Un flujo o un área desconocida: `codegraph_explore` (MCP) o
+     `codegraph explore`, con una sola pregunta, de uno a tres símbolos y
+     `maxFiles` bajo.
+2. Tratar lo devuelto como ya leído: contrastar con el código actual solo el
+   detalle que importa y leer directo lo omitido o desactualizado. Si falta algo,
+   la consulta siguiente nombra el símbolo concreto que falta. Respetar las rutas
+   protegidas y secretos también en los resultados del índice.
+3. Sin `.codegraph/`, sin la herramienta o si la consulta falla, usar `rg` y
+   lectura directa e informar la limitación.
