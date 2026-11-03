@@ -35,9 +35,20 @@ El tag se deriva como `v<version>-<pkgrel>`, sin prerelease ni build metadata.
 | `/usr/share/licenses/rust-action-deck/` | Licencia RAD y textos de dependencias incluidas |
 | `/usr/share/rad/release.json` | Identidad del producto instalado |
 
-`rad.png` sigue siendo la única fuente gráfica de ventana, menú y bandeja. Es la
-K provisional del GitHub del autor; se sustituye reemplazando ese PNG y
-recompilando. El app_id estable es `io.github.KroxiDev.RAD`.
+[rad.svg](rad.svg) es el original vectorial del logo RAD Solar, plano y con fondo
+transparente. [rad.png](rad.png) es su exportación de 512 × 512 px y la única imagen
+que consumen la ventana, el menú, la bandeja y el paquete. El app_id estable es
+`io.github.KroxiDev.RAD`.
+
+Para actualizar el logo, editar el SVG y regenerar el PNG desde la raíz con
+`rsvg-convert` (librsvg) disponible:
+
+```bash
+rsvg-convert --width 512 --height 512 --output packaging/rad.png packaging/rad.svg
+```
+
+El comando solo actualiza la imagen del repositorio. Recompilar incorpora el
+cambio en los ejecutables; el editor actualiza el ícono del menú al abrirse.
 
 El editor conserva la gestión de las unidades de usuario de ADR 0012/0016. Al
 abrir explícitamente la instalación del paquete reconcilia sus unidades y la entrada de menú con
