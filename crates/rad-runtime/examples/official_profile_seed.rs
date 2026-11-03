@@ -45,9 +45,13 @@ fn main() {
         .join("../..")
         .canonicalize()
         .unwrap();
-    let permitted = repo.join("target/performance").canonicalize().unwrap();
+    // Measurements and scripts/dev-run.sh seed fresh roots only inside these folders.
+    let target = repo.join("target").canonicalize().unwrap();
     assert!(root.is_absolute() && root.canonicalize().unwrap() == root);
-    assert!(root.starts_with(&permitted) && root != permitted);
+    assert!(["performance", "dev-run"].iter().any(|folder| {
+        let permitted = target.join(folder);
+        root.starts_with(&permitted) && root != permitted
+    }));
     let meta = fs::symlink_metadata(&root).unwrap();
     // SAFETY: geteuid takes no pointers and has no preconditions.
     assert!(meta.is_dir() && meta.mode() & 0o077 == 0 && meta.uid() == unsafe { libc::geteuid() });

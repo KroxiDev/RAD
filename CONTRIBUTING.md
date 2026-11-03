@@ -35,6 +35,8 @@ Compilar y ejecutar la aplicación son operaciones distintas. Abrir el editor pu
 instalar recursos de escritorio, arrancar el servicio y usar datos de la sesión.
 Los tests habituales se ejecutan sin ventanas ni hardware y con servicios privados;
 una comprobación real requiere autorización y un plan de aislamiento específico.
+Para ver el editor de un checkout sin tocar la instalación, usar
+[probar a mano](docs/testing.md#probar-a-mano).
 
 ## Implementar
 

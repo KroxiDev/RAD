@@ -4,7 +4,7 @@ set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 cd "$(dirname "$0")/../../.."
 export CARGO_HOME="${CARGO_HOME:-$PWD/target/cargo-home}" CARGO_TARGET_DIR="$PWD/target"
-export CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(( $(nproc) < 8 ? $(nproc) : 8 ))}" CARGO_INCREMENTAL=0
 out="${RAD_CONFORMANCE_OUTPUT:-target/conformance/audio-media-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 # Reserve a fresh directory atomically; never reuse a run or symlink.
 mkdir -p -- "$(dirname "$out")"

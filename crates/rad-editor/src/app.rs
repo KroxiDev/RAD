@@ -1133,6 +1133,8 @@ impl eframe::App for App {
 }
 
 #[cfg(test)]
+mod capture;
+#[cfg(test)]
 mod image_cleanup_tests;
 #[cfg(test)]
 mod reload_tests;

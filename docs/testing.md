@@ -13,6 +13,8 @@ no concede permiso para operar hardware, servicios o datos personales.
   fuentes, bloques de código y `git diff --check`. Leer también los archivos
   nuevos: el diff de Git no incluye los que aún no están rastreados. Esto valida
   documentación, no equivale a ejecutar tests de producto.
+- **Ver un cambio en el editor:** [capturas](#capturas) sin ventana; para usarlo
+  con datos nuevos, [probar a mano](#probar-a-mano). No sustituyen al gate.
 - **Hardware, escritorio o servicios reales:** requieren un encargo específico,
   aislamiento y control exclusivo. La [evidencia de rendimiento](performance.md#evidencia-y-límites)
   documenta escenarios medidos; no es permiso para repetirlos.
@@ -23,43 +25,36 @@ iterar, pero no sustituyen la validación completa de cambios ejecutables.
 
 ## Validación completa
 
-Ejecutar en serie desde la raíz, sin hardware ni ventanas. Reutilizar la caché;
-no descargar dependencias ni instalar herramientas por inferencia. El target debe
-quedar en el disco del repo: los builds en tmpfs agotaron su cuota.
+Ejecutar `bash scripts/gate.sh`: es el gate canónico. Corre en serie, sin hardware
+ni ventanas, reutiliza la caché y no descarga dependencias ni instala herramientas.
+El target queda en el disco del repo: los builds en tmpfs agotaron su cuota.
 
-```bash
-export CARGO_HOME="$PWD/target/cargo-home"
-export CARGO_TARGET_DIR="$PWD/target"
-export CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0
-# Los tests de recuperación y limpieza nunca deben heredar el runtime/estado personal.
-install -d -m 700 "$PWD/target/test-session/runtime" "$PWD/target/test-session/state"
-export XDG_RUNTIME_DIR="$PWD/target/test-session/runtime"
-export XDG_STATE_HOME="$PWD/target/test-session/state"
-cargo fmt --all -- --check
-cargo build --offline --locked --release --workspace --all-features --bins --examples
-(
-  export CARGO_TARGET_DIR="$PWD/target/plugins"
-  cargo fmt --manifest-path plugins/Cargo.toml --all -- --check
-  cargo build --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --bins --examples
-)
-export RAD_TEST_LAUNCHER_HELPER="$CARGO_TARGET_DIR/release/rad-launcher-helper"
-export RAD_TEST_LAUNCHER_FIXTURE="$CARGO_TARGET_DIR/release/rad-launcher-fixture"
-cargo test --offline --locked --release --workspace --all-features
-cargo clippy --offline --locked --release --workspace --all-features --all-targets -- -D warnings
-(
-  export CARGO_TARGET_DIR="$PWD/target/plugins"
-  cargo test --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features
-  cargo clippy --manifest-path plugins/Cargo.toml --offline --locked --release --workspace --all-features --all-targets -- -D warnings
-)
-bash scripts/conformance/audio-media/run.sh
-bash scripts/conformance/obs/run.sh
-bash scripts/conformance/metrics/run.sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s packaging/tests -v
-```
+- Cada corrida deja en `target/gate/<corrida>/` un log por paso, `resumen.tsv`
+  (paso, código de salida, segundos) y `estado.txt` con el commit y el árbol
+  probados. Termina en `GATE OK`, o con código distinto de 0 si falló un paso o el
+  árbol cambió durante la corrida.
+- Compila con hasta 8 trabajos simultáneos, el mismo límite que `make up`;
+  `CARGO_BUILD_JOBS` lo cambia.
+- El entorno vive en [`scripts/gate-env.sh`](../scripts/gate-env.sh): caché,
+  target y estado aislado de los tests. En un worktree secundario usa la caché
+  del checkout principal y siembra `target/` desde él con copias reflink, así que
+  solo recompila los crates del repo.
+
+Un gate completo en verde certifica el árbol de su `estado.txt`. Antes de
+repetirlo, comparar con `git diff --stat <árbol> HEAD`:
+
+- Sin diferencias, como al llevar la misma rama a `beta` y a `main`: citar ese
+  resumen o el [check de la CI](#integración-continua) de ese commit.
+- Solo documentación o `packaging/release.json`: la comprobación de documentación
+  y `bash scripts/gate.sh version`, que prueba `rad-update` (compila
+  `release.json`) y `packaging/tests`.
+- Cualquier otro cambio: el gate completo.
 
 Los binarios y ejemplos/helpers de **ambos workspaces** deben compilarse antes de
 los tests de la raíz o focalizados: el runtime también usa fixtures de plugins,
 como `held-converter-fixture`. No depender de artefactos de una ejecución anterior.
+Las pruebas focales corren en el mismo entorno: `source scripts/gate-env.sh` en una
+shell dedicada y, para el workspace de plugins, `CARGO_TARGET_DIR="$CARGO_TARGET_DIR/plugins"`.
 Una comprobación
 focal crítica es `cargo test --offline --locked --release -p rad-core --test permissions`.
 Las conformidades usan fixtures de ambos workspaces y guardan salidas ignoradas
@@ -71,6 +66,48 @@ el real dentro de `bwrap`, sin acceso al audio personal. Multimedia usa un bus
 D-Bus privado y reproductores falsos; OBS, servidores loopback efímeros; métricas,
 archivos y NVML falsos. Si el sandbox no permite ejecutarlos, informar lo no
 verificado: una suite verde no certifica hardware real ni todas las distribuciones.
+
+## Integración continua
+
+[`.github/workflows/gate.yml`](../.github/workflows/gate.yml) ejecuta
+`bash scripts/gate.sh` en cada PR a `beta` o `main` y en cada push a esas ramas,
+dentro de un contenedor de Arch con un usuario sin privilegios. Usa el toolchain
+fijado en `RUST_TOOLCHAIN` del workflow, que se sube junto con el local. Si falla,
+los logs de `target/gate/` quedan como artefacto `gate-logs` de la ejecución.
+
+El check **Gate** en verde certifica el commit que probó, igual que un gate local:
+al revisar ese mismo commit, citar el check en vez de repetir el gate. Otro commit
+o un árbol con cambios locales siguen las reglas de la sección anterior.
+
+## Probar a mano
+
+`bash scripts/dev-run.sh` compila el checkout donde está el script (el principal o
+un worktree) y abre su editor contra un runtime propio, con un perfil nuevo y sin
+el Stream Deck. Requiere la sesión gráfica. Al cerrar la ventana se detiene ese
+runtime; datos y logs (`runtime.log`, `editor.log`) quedan en
+`target/dev-run/<corrida>/`.
+
+- **Aislamiento:** runtime, datos, configuración, estado y caché usan directorios
+  XDG propios. El editor corre en un bus D-Bus privado, así que convive con el RAD
+  instalado abierto, y un `systemctl` que siempre falla le impide instalar o
+  arrancar servicios. La entrada de menú y las unidades que escribe quedan dentro
+  de la corrida.
+- **Plugins:** `--plugin audio|media|obs|metrics` instala antes el plugin de este
+  checkout, uno por corrida. Audio y multimedia actúan sobre el audio y los
+  reproductores reales de la sesión; OBS y métricas usan fixtures salvo `--real`.
+- **Límite:** «Usar el Stream Deck con RAD» empieza apagado. Encenderlo hace que
+  la prueba compita por el deck con el RAD instalado; requiere control exclusivo.
+
+### Capturas
+
+`bash scripts/dev-run.sh --capture` arranca el mismo runtime y, en vez de abrir la
+ventana, dibuja el editor real a PNG en `target/dev-run/<corrida>/capturas/`:
+tablero, tecla seleccionada y Ajustes. No necesita sesión gráfica ni GPU y acepta
+`--plugin`. Las escenas viven en [`app/capture.rs`](../crates/rad-editor/src/app/capture.rs),
+un `#[test]` ignorado que el gate compila pero no ejecuta. Crean tres teclas por la
+API pública y no comparan contra imágenes guardadas: un cambio visual no rompe
+nada. Una tarea que necesite otra pantalla agrega su escena ahí mientras dura y la
+retira al cerrar, como un test temporal.
 
 ## Contratos del actualizador
 
