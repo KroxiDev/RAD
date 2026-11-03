@@ -1,0 +1,88 @@
+# Corre el gate canónico (scripts/gate.sh, ver docs/testing.md) en cada PR a beta o
+# main y en cada push a esas ramas, que además guarda la caché que reutilizan los PR.
+name: Gate
+
+on:
+  pull_request:
+    branches: [beta, main]
+  push:
+    branches: [beta, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Mismo toolchain que el desarrollo local; subirlo junto con él.
+  RUST_TOOLCHAIN: "1.99.0"
+  CACHE_PATHS: |
+    target/cargo-home/registry/index
+    target/cargo-home/registry/cache
+    target/release
+    target/plugins/release
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # Arch como la distribución soportada: pacman/vercmp para rad-update y GLib,
+    # bwrap, dbus y pactl para los tests. Privilegiado para que bwrap cree namespaces.
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    steps:
+      - name: Paquetes del sistema
+        run: |
+          # El llavero primero: la imagen puede ser anterior a una clave nueva.
+          pacman -Sy --noconfirm --needed archlinux-keyring
+          pacman -Su --noconfirm --needed git rustup bubblewrap dbus libpulse glib2 python wayland libxkbcommon
+          # El kernel del runner (Ubuntu 24.04) restringe los user namespaces sin privilegios.
+          sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 ||
+            echo "::warning::No se pudo habilitar user namespaces; bwrap puede fallar."
+          # Los tests comprueban permisos: corren como usuario normal, no como root, y
+          # rad-update solo confía en temporales cuyos padres son de root o del usuario.
+          # Por eso ci recibe el uid del dueño de los directorios sobre el checkout.
+          stat -c '%u %a %n' / "$(dirname "$GITHUB_WORKSPACE")" "$GITHUB_WORKSPACE"
+          useradd --create-home --uid "$(stat -c %u "$(dirname "$GITHUB_WORKSPACE")")" ci
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Restaurar caché
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key: gate-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'plugins/Cargo.lock') }}
+          restore-keys: gate-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: Gate
+        run: |
+          chown -R ci: "$GITHUB_WORKSPACE"
+          runuser -u ci -- env HOME=/home/ci bash -euo pipefail -c '
+            rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+            rustup default "$RUST_TOOLCHAIN"
+            export CARGO_HOME="$PWD/target/cargo-home"
+            cargo fetch --locked
+            cargo fetch --locked --manifest-path plugins/Cargo.toml
+            bash scripts/gate.sh
+          '
+
+      # También si el gate falló: lo compilado sirve para la próxima corrida.
+      - name: Guardar caché
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Logs del gate
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate-logs
+          path: target/gate/
+          retention-days: 14

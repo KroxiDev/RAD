@@ -13,6 +13,8 @@ no concede permiso para operar hardware, servicios o datos personales.
   fuentes, bloques de código y `git diff --check`. Leer también los archivos
   nuevos: el diff de Git no incluye los que aún no están rastreados. Esto valida
   documentación, no equivale a ejecutar tests de producto.
+- **Ver un cambio en el editor:** [capturas](#capturas) sin ventana; para usarlo
+  con datos nuevos, [probar a mano](#probar-a-mano). No sustituyen al gate.
 - **Hardware, escritorio o servicios reales:** requieren un encargo específico,
   aislamiento y control exclusivo. La [evidencia de rendimiento](performance.md#evidencia-y-límites)
   documenta escenarios medidos; no es permiso para repetirlos.
@@ -42,7 +44,7 @@ Un gate completo en verde certifica el árbol de su `estado.txt`. Antes de
 repetirlo, comparar con `git diff --stat <árbol> HEAD`:
 
 - Sin diferencias, como al llevar la misma rama a `beta` y a `main`: citar ese
-  resumen.
+  resumen o el [check de la CI](#integración-continua) de ese commit.
 - Solo documentación o `packaging/release.json`: la comprobación de documentación
   y `bash scripts/gate.sh version`, que prueba `rad-update` (compila
   `release.json`) y `packaging/tests`.
@@ -64,6 +66,48 @@ el real dentro de `bwrap`, sin acceso al audio personal. Multimedia usa un bus
 D-Bus privado y reproductores falsos; OBS, servidores loopback efímeros; métricas,
 archivos y NVML falsos. Si el sandbox no permite ejecutarlos, informar lo no
 verificado: una suite verde no certifica hardware real ni todas las distribuciones.
+
+## Integración continua
+
+[`.github/workflows/gate.yml`](../.github/workflows/gate.yml) ejecuta
+`bash scripts/gate.sh` en cada PR a `beta` o `main` y en cada push a esas ramas,
+dentro de un contenedor de Arch con un usuario sin privilegios. Usa el toolchain
+fijado en `RUST_TOOLCHAIN` del workflow, que se sube junto con el local. Si falla,
+los logs de `target/gate/` quedan como artefacto `gate-logs` de la ejecución.
+
+El check **Gate** en verde certifica el commit que probó, igual que un gate local:
+al revisar ese mismo commit, citar el check en vez de repetir el gate. Otro commit
+o un árbol con cambios locales siguen las reglas de la sección anterior.
+
+## Probar a mano
+
+`bash scripts/dev-run.sh` compila el checkout donde está el script (el principal o
+un worktree) y abre su editor contra un runtime propio, con un perfil nuevo y sin
+el Stream Deck. Requiere la sesión gráfica. Al cerrar la ventana se detiene ese
+runtime; datos y logs (`runtime.log`, `editor.log`) quedan en
+`target/dev-run/<corrida>/`.
+
+- **Aislamiento:** runtime, datos, configuración, estado y caché usan directorios
+  XDG propios. El editor corre en un bus D-Bus privado, así que convive con el RAD
+  instalado abierto, y un `systemctl` que siempre falla le impide instalar o
+  arrancar servicios. La entrada de menú y las unidades que escribe quedan dentro
+  de la corrida.
+- **Plugins:** `--plugin audio|media|obs|metrics` instala antes el plugin de este
+  checkout, uno por corrida. Audio y multimedia actúan sobre el audio y los
+  reproductores reales de la sesión; OBS y métricas usan fixtures salvo `--real`.
+- **Límite:** «Usar el Stream Deck con RAD» empieza apagado. Encenderlo hace que
+  la prueba compita por el deck con el RAD instalado; requiere control exclusivo.
+
+### Capturas
+
+`bash scripts/dev-run.sh --capture` arranca el mismo runtime y, en vez de abrir la
+ventana, dibuja el editor real a PNG en `target/dev-run/<corrida>/capturas/`:
+tablero, tecla seleccionada y Ajustes. No necesita sesión gráfica ni GPU y acepta
+`--plugin`. Las escenas viven en [`app/capture.rs`](../crates/rad-editor/src/app/capture.rs),
+un `#[test]` ignorado que el gate compila pero no ejecuta. Crean tres teclas por la
+API pública y no comparan contra imágenes guardadas: un cambio visual no rompe
+nada. Una tarea que necesite otra pantalla agrega su escena ahí mientras dura y la
+retira al cerrar, como un test temporal.
 
 ## Contratos del actualizador
 

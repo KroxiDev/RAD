@@ -88,7 +88,8 @@ Si faltan dependencias en esa caché, descárgalas primero con
 `CARGO_HOME="$PWD/target/cargo-home" cargo fetch --locked` (requiere red).
 Si RAD ya está abierto, usa «Salir de RAD» en la bandeja antes de recompilar para
 que el próximo arranque use los binarios nuevos. `make up-full` abre la sesión
-normal de RAD, con sus datos y servicios; no es una prueba aislada.
+normal de RAD, con sus datos y servicios; no es una prueba aislada. Para eso,
+`bash scripts/dev-run.sh` ([probar a mano](docs/testing.md#probar-a-mano)).
 
 Sin Make, también puedes compilar y abrirlo directamente:
 
