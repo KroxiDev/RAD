@@ -57,13 +57,17 @@ Antes de añadir o retirar tests: aplicar la
 
 ## Git y GitHub
 
-- Rama por defecto `main`; `origin` es `KroxiDev/RAD`, público. Antes de editar,
-  comprobar rama, status y diff; preservar cambios ajenos.
-- Commit y push progresivos de entregas verificadas están autorizados. Mensajes
-  breves en inglés con Conventional Commits (`fix:`, `feat:`, `docs:`, etc.).
-- Crear/cambiar/borrar ramas, reescribir historia o descartar cambios requiere
-  autorización explícita y específica, incluso clean/reset/restore destructivos
-  y force-push. No abrir PR ni configurar remotos por inferencia.
+- `origin` es `KroxiDev/RAD`, público. `beta` integra el trabajo y `main` recibe
+  las promociones desde `beta` para publicar. Antes de editar, comprobar rama,
+  status y diff; preservar cambios ajenos.
+- Toda entrega verificada se integra por PR: rama de trabajo desde `beta`, commit,
+  push de esa rama, PR hacia `beta` y merge cuando pasa el check `gate`. La
+  promoción `beta` → `main` sigue el mismo camino. El push directo a `beta` o
+  `main` queda para cuando el usuario lo pida explícitamente. Mensajes breves en
+  inglés con Conventional Commits (`fix:`, `feat:`, `docs:`, etc.).
+- Borrar ramas, reescribir historia o descartar cambios requiere autorización
+  explícita y específica, incluso clean/reset/restore destructivos y force-push,
+  igual que configurar remotos.
 - Para GitHub usar el MCP `github`. Usar `gh` solo si falta conexión/operación o
   falla el MCP, explicando el motivo. El checkout se opera con `git`; con checkout
   local no escribir archivos directamente al remoto mediante MCP.

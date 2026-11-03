@@ -1,5 +1,7 @@
 [English](README.md) · [Español](README.es.md)
 
+<p align="center"><img src="packaging/rad.svg" alt="RAD logo" width="96"></p>
+
 # RAD · Rust Action Deck
 
 A native Linux editor and local runtime for your Stream Deck.
@@ -8,158 +10,89 @@ A native Linux editor and local runtime for your Stream Deck.
 
 ## What is RAD?
 
-RAD turns a Stream Deck XL into a configurable application launcher and control
-surface. Arrange buttons visually, organize them into folders, and combine actions.
-The runtime keeps working when the editor is closed.
+RAD turns a Stream Deck XL into an application launcher and control surface for
+your desktop. Arrange keys visually, group them into folders and combine actions.
+The deck keeps working when the editor is closed.
 
 ## Features
 
-- A 32-key layout, folders, drag-and-drop editing and undo/redo.
-- Up to 20 actions per button, sequential or parallel execution, and built-in Wait,
-  Sleep and Brightness actions.
-- Application launching from your desktop's application catalog.
-- Custom labels and static PNG/JPEG images.
-- English and Spanish UI; brightness (10–100%), idle and press-threshold settings.
-  Brightness actions raise or lower the saved value in ten-percentage-point steps.
-- Configuration export/restore. Exports exclude credentials and plugin executables.
-- Local CLI automation with inherited query, modify and execute permissions.
-- Optional audio, media, OBS and system-metrics plugins.
-- Official plugins load on demand and sleep when nothing needs them. Visible
-  buttons, queries and accepted work can keep them active—not just key presses.
+- A 32-key layout with folders, drag and drop, and undo/redo.
+- Up to 20 actions per key, run in sequence or in parallel.
+- Applications from your desktop's catalog, opened with one key.
+- Custom text, PNG/JPEG images and a built-in icon library.
+- Optional audio, media, OBS and system-metrics plugins, loaded only when needed.
+- Backups that exclude credentials, and a local CLI for automation.
+- English and Spanish interface.
 
-## Gallery
-
-| Key inspector | Plugin action |
+| Edit a key | Add plugins |
 | --- | --- |
-| ![A key with multiple actions](docs/images/editor-key.png) | ![An OBS action form](docs/images/editor-plugin-action.png) |
-
-![Editor settings](docs/images/editor-settings.png)
+| ![A key with two actions](docs/images/editor-key.png) | ![Settings, Plugins section](docs/images/editor-plugins.png) |
 
 Screenshots use a demo configuration.
 
-## Requirements
+## Install
 
-- Linux with Wayland and an OpenGL-capable driver. A recent Rust toolchain
-  supporting edition 2024 is needed only for source builds.
-- Read/write access to the Stream Deck's `hidraw` node. Distributions with the
-  systemd audiovisual-controller hwdb and udev rules can grant active-session
-  access through `uaccess`; check your distribution's device permissions.
-- Audio: `pactl`. Media: an MPRIS player on the session D-Bus.
-- GPU/VRAM metrics: the NVIDIA driver with NVML. CPU/RAM do not require NVIDIA.
-- OBS: local OBS Studio with its WebSocket server enabled.
-- Tests: `bwrap`, `pactl`, `dbus-daemon` and Linux namespace support.
-
-## Binary packages and updates
-
-Arch binary-package tooling targets **Omarchy 4.0.6 x86-64** as `rust-action-deck`.
-A published, verified stable release is not implied by the presence of that tooling;
-see the [distribution status and procedure](packaging/README.md).
-The package includes the editor, runtime, tray, launcher helper, CLI and updater;
-Rust is required to build it, not to use a precompiled package.
-
-Updates are checked only when you click **Check for updates** in **Settings → Updates**.
-Only stable official `KroxiDev/RAD` releases are eligible. A supported package
-installation offers **Update RAD** for a newer version; it downloads and verifies
-before stopping RAD, asks for system authorization and reopens the editor.
-There are no startup checks, tray notifications or automatic installations.
-Development checkouts cannot replace the system installation through this flow.
-The trust model is the official GitHub origin over HTTPS, **not an independent
-package signature**; pacman's configured signature checks are never disabled.
-Keep a private backup before testing installation/removal; portable RAD exports
-exclude credentials. See [installation and recovery](packaging/README.md#retirar-reinstalar-y-recuperar).
-
-## Build and run
-
-With GNU Make, from the repository root:
+RAD ships as the Arch package `rust-action-deck`, built for **Omarchy 4.0.6
+x86-64**. Download the `.pkg.tar.zst` file from the
+[latest release](https://github.com/KroxiDev/RAD/releases/latest) and install it:
 
 ```bash
-make up       # Build the application in release mode without opening it
-make up-full  # Build and open the editor only if the build succeeds
+sudo pacman -U ./rust-action-deck-<version>-<pkgrel>-x86_64.pkg.tar.zst
 ```
 
-These shortcuts build the application, not plugins, offline with the existing
-lockfile. By default they use the `target/cargo-home` cache and put binaries in
-`target/release`; you can override `CARGO_HOME` and `CARGO_TARGET_DIR`.
-The parallel build limit follows the available CPUs, up to 8; override it with
-`make up CARGO_BUILD_JOBS=4`.
-If dependencies are missing from that cache, download them first with
-`CARGO_HOME="$PWD/target/cargo-home" cargo fetch --locked` (requires network access).
-If RAD is already open, choose "Quit RAD" in the tray before rebuilding so the
-next launch uses the new binaries. `make up-full` opens your normal RAD session,
-with its data and services; it is not an isolated test. For one, use
-`bash scripts/dev-run.sh` ([trying it by hand](docs/testing.md#probar-a-mano)).
+Installed size: **about 50 MB** (editor, runtime, tray, CLI and updater). Plugins
+are installed separately, from the editor. Open RAD from the applications menu and
+turn on **Use the Stream Deck with RAD** in Settings.
 
-Without Make, you can also build and open it directly:
+To update, go to **Settings → Updates → Check for updates**; RAD never checks on
+its own. Updates come from the official GitHub releases over HTTPS, without a
+separate package signature. Details: [packaging and recovery](packaging/README.md).
 
-```bash
-cargo build --release
-target/release/rad-editor
-```
+Requirements:
 
-The first time, open `rad-editor` from RAD's `target/release` folder: it adds RAD
-to the applications menu and starts the runtime; from then on, open RAD from the
-menu. Keep `rad-runtime`, `rad-tray` and `rad-launcher-helper` beside the editor.
-The runtime starts without the deck and takes it when "Use the Stream Deck with
-RAD" is turned on in the editor's settings.
-
-Never run two deck controllers together. RAD does not read or modify data of other
-applications. Closing the editor leaves the runtime running; "Quit RAD" in the tray
-icon closes the editor and stops the runtime.
-
-Data lives in `$XDG_DATA_HOME/rad` or `~/.local/share/rad`; local sockets live
-under `$XDG_RUNTIME_DIR/rad`.
-
-The current deck document is v5; the SQLite store and backup container remain v2.
-Older data migrates forward while preserving the original; a v1 store keeps a
-`.v1-backup`.
-In **Settings → Backup**, **Export Backup** saves a new copy to `~/RAD Backups`
-without entering a path or overwriting earlier copies. Save pending edits first;
-the completed file's location is available under **View details**. Copies exclude
-credentials and plugin programs, so they are not a full installation backup.
-
-Backups are portable between installations; editor preferences stay local in
-`$XDG_CONFIG_HOME/rad/editor.json` (or `~/.config/rad/editor.json`). See the
-[data formats](docs/formats.md) reference for compatibility and limits.
+- Linux with Wayland and an OpenGL-capable driver.
+- Read/write access to the Stream Deck's `hidraw` device. Many distributions grant
+  it to the active session through `uaccess`.
+- No other Stream Deck app running at the same time.
 
 ## Plugins
 
-Official plugins and releases: [KroxiDev/rad-plugins](https://github.com/KroxiDev/rad-plugins).
-
-| Plugin | Release | Controls |
+| Plugin | Controls | Needs |
 | --- | --- | --- |
-| Audio | [0.4.0](https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.4.0) | Output and microphone mute; status indicators |
-| Media | [0.3.0](https://github.com/KroxiDev/rad-plugins/releases/tag/media-v0.3.0) | Playback controls and now playing |
-| OBS | [0.4.0](https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.4.0) | Program scene, filters, scene items, recording and streaming |
-| Metrics | [0.3.0](https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.3.0) | CPU, RAM, NVIDIA GPU and VRAM visuals |
+| Audio | Output and microphone mute, with status | `pactl` |
+| Media | Playback controls and now playing | An MPRIS player |
+| OBS | Program scene, filters, scene items, recording and streaming | OBS Studio with its WebSocket server on |
+| Metrics | CPU, RAM, GPU and VRAM | GPU/VRAM: NVIDIA driver with NVML |
 
-In **Settings → Plugins → + Add plugin**, install an official plugin with its
-button, or paste a public GitHub release URL for another one, confirm that you
-trust its native code and choose **Install**; a bar shows the download. An official
-plugin offers **Update** when a newer release is out; any other plugin updates
-from the origin it was installed from. Reinstall and rollback are under
-**View details**.
-Releases 0.1.x predate plugin contract v1: RAD keeps them installed but does not
-run them until you update them.
-Plugins run as native processes, **not in a security sandbox**; install only code
-you trust. See the [plugin author guide](plugins/README.md) for the SDK and protocol.
+Install them from **Settings → Plugins → + Add plugin**; the editor offers
+**Update** when a new release is out. Releases live in
+[KroxiDev/rad-plugins](https://github.com/KroxiDev/rad-plugins). You can also
+paste the public GitHub release URL of another plugin. Plugins run as native
+processes, **not in a security sandbox**: install only code you trust. To write
+one, see the [plugin author guide](plugins/README.md).
 
-## Autostart
+## Your data
 
-The editor installs and starts the runtime as a systemd **user** service: when the
-runtime does not answer, it writes the unit
-([packaging/rad-runtime.service](packaging/rad-runtime.service)) to
-`$XDG_CONFIG_HOME/systemd/user/` (or `~/.config/systemd/user/`) pointing at the
-`rad-runtime` beside the editor, rewrites it when a new version changes it, and
-starts it, with or without autostart. Keep `rad-runtime` and `rad-launcher-helper`
-together in that folder. The service starts without the deck. Using the deck and
-starting RAD with your computer are machine settings changed from the editor;
-turning on the first also turns on the second.
+Configuration lives in `$XDG_DATA_HOME/rad` (usually `~/.local/share/rad`).
+**Settings → Backup → Export Backup** saves a copy to `~/RAD Backups`; copies
+exclude credentials and plugin programs. Closing the editor leaves the deck
+working; **Quit RAD** in the tray icon stops everything.
 
-The unit restarts the runtime after unexpected failures (exit code 1 or a crash) with a
-growing delay, and stops after 5 starts in 5 minutes. It does not restart after a clean
-stop (0) or when a restart cannot help (75: another instance is running, or the runtime
-directory or environment is unusable). The exit classes are tabulated in
-[`crates/rad-runtime/src/exit.rs`](crates/rad-runtime/src/exit.rs).
+## Build from source
+
+You need a recent Rust toolchain with edition 2024. From the repository root:
+
+```bash
+CARGO_HOME="$PWD/target/cargo-home" cargo fetch --locked  # first time only, needs network
+make up       # build in release mode
+make up-full  # build, then open the editor
+```
+
+Binaries land in `target/release`. The first time, open `rad-editor` from there:
+it adds RAD to the applications menu and starts the runtime as a systemd user
+service. Quit RAD from the tray before rebuilding so the next launch uses the new
+binaries. To try a change without touching your installed RAD or its data, run
+`bash scripts/dev-run.sh` ([how it works](docs/testing.md#probar-a-mano)).
 
 ## How it works
 
@@ -169,21 +102,15 @@ Editor / rad-cli ↔ local Unix socket ↔ Runtime ↔ Stream Deck (hidraw)
                                   Plugin processes
 ```
 
-The runtime owns configuration, execution, navigation and the device. The native
-eframe/egui editor uses Glow; editor and CLI share the same domain validation.
-Each active plugin has its own process, isolated from the runtime's address space.
+The runtime owns configuration, execution, navigation and the device. The editor
+and the CLI are clients of it, and each active plugin runs in its own process.
 
 ## Development
 
 Start with [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [technical documentation index](docs/README.md) (canonical language: Spanish).
-They connect the domain glossary, architecture, contracts and contributor workflow.
-
-The application and plugins are separate Cargo workspaces. The
-[validation guide](docs/testing.md) is the single source for the complete offline
-gate, helper builds, test isolation, formatting, clippy and conformance scripts.
-Agents must also follow [AGENTS.md](AGENTS.md). Building does not require opening
-the editor or taking control of a device.
+The [validation guide](docs/testing.md) describes the full test gate. Agents must
+also follow [AGENTS.md](AGENTS.md).
 
 ## Status
 
