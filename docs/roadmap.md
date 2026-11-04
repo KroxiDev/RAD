@@ -13,7 +13,7 @@ no se crea otra autoridad en el editor.
 | Área | Situación actual | Cambio pendiente |
 |---|---|---|
 | Identificadores | Los IDs se muestran y copian en «Avanzado» del inspector de cada tecla | Reunirlos en Ajustes → Avanzado, conforme a S2 |
-| Copiar o mover | La elección del destino exige escribir el ID de una carpeta | Elegir carpeta por nombre o mediante arrastre |
+| Mover carpetas | Copiar y pegar usa Ctrl+C / Ctrl+V sin IDs; mover una carpeta todavía exige escribir el ID de destino | Elegir carpeta por nombre o mediante arrastre para mover carpetas |
 | Permisos de automatización | Están repartidos entre el inspector de tecla/acción y la sección Automatización de Ajustes | Reunirlos en Avanzado → Automatización, ocultos salvo que se activen |
 | Progreso de copias | La transferencia muestra bytes; la descarga de plugins ya tiene barra | Mostrar barra de progreso para las copias |
 

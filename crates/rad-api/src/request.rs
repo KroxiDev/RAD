@@ -280,7 +280,7 @@ requests! {
     CreateFolder => "create_folder", true { parent_id:String, position:usize, name:String },
     AddAction => "add_action", true { button_id:String, #[serde(rename="type")] type_key:String, parameters:ActionParameters },
     Edit => "edit", true { changes:Vec<Change>, #[serde(default,skip_serializing_if="Option::is_none")] expected_revision:Option<String> },
-    Duplicate => "duplicate", true { id:String, folder_id:String, position:usize },
+    Duplicate => "duplicate", true { id:String, folder_id:String, position:usize, #[serde(default,skip_serializing_if="std::ops::Not::not")] replace:bool },
     Delete => "delete", true { id:String, confirm_contents:bool },
     MoveFolder => "move_folder", true { id:String, parent_id:String, position:usize },
     SetPermissions => "set_permissions", true { target:String, value:LocalPermissions },

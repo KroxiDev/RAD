@@ -506,3 +506,16 @@ Framing sigue en v1. Las variantes nuevas requieren actualizar lectores cerrados
 editor y runtime se distribuyen juntos. Compatibilidad documental y decisiones:
 [ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md) y
 [ADR 0022](adr/0022-estilo-del-texto-y-documento-v7.md).
+
+## Duplicar una tecla
+
+`duplicate` recibe `id` (botón fuente), `folder_id`, `position` y el booleano
+opcional `replace`, cuyo valor omitido es `false`. Sin reemplazo, un destino
+ocupado se rechaza con `busy`. Con `replace: true`, se captura primero la
+tecla fuente y se reemplaza el ocupante; si este abre una carpeta, se elimina
+todo su contenido. El retorno está protegido. La copia crea identidades nuevas
+y publica una sola revisión, reversible con un solo `undo`. Solo el editor
+puede pedir esta operación. Una fuente de carpeta copia todo el subárbol,
+incluso al pegar dentro de sí misma o sobre una descendiente. Superar el límite
+de identidades vigentes rechaza la operación con `resource_exhausted`, sin
+publicación parcial.

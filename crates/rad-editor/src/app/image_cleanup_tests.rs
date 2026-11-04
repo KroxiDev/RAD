@@ -301,6 +301,7 @@ fn terminal_cleanup_closes_only_its_socket_invalidates_prepared_images_and_recon
                 saved.send(serde_json::to_value(request).unwrap()).unwrap();
             }
             Event {
+                paste: false,
                 plugin_apply: false,
                 plugin_admin: false,
                 plugin_manifest: false,
@@ -350,6 +351,7 @@ fn cleanup_backoff_requests_an_egui_deadline_and_progresses_without_polling() {
     app.worker = Worker::spawn(move |job| {
         sent.send(job).unwrap();
         Event {
+            paste: false,
             plugin_apply: false,
             plugin_admin: false,
             plugin_manifest: false,

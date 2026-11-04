@@ -16,6 +16,7 @@ mod actions;
 mod ahead;
 mod application_icons;
 mod bar;
+mod clipboard;
 mod credentials;
 mod deck;
 mod icon_library;
@@ -358,6 +359,8 @@ pub struct App {
     app_picker: launcher::ApplicationPicker,
     /// Action dropped on an empty key: added once the new key is published.
     pending_action: Option<(usize, NewAction)>,
+    copied_key: Option<String>,
+    pending_paste: Option<clipboard::PendingPaste>,
     /// Key that was just sent an application, and that application's desktop entry: the
     /// key may take its icon once the action is applied.
     icon_candidate: Option<(String, String)>,
@@ -500,6 +503,8 @@ impl App {
             catalog_read: None,
             app_picker: Default::default(),
             pending_action: None,
+            copied_key: None,
+            pending_paste: None,
             icon_candidate: None,
             icon_asked: false,
             application_icons: Default::default(),
@@ -600,6 +605,7 @@ impl App {
         self.attempted = true;
         self.transfer_active = false;
         self.pending_action = None;
+        self.pending_paste = None;
         self.catalog_read = None;
         self.app_picker = Default::default();
         self.icon_candidate = None;
@@ -626,6 +632,9 @@ impl App {
             .replace(&mut self.worker, move || wake.request_repaint());
     }
     fn send(&mut self, request: Request) {
+        if matches!(request, Request::Navigate { .. }) {
+            self.pending_paste = None;
+        }
         self.command(Job::Request(request));
     }
     fn selected(&self) -> Option<String> {
@@ -633,6 +642,17 @@ impl App {
     }
     /// Runs the selected key now, through the same admission as a physical press.
     fn try_selected(&mut self) {
+        if self.inspection.as_ref().is_some_and(|inspection| {
+            inspection.button["id"].as_str() == self.control.selected()
+                && inspection.actions.iter().any(|action| {
+                    matches!(
+                        action["fields"]["type"].as_str(),
+                        Some("enter_folder" | "return")
+                    )
+                })
+        }) {
+            self.pending_paste = None;
+        }
         if let Some(request) = self.control.try_selected() {
             self.send(request);
         }
@@ -935,7 +955,7 @@ impl App {
         }
     }
     /// Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) reach the runtime unless a text field wants them;
-    /// Delete removes the selected key.
+    /// Delete removes the selected key; Copy/Paste duplicate it into the selected place.
     fn shortcuts(&mut self, ctx: &egui::Context) {
         if !self.connected
             || !self.recovery.is_normal()
@@ -956,9 +976,12 @@ impl App {
         } else if self.navigation.screen() == crate::screens::Screen::Keys
             && !self.key_form_open()
             && !egui::Popup::is_any_open(ctx)
-            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete))
         {
-            self.delete_selected();
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete)) {
+                self.delete_selected();
+            } else {
+                self.clipboard_shortcuts(ctx);
+            }
         }
     }
     /// The keys, the actions to drop on them and the panel of the selected one.
@@ -1143,6 +1166,8 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod capture;
+#[cfg(test)]
+mod clipboard_tests;
 #[cfg(test)]
 mod image_cleanup_tests;
 #[cfg(test)]

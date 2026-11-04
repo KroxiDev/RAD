@@ -160,6 +160,17 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   y dice «Cargando…» solo si tarda más de 0,4 s.
 - **Borrar.** La papelera del panel o Supr borran la tecla seleccionada, o la
   carpeta a la que entra, sin confirmación; Ctrl+Z la recupera.
+- **Copiar y pegar teclas.** Ctrl+C copia la tecla seleccionada y Ctrl+V la pega
+  en la posición seleccionada de la carpeta visible. Se copia su contenido publicado
+  al pegar; las carpetas incluyen su subárbol. Pegar sobre una tecla la reemplaza
+  (una carpeta, con su contenido) y selecciona la nueva tecla en la misma
+  actualización; Ctrl+Z deshace cada pegado en un paso. Cambiar de carpeta mientras
+  llega la respuesta cancela esa selección pendiente. Copiar muestra «Tecla copiada»;
+  pegar con éxito no agrega un aviso. Si la fuente ya no existe, se avisa «La tecla
+  copiada ya no existe». Volver y pegar sobre la propia fuente no producen cambios.
+  Los atajos solo actúan en Teclas, sin formulario ni menú abierto y sin foco en
+  texto; dentro de un campo se conserva el copiar y pegar de texto. Copiar otro
+  contenido al portapapeles invalida el pegado de tecla; no hay atajo para cortar.
 - **Mover una tecla.** Al arrastrarla, su cara (imagen, texto o cara de plugin,
   tal como se ve en el deck) sigue al puntero al tamaño de la tecla, tomada por el
   mismo punto; la original queda atenuada hasta soltar. Las acciones y la carpeta

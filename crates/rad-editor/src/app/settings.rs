@@ -512,6 +512,7 @@ mod backup_tests {
         app.worker = crate::worker::Worker::spawn(move |job| {
             sent.send(format!("{job:?}")).unwrap();
             crate::native::Event {
+                paste: false,
                 plugin_apply: false,
                 plugin_admin: false,
                 plugin_manifest: false,
