@@ -913,6 +913,7 @@ impl App {
                             id: id.into(),
                             folder_id: self.move_folder.clone(),
                             position: self.move_position,
+                            replace: false,
                         });
                     }
                     if let Some(request) =
@@ -1098,6 +1099,7 @@ mod brightness_tests {
                 sent.send(request.arguments()).unwrap();
             }
             crate::native::Event {
+                paste: false,
                 plugin_apply: false,
                 plugin_admin: false,
                 plugin_manifest: false,

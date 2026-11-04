@@ -851,6 +851,7 @@ mod tests {
                 Ok(Reply::Theme)
             };
             Event {
+                paste: false,
                 plugin_apply: false,
                 plugin_admin: false,
                 plugin_manifest: false,
@@ -943,6 +944,7 @@ mod tests {
         app.worker = Worker::spawn(move |job| {
             sent.send(job).unwrap();
             crate::native::Event {
+                paste: false,
                 plugin_apply: false,
                 plugin_admin: false,
                 plugin_manifest: false,
@@ -1182,6 +1184,7 @@ mod tests {
         app.worker = Worker::spawn(move |job| {
             sent.send(job).unwrap();
             crate::native::Event {
+                paste: false,
                 plugin_apply: false,
                 plugin_admin: false,
                 plugin_manifest: false,

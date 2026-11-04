@@ -575,5 +575,7 @@
   "The image could not be discarded. Your text is still here; choose the image again.": "No se pudo descartar la imagen. Tu texto sigue aquí; vuelve a elegir la imagen.",
   "Style": "Estilo",
   "Text color": "Color del texto",
-  "Bar behind the text": "Barra detrás del texto"
+  "Bar behind the text": "Barra detrás del texto",
+  "Key copied": "Tecla copiada",
+  "The copied key no longer exists": "La tecla copiada ya no existe"
 }

@@ -575,5 +575,7 @@
   "The image could not be discarded. Your text is still here; choose the image again.": "The image could not be discarded. Your text is still here; choose the image again.",
   "Style": "Style",
   "Text color": "Text color",
-  "Bar behind the text": "Bar behind the text"
+  "Bar behind the text": "Bar behind the text",
+  "Key copied": "Key copied",
+  "The copied key no longer exists": "The copied key no longer exists"
 }

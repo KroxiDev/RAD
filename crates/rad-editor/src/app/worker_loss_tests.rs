@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 fn event(connected: bool, result: Result<Reply, crate::session::Error>) -> Event {
     Event {
+        paste: false,
         plugin_apply: false,
         plugin_admin: false,
         plugin_manifest: false,

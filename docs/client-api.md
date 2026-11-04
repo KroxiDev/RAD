@@ -511,7 +511,7 @@ editor y runtime se distribuyen juntos. Compatibilidad documental y decisiones:
 
 `duplicate` recibe `id` (botón fuente), `folder_id`, `position` y el booleano
 opcional `replace`, cuyo valor omitido es `false`. Sin reemplazo, un destino
-ocupado se rechaza con `occupied`. Con `replace: true`, se captura primero la
+ocupado se rechaza con `busy`. Con `replace: true`, se captura primero la
 tecla fuente y se reemplaza el ocupante; si este abre una carpeta, se elimina
 todo su contenido. El retorno está protegido. La copia crea identidades nuevas
 y publica una sola revisión, reversible con un solo `undo`. Solo el editor

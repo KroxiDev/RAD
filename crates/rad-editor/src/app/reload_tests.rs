@@ -9,6 +9,7 @@ use std::sync::{
 
 fn event(result: Result<Reply, crate::session::Error>) -> Event {
     Event {
+        paste: false,
         plugin_apply: false,
         plugin_admin: false,
         plugin_manifest: false,

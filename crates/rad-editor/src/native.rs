@@ -166,6 +166,8 @@ pub struct OptionsEvent {
     pub result: Result<Value, Error>,
 }
 pub struct Event {
+    /// A key paste, whose result controls selection of the replaced slot.
+    pub paste: bool,
     pub plugin_apply: bool,
     pub plugin_admin: bool,
     pub plugin_manifest: bool,
@@ -348,6 +350,7 @@ pub fn start_with_clock(
     let mut visual_epoch = String::new();
     let mut visual_revisions = std::collections::BTreeMap::new();
     Worker::spawn(move |job| {
+        let paste = matches!(&job, Job::Request(Request::Duplicate { replace: true, .. }));
         let plugin_apply = matches!(&job, Job::PluginApply(_) | Job::LinkedAction(_));
         let plugin_admin = matches!(&job,Job::Request(r) if r.operation().as_str()=="plugin_admin");
         let plugin_manifest = matches!(&job, Job::Request(Request::PluginManifest { .. }));
@@ -623,6 +626,7 @@ pub fn start_with_clock(
             other => other,
         };
         Event {
+            paste,
             plugin_apply,
             plugin_admin,
             plugin_manifest,
