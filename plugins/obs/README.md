@@ -1,7 +1,7 @@
 # Plugin de OBS para RAD
 
 Referencia de la integración oficial para desarrolladores y agentes. Plugin
-independiente `org.rad.obs` (`rad-plugin-obs`), versión 0.4.0, contrato de plugins v1
+independiente `org.rad.obs` (`rad-plugin-obs`), versión 0.4.1, contrato de plugins v1
 con capacidades negociadas de credenciales, ajustes, opciones, textos traducidos y
 plazo de respuesta ([ADR 0020](../../docs/adr/0020-textos-de-plugins-y-plazo-fijo.md)).
 Consultar el [contrato y la guía para autores](../README.md).
