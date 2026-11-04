@@ -658,7 +658,7 @@ fn an_action_waits_fifteen_seconds_for_obs_to_accept_then_says_it_is_unavailable
             sessions: BTreeMap::new(),
             stop: false,
         }),
-        wake: Condvar::new(),
+        wake: Wake::new().unwrap(),
         endpoint,
     });
     // No worker thread: the identical production turn is driven by this test clock.
@@ -1061,7 +1061,7 @@ fn settings_port_separates_live_sessions_with_the_same_credentials() {
             sessions: BTreeMap::new(),
             stop: false,
         }),
-        wake: Condvar::new(),
+        wake: Wake::new().unwrap(),
         endpoint,
     });
     let plugin = ObsPlugin {
@@ -1134,7 +1134,7 @@ fn settings_port_is_bounded_loopback_and_test_mode_never_reaches_personal_obs() 
             sessions: BTreeMap::new(),
             stop: false,
         }),
-        wake: Condvar::new(),
+        wake: Wake::new().unwrap(),
         endpoint: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4455),
     };
     assert_eq!(shared.endpoint_for(None).unwrap().port(), 4455);

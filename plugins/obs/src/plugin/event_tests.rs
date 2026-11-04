@@ -37,6 +37,7 @@ impl Peer {
             let mut held = false;
             let mut pending = Vec::new();
             let mut missing = false;
+            let mut muted = false;
             'serve: loop {
                 for event in incoming.try_iter() {
                     match event["test"].as_str() {
@@ -74,7 +75,11 @@ impl Peer {
                     "GetStreamStatus" | "GetVirtualCamStatus" | "GetReplayBufferStatus" => {
                         json!({"outputActive":false})
                     }
-                    "GetInputMute" => json!({"inputMuted":false}),
+                    "GetInputMute" => json!({"inputMuted":muted}),
+                    "SetInputMute" => {
+                        muted = request["d"]["requestData"]["inputMuted"].as_bool().unwrap();
+                        json!({})
+                    }
                     "GetSceneList" => {
                         json!({"scenes":[{"sceneName":"Main"},{"sceneName":"Other"},{"sceneName":"Third"}]})
                     }
@@ -99,7 +104,7 @@ impl Peer {
                 sessions: BTreeMap::new(),
                 stop: false,
             }),
-            wake: Condvar::new(),
+            wake: Wake::new().unwrap(),
             endpoint,
         });
         let plugin = ObsPlugin {
@@ -554,5 +559,85 @@ fn collection_changed_does_not_wait_for_obsolete_response_and_ignores_it_when_la
         peer.messages()
             .iter()
             .all(|m| m["message"]["state"]["availability"] != "unavailable")
+    );
+}
+
+#[test]
+fn action_prereads_send_immediately_and_confirmation_alone_waits_100ms() {
+    let mut peer = Peer::new();
+    peer.subscribe("mute", json!({"input":target("input", "Mic", None)}));
+    let id = peer.submit(json!({"kind":"invoke","credential_revision":1,"action":"mute","parameters":{"schema_version":1,"values":{"input":target("input","Mic",None),"operation":"toggle"}}}));
+    peer.pump();
+    let requests: Vec<_> = peer.requests.try_iter().collect();
+    let names: Vec<_> = requests
+        .iter()
+        .map(|r| r["d"]["requestType"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        ["GetSceneCollectionList", "GetInputMute", "SetInputMute"]
+    );
+    peer.now += Duration::from_millis(99);
+    peer.pump();
+    assert!(
+        peer.requests.try_iter().next().is_none(),
+        "confirmation must remain spaced"
+    );
+    peer.now += Duration::from_millis(1);
+    peer.pump();
+    assert_eq!(
+        peer.requests.try_iter().next().unwrap()["d"]["requestType"],
+        "GetInputMute"
+    );
+    assert_eq!(peer.response(id)["message"]["outcome"]["status"], "success");
+}
+#[test]
+fn queued_actions_read_previous_effect_and_run_before_pending_visuals() {
+    let mut peer = Peer::new();
+    peer.subscribe("record", json!({}));
+    let invoke = json!({"kind":"invoke","credential_revision":1,"action":"mute","parameters":{"schema_version":1,"values":{"input":target("input","Mic",None),"operation":"toggle"}}});
+    let first = peer.submit(invoke.clone());
+    let second = peer.submit(invoke);
+    for session in lock(&peer.shared.inner).sessions.values_mut() {
+        session.watches[0].next = peer.now;
+    }
+    peer.pump();
+    let requests: Vec<_> = peer.requests.try_iter().collect();
+    assert_eq!(
+        requests[0]["d"]["requestType"], "GetSceneCollectionList",
+        "ready action has priority over visual"
+    );
+    let effects: Vec<_> = requests
+        .iter()
+        .filter(|r| r["d"]["requestType"] == "SetInputMute")
+        .map(|r| r["d"]["requestData"]["inputMuted"].clone())
+        .collect();
+    assert_eq!(
+        effects,
+        [json!(true)],
+        "only first action before confirmation"
+    );
+    peer.now += Duration::from_millis(100);
+    peer.pump();
+    assert_eq!(
+        peer.response(first)["message"]["outcome"]["status"],
+        "success"
+    );
+    let requests: Vec<_> = peer.requests.try_iter().collect();
+    let effects: Vec<_> = requests
+        .iter()
+        .filter(|r| r["d"]["requestType"] == "SetInputMute")
+        .map(|r| r["d"]["requestData"]["inputMuted"].clone())
+        .collect();
+    assert_eq!(
+        effects,
+        [json!(false)],
+        "second reads the first effect before toggling"
+    );
+    peer.now += Duration::from_millis(100);
+    peer.pump();
+    assert_eq!(
+        peer.response(second)["message"]["outcome"]["status"],
+        "success"
     );
 }

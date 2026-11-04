@@ -1,14 +1,16 @@
 //! SDK adapter and one bounded worker. No OBS I/O occurs on the SDK thread.
 use crate::{protocol, transport::Transport};
+mod wake;
 use rad_plugin_sdk::*;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     net::{Ipv4Addr, SocketAddrV4},
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Mutex},
     thread::JoinHandle,
     time::{Duration, Instant},
 };
+use wake::Wake;
 pub fn config() -> Config {
     Config::new(
         "org.rad.obs",
@@ -85,7 +87,7 @@ struct Inner {
 }
 struct Shared {
     inner: Mutex<Inner>,
-    wake: Condvar,
+    wake: Wake,
     endpoint: SocketAddrV4,
 }
 impl Shared {
@@ -137,7 +139,7 @@ impl ObsPlugin {
                 sessions: BTreeMap::new(),
                 stop: false,
             }),
-            wake: Condvar::new(),
+            wake: Wake::new()?,
             endpoint,
         });
         let worker = shared.clone();
@@ -378,14 +380,16 @@ fn run_worker(shared: Arc<Shared>) {
         if inner.stop {
             continue;
         }
-        if inner.sessions.is_empty() {
-            // No sockets or deadlines remain: only new demand (or shutdown) can wake us.
-            let _guard = shared
-                .wake
-                .wait_while(inner, |inner| !inner.stop && inner.sessions.is_empty());
-        } else {
-            let _ = shared.wake.wait_timeout(inner, Duration::from_millis(20));
-        }
+        let sockets = inner
+            .sessions
+            .values()
+            .filter_map(|session| session.transport.as_ref().and_then(Transport::readiness))
+            .collect();
+        // Retain the existing timer bound for deadlines/retries, but socket data and
+        // new SDK demand wake immediately. With no demand there is no periodic wake.
+        let timeout = if inner.sessions.is_empty() { -1 } else { 20 };
+        drop(inner);
+        shared.wake.wait(sockets, timeout);
     }
 }
 // Same turn for production monotonic time and isolated deadline tests.
@@ -730,7 +734,6 @@ impl Session {
                             .find(|w| protocol::matches_response(w.sent.as_deref(), &message))
                         {
                             job.sent = None;
-                            job.next = now + Duration::from_millis(100);
                             let result = if job
                                 .flow
                                 .request()
@@ -741,6 +744,11 @@ impl Session {
                                 job.flow.reject()
                             } else {
                                 job.flow.accept(message["d"]["responseData"].clone())
+                            };
+                            job.next = if job.flow.confirming() {
+                                now + Duration::from_millis(100)
+                            } else {
+                                now
                             };
                             job.outcome = match result {
                                 Err(code) => Some(Outcome::Failure { code }),
@@ -993,6 +1001,8 @@ fn visual_state(source: &str, params: &Parameters, data: &Value) -> VisualState 
         },
     }
 }
+#[cfg(test)]
+mod benchmark;
 #[cfg(test)]
 mod event_tests;
 #[cfg(test)]

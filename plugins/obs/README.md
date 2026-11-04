@@ -43,7 +43,10 @@ invierte lo leído; iniciar lo que ya está activo, o detener lo detenido, termi
 con éxito sin enviar nada. El éxito se confirma leyendo el estado real de OBS
 después del cambio; aceptar una orden no basta. «Guardar repetición» exige el
 búfer activo y se confirma cuando OBS informa una repetición guardada distinta
-de la anterior.
+de la anterior. Los pasos previos a la orden continúan al recibir cada respuesta;
+solo las lecturas de confirmación esperan 100 ms. Una acción lista tiene prioridad
+sobre las consultas de opciones y las relecturas pendientes. Los datos del socket
+y la demanda del SDK despiertan al worker sin esperar su siguiente revisión de plazos.
 
 Las acciones declaran 20 segundos de plazo al host. Si OBS no acepta la conexión,
 como mientras se está abriendo, cada acción lo espera hasta 15 segundos; después
@@ -97,6 +100,20 @@ endpoint del plugin.
 archivo privado regular `0600` en `$XDG_RUNTIME_DIR/rad-obs-fixture.port`. Rechaza
 el puerto 4455 y nunca recurre a producción como alternativa.
 Compilar primero los helpers según [Pruebas y validación](../../docs/testing.md).
+
+El benchmark ignorado `time_to_order_real_worker` mide desde el envío de `invoke`
+por el SDK hasta la llegada de la orden al peer falso, con el worker real. Para
+repetirlo, desde este workspace y con el entorno de pruebas cargado:
+
+```sh
+cargo test --offline --locked --release -p rad-plugin-obs time_to_order_real_worker -- --ignored --nocapture
+```
+
+Registra mediana y p95 de 30 muestras por operación, con nueve visuales suscritos,
+en sesión lista y con una petición visual en vuelo. Mide aparte la espera de la
+segunda acción por su primera petición al peer y el caso sin sesión abierta
+(excluye el arranque del proceso/SDK). `RAD_OBS_BENCH_ACTION=item` limita la
+medición a una operación; `queue` limita a la espera en cola. No forma parte del gate.
 
 La [evidencia real disponible](../../docs/performance.md#evidencia-y-límites)
 delimita las consultas OBS medidas mediante relay de solo lectura; no certifica
