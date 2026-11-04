@@ -37,6 +37,10 @@ paquetes sigue disponible.
 | [`obs`](obs) | `rad-plugin-obs` | Acciones de OBS, opciones dinámicas y estado visual. |
 | [`metrics`](metrics) | `rad-plugin-metrics` | Estado visual de CPU/RAM y GPU/VRAM NVIDIA. |
 
+Los iconos PNG de estado de los plugins oficiales tienen un presupuesto máximo
+de **4 KiB por icono** (8192 caracteres hexadecimales). El manifest completo sigue
+limitado a **64 KiB**, incluidos todos sus iconos.
+
 Los fixtures son instrumentos de prueba, nunca artefactos de release. Los tests
 no certifican hardware real, todas las distribuciones ni la seguridad de un plugin
 nativo arbitrario.

@@ -53,7 +53,8 @@ fn binary_official_manifests_fit_wire_budget_and_translate_all_state_labels() {
         for visual in &manifest.visuals {
             assert_eq!(visual.states.len(), 2);
             for state in &visual.states {
-                assert!(state.icon.as_ref().is_some_and(|i| i.len() <= 4096));
+                // Hex uses two characters per byte; official PNG icons have a 4 KiB budget.
+                assert!(state.icon.as_ref().is_some_and(|i| i.len() <= 2 * 4 * 1024));
                 assert!(manifest.translations["es"].contains_key(&state.label));
             }
         }
