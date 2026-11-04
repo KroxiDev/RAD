@@ -317,7 +317,7 @@ fn automation_checks_real_field_owners_and_aggregates_atomically_in_both_permiss
                 states: Default::default(),
                 text: "changed".into(),
                 image: None,
-                text_position: None,
+                text_style: Default::default(),
             },
         },
         Edit::SetVisual {
@@ -436,7 +436,7 @@ fn action_lifecycle_is_editor_only_and_navigation_cannot_be_removed_retyped_or_c
                             states: Default::default(),
                             text: "custom".into(),
                             image: None,
-                            text_position: None,
+                            text_style: Default::default(),
                         }
                     }
                 )

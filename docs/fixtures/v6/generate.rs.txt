@@ -1,0 +1,15 @@
+use rad_core::{configuration::*, identity::*};
+#[test]
+fn generate_v6_golden() {
+    let data = rad_codec::decode_data(include_bytes!("../../../docs/fixtures/v5/profile.json")).unwrap();
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(data.principal.installation()).unwrap()).unwrap();
+    let candidate = initial.configuration().prepare_restore(initial.registry(), Origin::Editor, true, data).unwrap();
+    let button = &candidate.configuration().data().buttons[0];
+    let mut appearance = button.appearance.clone();
+    appearance.text_position = Some(TextPosition::AboveImage);
+    appearance.states = [("muted".into(), StateFace { text: "Quiet".into(), image: None }), ("unmuted".into(), StateFace { text: "Live".into(), image: None })].into();
+    let candidate = candidate.configuration().prepare_edit(candidate.registry(), Origin::Editor, Edit::SetAppearance { button: button.binding.identity(), appearance }).unwrap();
+    let bytes = rad_codec::encode(candidate.configuration()).unwrap();
+    assert_eq!(rad_codec::document_version(&bytes).unwrap(), 6);
+    std::fs::write("../../docs/fixtures/v6/profile.json", bytes).unwrap();
+}

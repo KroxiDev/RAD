@@ -39,6 +39,9 @@ pub(crate) struct ResolvedVisual {
     pub view: VisualView,
     pub text: String,
     pub position: rad_core::configuration::TextPosition,
+    pub size: u8,
+    pub text_color: [u8; 3],
+    pub band: bool,
 }
 pub(crate) struct Visuals {
     icons: BTreeMap<String, SelectionIcons>,
@@ -313,44 +316,47 @@ impl Visuals {
         let mut view = self.view(id);
         let appearance = actor.appearance(Origin::Editor, id);
         let entity = actor.get(Origin::Editor, id);
-        let fallback = match (&appearance, &entity) {
-            (Some(a), Some(rad_authority::EntityView::Button(b))) => a.appearance.label(&b.name),
-            _ => "",
+        let fallback = match &entity {
+            Some(rad_authority::EntityView::Button(button)) => Some(button.name.as_str()),
+            _ => None,
         };
-        let face = view
-            .state
-            .as_ref()
-            .and_then(|state| appearance.as_ref()?.appearance.states.get(state));
-        let text = if view.state.is_some() {
-            face.map(|f| f.text.clone()).unwrap_or_default()
+        let appearance = appearance.map(|a| a.appearance).unwrap_or_default();
+        let default_face = rad_core::configuration::StateFace::default();
+        let resolved = if let Some(state) = view.state.as_ref() {
+            let face = appearance.states.get(state).unwrap_or(&default_face);
+            if face.image.is_some() {
+                view.color = None;
+            }
+            face.text_style
+                .resolve(&face.text, face.image.is_some() || view.image, None, None)
         } else {
-            view.text.as_deref().unwrap_or(fallback).to_owned()
+            appearance.text_style.resolve(
+                &appearance.text,
+                appearance.image.is_some() || view.image,
+                view.text.as_deref(),
+                fallback,
+            )
         };
-        if face.is_some_and(|face| face.image.is_some()) {
-            view.color = None;
-        }
-        let position = appearance
-            .map(|a| {
-                if view.state.is_some() {
-                    a.appearance
-                        .text_position
-                        .unwrap_or(rad_core::configuration::TextPosition::Bottom)
-                } else {
-                    a.appearance.effective_text_position()
-                }
-            })
-            .unwrap_or(rad_core::configuration::TextPosition::Middle);
+        let text = resolved.text.to_owned();
+        let position = resolved.position;
+        let size = resolved.size;
+        let text_color = resolved.color;
+        let band = resolved.band;
         ResolvedVisual {
             view,
             text,
             position,
+            size,
+            text_color,
+            band,
         }
     }
+
     /// JSON exists only at the IPC boundary; deck consumes the same typed resolution.
     pub fn ipc_view(&self, actor: &Authority, id: ShortId) -> Value {
         let resolved = self.resolved(actor, id);
         let v = resolved.view;
-        json!({"state":v.state,"availability":v.availability.as_str(),"revision":v.revision.to_string(),"text":resolved.text,"text_position":position_name(resolved.position),"color":v.color,"image":v.image})
+        json!({"state":v.state,"availability":v.availability.as_str(),"revision":v.revision.to_string(),"text":resolved.text,"source_text":v.text,"text_position":position_name(resolved.position),"text_size":resolved.size,"text_color":format!("#{:02X}{:02X}{:02X}",resolved.text_color[0],resolved.text_color[1],resolved.text_color[2]),"text_band":resolved.band,"color":v.color,"image":v.image})
     }
     pub fn view(&self, id: ShortId) -> VisualView {
         let Some(e) = self.entries.get(&id) else {
@@ -432,6 +438,7 @@ fn position_name(position: rad_core::configuration::TextPosition) -> &'static st
         TextPosition::Bottom => "bottom",
         TextPosition::AboveImage => "above_image",
         TextPosition::BelowImage => "below_image",
+        TextPosition::Hidden => "hidden",
     }
 }
 fn subscribe(
@@ -537,6 +544,12 @@ mod two_state_tests {
                         states: [(
                             "muted".into(),
                             StateFace {
+                                text_style: TextStyle {
+                                    position: Some(TextPosition::Top),
+                                    size: 24,
+                                    color: [0, 255, 0],
+                                    band: false,
+                                },
                                 text: "Quiet".into(),
                                 image: Some("0".repeat(64)),
                             },
@@ -574,7 +587,11 @@ mod two_state_tests {
             resolved.view.color, None,
             "custom state image suppresses plugin background"
         );
-        assert_eq!(resolved.position, TextPosition::Bottom);
+        assert_eq!(resolved.position, TextPosition::Top);
+        let view = visuals.ipc_view(&actor, b.short());
+        assert_eq!(view["text_size"], 24);
+        assert_eq!(view["text_color"], "#00FF00");
+        assert_eq!(view["text_band"], false);
         visuals.entries.get_mut(&b.short()).unwrap().invalid_image = true;
         assert_eq!(
             visuals.view(b.short()).availability,
@@ -588,5 +605,108 @@ mod two_state_tests {
         assert_eq!(visuals.view(b.short()).state.as_deref(), Some("muted"));
         visuals.entries.get_mut(&b.short()).unwrap().raw = VisualState::Unavailable;
         assert_eq!(visuals.view(b.short()).state.as_deref(), Some("unmuted"));
+    }
+}
+
+#[cfg(test)]
+mod text_style_tests {
+    use super::*;
+    use rad_core::{configuration::*, identity::*};
+    fn fixture(appearance: Appearance) -> (Authority, Visuals, ShortId) {
+        let c = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
+        let c = c
+            .configuration()
+            .prepare_edit(
+                c.registry(),
+                Origin::Editor,
+                Edit::CreateButton {
+                    folder: c.configuration().data().principal,
+                    position: 0,
+                    name: "Must not appear".into(),
+                },
+            )
+            .unwrap();
+        let b = c.configuration().data().buttons[0].binding;
+        let c = c
+            .configuration()
+            .prepare_edit(
+                c.registry(),
+                Origin::Editor,
+                Edit::SetVisual {
+                    button: b.identity(),
+                    visual: VisualSource::External {
+                        type_key: ExternalType::new("fixture".into(), "mute".into()).unwrap(),
+                        configuration: br#"{"schema_version":1,"values":{}}"#.to_vec(),
+                    },
+                },
+            )
+            .unwrap();
+        let c = c
+            .configuration()
+            .prepare_edit(
+                c.registry(),
+                Origin::Editor,
+                Edit::SetAppearance {
+                    button: b.identity(),
+                    appearance,
+                },
+            )
+            .unwrap();
+        let mut actor = Authority::new(c, 1, std::num::NonZeroU128::new(1).unwrap());
+        let manifest=serde_json::from_value(json!({"contract":1,"capabilities":["visual_freshness","visual_states"],"id":"fixture","version":{"major":1,"minor":0,"patch":0},"host_min":1,"host_max":1,"targets":["x86_64-unknown-linux-gnu"],"actions":[],"visuals":[{"id":"mute","label":"Mute","schema":{"version":1,"fields":[]},"credential_slots":[],"states":[]}]})).unwrap();
+        actor
+            .register_plugin(manifest, "x86_64-unknown-linux-gnu")
+            .unwrap();
+        let mut visuals = Visuals::new(Arc::new(|| {}));
+        visuals.poll(&actor, &mut Host::default());
+        (actor, visuals, b.short())
+    }
+    #[test]
+    fn plugin_picture_without_text_hides_name() {
+        let (actor, mut visuals, id) = fixture(Appearance::default());
+        let png = include_bytes!("../../../plugins/audio/icons/microphone-muted.png");
+        visuals.entries.get_mut(&id).unwrap().image =
+            Some(Arc::new(rad_media::normalize(png).unwrap()));
+        let resolved = visuals.resolved(&actor, id);
+        assert_eq!(resolved.text, "");
+        assert_eq!(resolved.position, TextPosition::Hidden);
+    }
+    #[test]
+    fn hidden_suppresses_plugin_text() {
+        let (actor, mut visuals, id) = fixture(Appearance {
+            text_style: TextStyle {
+                position: Some(TextPosition::Hidden),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        visuals.entries.get_mut(&id).unwrap().raw = VisualState::Current {
+            content: VisualContent {
+                text: Some("Playing".into()),
+                ..Default::default()
+            },
+        };
+        assert_eq!(visuals.resolved(&actor, id).text, "");
+        assert_eq!(visuals.ipc_view(&actor, id)["source_text"], "Playing");
+    }
+    #[test]
+    fn own_picture_and_written_text_resolve_below_with_base_style() {
+        let (actor, visuals, id) = fixture(Appearance {
+            image: Some("0".repeat(64)),
+            text: "Written".into(),
+            text_style: TextStyle {
+                size: 8,
+                color: [12, 34, 56],
+                band: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let resolved = visuals.resolved(&actor, id);
+        assert_eq!(resolved.text, "Written");
+        assert_eq!(resolved.position, TextPosition::Bottom);
+        assert_eq!(resolved.size, 8);
+        assert_eq!(resolved.text_color, [12, 34, 56]);
+        assert!(!resolved.band);
     }
 }

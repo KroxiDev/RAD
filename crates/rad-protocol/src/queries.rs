@@ -67,6 +67,10 @@ pub(super) fn read(
                         json!({"name":"text","value":v.text}),
                         json!({"name":"image","value":v.image}),
                         json!({"name":"text_position","value":v.text_position}),
+                        json!({"name":"text_position_automatic","value":v.text_position_automatic}),
+                        json!({"name":"text_size","value":v.text_size}),
+                        json!({"name":"text_color","value":v.text_color}),
+                        json!({"name":"text_band","value":v.text_band}),
                     ];
                     if let Some(icon) = v.native_icon {
                         items.push(json!({"name":"native_icon","value":icon}));

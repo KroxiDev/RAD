@@ -1,9 +1,8 @@
 use crate::{DeckError, KeyVisual, TextPlacement};
 
 const SIDE: u32 = 96;
-/// Height a picture gets beside text at the top or the bottom, and the text band's start.
+/// Reference height for native pictures beside the default 13 px text.
 const PICTURE: u32 = 62;
-const TEXT_BAND: u32 = SIDE - 32;
 
 pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
     let rgba = key.background.unwrap_or([0, 0, 0, 255]);
@@ -11,10 +10,12 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
         (u16::from(rgba[c]) * u16::from(rgba[3]) / 255) as u8
     }));
     let mut canvas = image::RgbImage::from_pixel(SIDE, SIDE, background);
+    let text_band = (32.0 * f32::from(key.text_size) / 13.0).ceil() as u32;
+    let picture_height = SIDE - text_band - 2;
     // Rows the picture may use: all of them unless the text is placed beside it.
     let (top, height) = match (key.text.is_empty(), key.text_placement) {
-        (false, TextPlacement::BelowPicture) => (0, PICTURE),
-        (false, TextPlacement::AbovePicture) => (SIDE - PICTURE, PICTURE),
+        (false, TextPlacement::BelowPicture) => (0, picture_height),
+        (false, TextPlacement::AbovePicture) => (SIDE - picture_height, picture_height),
         _ => (0, SIDE),
     };
     if let Some(image) = &key.image {
@@ -45,13 +46,14 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
     let sun = key.image.is_none() && key.brightness_icon && !moon;
     if moon {
         let center_y = top as f32 + height as f32 / 2.;
-        let radius = 22.;
+        let scale = (height as f32 / PICTURE as f32).min(1.0);
+        let radius = 22. * scale;
         for y in top..top + height {
             for x in 0..SIDE {
                 let dx = x as f32 + 0.5 - 48.;
                 let dy = y as f32 + 0.5 - center_y;
                 if dx * dx + dy * dy <= radius * radius
-                    && (dx - 11.).powi(2) + (dy + 8.).powi(2) > radius * radius
+                    && (dx - 11. * scale).powi(2) + (dy + 8. * scale).powi(2) > radius * radius
                 {
                     canvas.put_pixel(x, y, image::Rgb([225, 230, 245]));
                 }
@@ -60,6 +62,7 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
     }
     if sun {
         let center_y = top as f32 + height as f32 / 2.;
+        let scale = (height as f32 / PICTURE as f32).min(1.0);
         let rays: [(f32, f32); 8] = std::array::from_fn(|ray| {
             let angle = std::f32::consts::TAU * ray as f32 / 8.;
             (angle.cos(), angle.sin())
@@ -69,9 +72,10 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
                 let dx = x as f32 + 0.5 - 48.;
                 let dy = y as f32 + 0.5 - center_y;
                 let distance = dx * dx + dy * dy;
-                let ring = (7.5_f32.powi(2)..=11_f32.powi(2)).contains(&distance);
+                let ring = ((7.5 * scale).powi(2)..=(11. * scale).powi(2)).contains(&distance);
                 let ray = rays.iter().any(|(vx, vy)| {
-                    (15.4..=22.).contains(&(dx * vx + dy * vy)) && (dx * vy - dy * vx).abs() <= 1.7
+                    (15.4 * scale..=22. * scale).contains(&(dx * vx + dy * vy))
+                        && (dx * vy - dy * vx).abs() <= 1.7 * scale
                 });
                 if ring || ray {
                     canvas.put_pixel(x, y, image::Rgb([225, 230, 245]));
@@ -80,7 +84,8 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
         }
     }
     if generic && !moon && !sun {
-        let offset = top + (height - PICTURE) / 2;
+        let icon_height = height.min(PICTURE);
+        let offset = top + (height - icon_height) / 2;
         for y in 12..54 {
             for x in 22..74 {
                 let c = if !(25..=70).contains(&x) || !(21..=50).contains(&y) {
@@ -88,15 +93,18 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
                 } else {
                     45
                 };
-                canvas.put_pixel(x, offset + y, image::Rgb([c, c, c]));
+                canvas.put_pixel(
+                    48 - 26 * icon_height / PICTURE + (x - 22) * icon_height / PICTURE,
+                    offset + y * icon_height / PICTURE,
+                    image::Rgb([c, c, c]),
+                );
             }
         }
     }
     if !key.text.is_empty() {
         text(
             &mut canvas,
-            &key.text,
-            key.text_placement,
+            key,
             key.image.is_some() || generic || moon || sun,
         );
     }
@@ -120,7 +128,7 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
 }
 /// Paints up to two centred rows. Where they lie over a picture, the rows behind them are
 /// dimmed first, out to the edge of the key, so the text stays readable.
-fn text(canvas: &mut image::RgbImage, value: &str, placement: TextPlacement, over_picture: bool) {
+fn text(canvas: &mut image::RgbImage, key: &KeyVisual, over_picture: bool) {
     use epaint::{
         Color32, FontId,
         text::{FontDefinitions, Fonts, LayoutJob, TextOptions},
@@ -133,17 +141,18 @@ fn text(canvas: &mut image::RgbImage, value: &str, placement: TextPlacement, ove
         FontDefinitions::default(),
     );
     let mut job = LayoutJob::simple(
-        value.into(),
-        FontId::proportional(13.0),
+        key.text.clone(),
+        FontId::proportional(f32::from(key.text_size)),
         Color32::WHITE,
         92.0,
     );
     job.wrap.max_rows = 2;
     let galley = fonts.with_pixels_per_point(1.0).layout_job(job);
-    let block = galley.size().y.min(32.0);
+    let text_band = (32.0 * f32::from(key.text_size) / 13.0).ceil();
+    let block = galley.size().y.min(text_band);
     let side = SIDE as f32;
     // Where the block starts, and the rows dimmed behind it when it lies over a picture.
-    let (origin, band) = match placement {
+    let (origin, band) = match key.text_placement {
         TextPlacement::Top => (2.0, Some(0.0..block + 5.0)),
         TextPlacement::Middle => {
             let origin = ((side - block) / 2.0).floor();
@@ -154,9 +163,9 @@ fn text(canvas: &mut image::RgbImage, value: &str, placement: TextPlacement, ove
             (origin, Some(origin - 3.0..side))
         }
         TextPlacement::AbovePicture => (2.0, None),
-        TextPlacement::BelowPicture => (TEXT_BAND as f32, None),
+        TextPlacement::BelowPicture => (SIDE as f32 - text_band, None),
     };
-    if let (Some(band), true) = (band, over_picture) {
+    if let (Some(band), true) = (band, over_picture && key.text_band) {
         for y in band.start.max(0.0) as u32..(band.end.ceil() as u32).min(SIDE) {
             for x in 0..SIDE {
                 let p = canvas.get_pixel_mut(x, y);
@@ -183,8 +192,9 @@ fn text(canvas: &mut image::RgbImage, value: &str, placement: TextPlacement, ove
                         let a = pixel.a();
                         let old = canvas.get_pixel(dx as u32, dy as u32);
                         let rgb = std::array::from_fn(|c| {
-                            ((u16::from(old[c]) * (255 - u16::from(a)) + 255 * u16::from(a)) / 255)
-                                as u8
+                            ((u16::from(old[c]) * (255 - u16::from(a))
+                                + u16::from(key.text_color[c]) * u16::from(a))
+                                / 255) as u8
                         });
                         canvas.put_pixel(dx as u32, dy as u32, image::Rgb(rgb));
                     }

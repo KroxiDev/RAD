@@ -568,3 +568,75 @@ fn deleted_key_and_changed_folder_abandon_imports_and_do_not_claim_late_success(
         );
     }
 }
+
+#[test]
+fn text_style_save_keeps_hidden_text_and_sends_only_changed_base_fields_or_complete_states() {
+    let mut app = app();
+    let mut view = inspection(7, vec![]);
+    view.appearance = json!({"text":"Keep me","image":null,"visual_type":null,"text_position":"middle","text_position_automatic":true,"text_size":13,"text_color":"#FFFFFF","text_band":true});
+    app.adopt_inspection(view.clone());
+    app.draft.style = rad_api::TextStyle {
+        position: Some(rad_api::TextPosition::Hidden),
+        size: 24,
+        color: [12, 34, 56],
+        band: false,
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.worker = Worker::spawn(move |job| {
+        if let Job::Request(request) = job {
+            sender.send(request.arguments()).unwrap();
+        }
+        event(Ok(Reply::Theme))
+    });
+    app.save();
+    let request = receiver
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    let value = request["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["field"] == "appearance")
+        .unwrap()["value"]
+        .clone();
+    assert_eq!(value["text"], "Keep me");
+    assert_eq!(value["text_position"], "hidden");
+    assert_eq!(value["text_size"], 24);
+    assert_eq!(value["text_color"], "#0C2238");
+    assert_eq!(value["text_band"], false);
+
+    view.appearance["visual_type"] = json!("org.rad.audio#microphone");
+    view.appearance["states"] = json!({"off":{"text":"Quiet","image":null,"text_position":"bottom","text_position_automatic":true,"text_size":13,"text_color":"#FFFFFF","text_band":true},"on":{"text":"Live","image":null,"text_position":"top","text_position_automatic":false,"text_size":20,"text_color":"#FF8040","text_band":false}});
+    app.adopt_inspection(view);
+    app.draft.select_state("off".into());
+    app.draft.style.size = 8;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.worker = Worker::spawn(move |job| {
+        if let Job::Request(request) = job {
+            sender.send(request.arguments()).unwrap();
+        }
+        event(Ok(Reply::Theme))
+    });
+    app.save();
+    let request = receiver
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(request["expected_revision"], "7");
+    let value = request["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["field"] == "appearance")
+        .unwrap()["value"]
+        .clone();
+    for field in ["text_position", "text_size", "text_color", "text_band"] {
+        assert!(value.get(field).is_none(), "unchanged base {field}");
+    }
+    assert_eq!(value["states"].as_object().unwrap().len(), 2);
+    assert_eq!(value["states"]["off"]["text_size"], 8);
+    assert!(value["states"]["off"].get("text_position").is_none());
+    assert_eq!(value["states"]["on"]["text_position"], "top");
+    assert_eq!(value["states"]["on"]["text_size"], 20);
+    assert_eq!(value["states"]["on"]["text_color"], "#FF8040");
+    assert_eq!(value["states"]["on"]["text_band"], false);
+}

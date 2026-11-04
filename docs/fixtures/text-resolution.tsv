@@ -1,0 +1,35 @@
+# position	has_image	own_text	plugin_text (- = absent)	name (- = absent)	expected_text	expected_position
+auto	false		-	Name	Name	middle
+auto	false	Own	-	Name	Own	middle
+auto	true		-	Name		hidden
+auto	true	Own	-	Name	Own	bottom
+top	false		-	Name	Name	top
+top	false	Own	-	Name	Own	top
+top	true		-	Name		top
+top	true	Own	-	Name	Own	top
+middle	false		-	Name	Name	middle
+middle	false	Own	-	Name	Own	middle
+middle	true		-	Name		middle
+middle	true	Own	-	Name	Own	middle
+bottom	false		-	Name	Name	bottom
+bottom	false	Own	-	Name	Own	bottom
+bottom	true		-	Name		bottom
+bottom	true	Own	-	Name	Own	bottom
+above_image	false		-	Name	Name	above_image
+above_image	false	Own	-	Name	Own	above_image
+above_image	true		-	Name		above_image
+above_image	true	Own	-	Name	Own	above_image
+below_image	false		-	Name	Name	below_image
+below_image	false	Own	-	Name	Own	below_image
+below_image	true		-	Name		below_image
+below_image	true	Own	-	Name	Own	below_image
+hidden	false		-	Name		hidden
+hidden	false	Own	-	Name		hidden
+hidden	true		-	Name		hidden
+hidden	true	Own	-	Name		hidden
+auto	true		Playing	Name	Playing	bottom
+hidden	false	Own	Playing	Name		hidden
+auto	false		-	-		middle
+auto	false	State	-	-	State	middle
+auto	true	State	-	-	State	bottom
+auto	true	Own	Playing	Name	Playing	bottom

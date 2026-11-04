@@ -572,5 +572,8 @@
   "The key changed. Your appearance changes are still here. Save again.": "The key changed. Your appearance changes are still here. Save again.",
   "The appearance changed and your edit was not saved. Check the key and try again.": "The appearance changed and your edit was not saved. Check the key and try again.",
   "The key changed. The imported image was not used; choose it again if you still need it.": "The key changed. The imported image was not used; choose it again if you still need it.",
-  "The image could not be discarded. Your text is still here; choose the image again.": "The image could not be discarded. Your text is still here; choose the image again."
+  "The image could not be discarded. Your text is still here; choose the image again.": "The image could not be discarded. Your text is still here; choose the image again.",
+  "Style": "Style",
+  "Text color": "Text color",
+  "Bar behind the text": "Bar behind the text"
 }

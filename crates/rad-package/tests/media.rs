@@ -50,7 +50,7 @@ fn with_images(initial: &Candidate, images: &[rad_media::NormalizedImage]) -> Ca
                         states: Default::default(),
                         text: "".into(),
                         image: Some(rad_store::media_key(image)),
-                        text_position: None,
+                        text_style: Default::default(),
                     },
                 },
             )
@@ -381,7 +381,7 @@ fn valid_digest_of_noncanonical_png_still_rejects() {
                     states: Default::default(),
                     text: "".into(),
                     image: Some(key),
-                    text_position: None,
+                    text_style: Default::default(),
                 },
             },
         )
@@ -628,6 +628,7 @@ fn both_state_images_are_copy_restore_and_gc_roots_even_without_base_image() {
                         (
                             "muted".into(),
                             StateFace {
+                                text_style: Default::default(),
                                 text: "Quiet".into(),
                                 image: Some(rad_store::media_key(&images[0])),
                             },
@@ -635,6 +636,7 @@ fn both_state_images_are_copy_restore_and_gc_roots_even_without_base_image() {
                         (
                             "unmuted".into(),
                             StateFace {
+                                text_style: Default::default(),
                                 text: "Live".into(),
                                 image: Some(rad_store::media_key(&images[1])),
                             },

@@ -49,7 +49,7 @@ fn with_images(initial: &Candidate, images: &[rad_media::NormalizedImage]) -> Ca
                         states: Default::default(),
                         text: "".into(),
                         image: Some(rad_store::media_key(image)),
-                        text_position: None,
+                        text_style: Default::default(),
                     },
                 },
             )

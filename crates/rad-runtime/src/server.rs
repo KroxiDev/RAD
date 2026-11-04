@@ -544,7 +544,7 @@ impl Server {
             }
             External::PluginVisual { id } => Ok(self.plugin_visuals.as_ref()
                 .map(|visuals| visuals.ipc_view(&self.actor, id))
-                .unwrap_or(json!({"availability":"unavailable","revision":"0","text":null,"text_position":"bottom","color":null,"image":false}))),
+                .unwrap_or(json!({"availability":"unavailable","revision":"0","text":null,"text_position":"bottom","text_size":13,"text_color":"#FFFFFF","text_band":true,"color":null,"image":false}))),
             External::PluginVisualRead { id, revision, offset } => self.plugin_visuals.as_ref()
                 .ok_or("executor_unavailable")?.read(id, revision, offset),
             _ => Err("executor_unavailable"),
