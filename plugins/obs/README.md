@@ -52,7 +52,12 @@ funciona en una sola tecla. Las acciones sobre un mismo OBS se ejecutan de a una
 y en orden, de modo que cada una lee el estado que dejó la anterior. Una orden
 que ya llegó a OBS nunca se repite tras reconectar: si la conexión se pierde
 durante la acción, esta falla. La reconexión refresca observaciones. Los
-visuales observan también los cambios hechos fuera de RAD. Una selección
+visuales observan también los cambios hechos fuera de RAD: cada evento actualiza
+solo las teclas cuyos objetivos cambiaron. Mientras se releen, conservan su último
+estado sin mostrar la cara base ni una marca de fallo. Los eventos que no cambian
+estados mostrados, como seleccionar una fuente o ajustar su volumen, no provocan
+relecturas. Las lecturas periódicas cada dos segundos siguen renovando la vigencia.
+Una selección
 desconectada, incompatible, ausente o desactualizada se declara no disponible en
 vez de adivinarla.
 
@@ -68,7 +73,14 @@ truncarlos (límite defensivo de compatibilidad independiente del framing del SD
 Las listas de más de 64 opciones o las identidades/etiquetas de más de 256 bytes
 UTF-8 quedan no disponibles, nunca truncadas.
 
-Las peticiones se detienen mientras OBS cambia de colección de escenas. La
+Las peticiones se detienen mientras OBS cambia de colección de escenas y las
+acciones en curso fallan. Durante la transición los visuales conservan su último
+estado sin publicar cambios ni renovaciones, incluso si vence el plazo de una
+lectura. Si se prolonga, el host marca la vigencia vencida según el
+[ADR 0008](../../docs/adr/0008-frescura-declarada.md). Al terminar se releen todos
+los objetivos; los ausentes se declaran no disponibles. Las consultas de opciones
+se invalidan únicamente ante cambios de listas o de colección.
+La
 compatibilidad se comprueba contra las peticiones que OBS anuncia realmente;
 los controles no soportados se rechazan sin intentar ejecutarlos. Esto no afirma
 compatibilidad con todas las compilaciones ni distribuciones de OBS.
