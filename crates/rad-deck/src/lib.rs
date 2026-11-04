@@ -23,10 +23,13 @@ pub enum TextPlacement {
     AbovePicture,
     BelowPicture,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyVisual {
     text: String,
     text_placement: TextPlacement,
+    text_size: u8,
+    text_color: [u8; 3],
+    text_band: bool,
     image: Option<Arc<rad_media::NormalizedImage>>,
     unavailable: bool,
     stale: bool,
@@ -34,6 +37,11 @@ pub struct KeyVisual {
     generic_launcher: bool,
     sleep_icon: bool,
     brightness_icon: bool,
+}
+impl Default for KeyVisual {
+    fn default() -> Self {
+        Self::new("", None, false, false)
+    }
 }
 impl KeyVisual {
     pub fn new(
@@ -45,6 +53,9 @@ impl KeyVisual {
         Self {
             text: text.chars().take(128).collect(),
             text_placement: TextPlacement::default(),
+            text_size: 13,
+            text_color: [255; 3],
+            text_band: true,
             image,
             unavailable,
             stale: false,
@@ -74,6 +85,13 @@ impl KeyVisual {
         self.background = color;
         self
     }
+    /// Text styling in device pixels; domain validation constrains size to 8–24.
+    pub fn text_style(mut self, size: u8, color: [u8; 3], band: bool) -> Self {
+        self.text_size = size.clamp(8, 24);
+        self.text_color = color;
+        self.text_band = band;
+        self
+    }
     pub fn text_at(mut self, placement: TextPlacement) -> Self {
         self.text_placement = placement;
         self
@@ -99,6 +117,8 @@ impl Desired {
 }
 mod hidraw;
 mod render;
+#[cfg(test)]
+mod render_characterization;
 /// The device RAD may open. Building it opens nothing: the user's consent is the machine
 /// setting «Usar el Stream Deck con RAD» (ADR 0006), which the runtime checks before it
 /// spawns a deck. Not a client capability.

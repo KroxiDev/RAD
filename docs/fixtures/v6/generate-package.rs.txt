@@ -1,0 +1,16 @@
+use rad_core::{configuration::*, identity::*};
+struct Empty;
+impl rad_media::MediaSource for Empty {
+    fn catalog(&self) -> &[rad_media::MediaEntry] { &[] }
+    fn read(&mut self, _: &[u8; 32]) -> Result<rad_media::NormalizedImage, rad_media::MediaReadError> { panic!("no media") }
+}
+#[test]
+fn generate_v6_package() {
+    let data = rad_codec::decode_data(include_bytes!("../../../docs/fixtures/v6/profile.json")).unwrap();
+    let base = Configuration::prepare_new(&IdentityRegistry::new(data.principal.installation()).unwrap()).unwrap();
+    let c = base.configuration().prepare_restore(base.registry(), Origin::Editor, true, data).unwrap();
+    let mut bytes = Vec::new();
+    rad_package::export(rad_package::ExportSnapshot { configuration: c.configuration(), registry: c.registry(), media: &mut Empty }, &mut bytes).unwrap();
+    assert_eq!(rad_codec::document_version(&rad_codec::encode(c.configuration()).unwrap()).unwrap(), 6);
+    std::fs::write("../../docs/fixtures/v6/profile.radpkg", bytes).unwrap();
+}

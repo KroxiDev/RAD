@@ -14,7 +14,7 @@ fn binary_faces_round_trip_and_v5_stays_closed() {
         .unwrap();
     let encoded: serde_json::Value =
         serde_json::from_slice(&encode(c.configuration()).unwrap()).unwrap();
-    assert_eq!(encoded["version"], 6);
+    assert_eq!(encoded["version"], 7);
     assert_eq!(
         encoded["buttons"][0]["appearance"]["states"],
         value["buttons"][0]["appearance"]["states"]
@@ -25,7 +25,7 @@ fn binary_faces_round_trip_and_v5_stays_closed() {
         Err(CodecError::InvalidDocument)
     );
     assert!(decode_data(golden).is_ok());
-    value["version"] = 7.into();
+    value["version"] = 8.into();
     assert_eq!(
         decode_data(&serde_json::to_vec(&value).unwrap()),
         Err(CodecError::UnsupportedVersion)

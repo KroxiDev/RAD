@@ -160,6 +160,7 @@ pub enum TextPosition {
     Bottom,
     AboveImage,
     BelowImage,
+    Hidden,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 /// Logical owned-media reference only: Store validates bytes, never a source path.
@@ -167,11 +168,11 @@ pub struct Appearance {
     pub states: std::collections::BTreeMap<String, StateFace>,
     pub text: String,
     pub image: Option<String>,
-    /// `None` follows the image: centred on a key without one, at the bottom over one.
-    pub text_position: Option<TextPosition>,
+    pub text_style: TextStyle,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StateFace {
+    pub text_style: TextStyle,
     pub text: String,
     pub image: Option<String>,
 }
@@ -191,26 +192,6 @@ impl Appearance {
         self.image
             .iter()
             .chain(self.states.values().filter_map(|face| face.image.as_ref()))
-    }
-
-    /// What the key reads: its own text, or `name` while it has neither text nor image.
-    /// A key with an image and no text of its own shows the image alone.
-    pub fn label<'a>(&'a self, name: &'a str) -> &'a str {
-        if !self.text.is_empty() {
-            &self.text
-        } else if self.image.is_none() {
-            name
-        } else {
-            ""
-        }
-    }
-    /// Where the text is drawn once the automatic choice is resolved.
-    pub fn effective_text_position(&self) -> TextPosition {
-        self.text_position.unwrap_or(if self.image.is_some() {
-            TextPosition::Bottom
-        } else {
-            TextPosition::Middle
-        })
     }
 }
 /// Most actions one button holds. A product decision, not a hardware bound.
@@ -293,6 +274,7 @@ pub enum Edit {
         button: EntityIdentity,
         folder: EntityIdentity,
         position: usize,
+        replace: bool,
     },
     SetName {
         button: EntityIdentity,
@@ -453,3 +435,6 @@ impl ConfigurationData {
         )
     }
 }
+
+mod text_style;
+pub use text_style::{ResolvedText, TextStyle};

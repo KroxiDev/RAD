@@ -166,6 +166,8 @@ pub struct OptionsEvent {
     pub result: Result<Value, Error>,
 }
 pub struct Event {
+    /// A key paste, whose result controls selection of the replaced slot.
+    pub paste: bool,
     pub plugin_apply: bool,
     pub plugin_admin: bool,
     pub plugin_manifest: bool,
@@ -331,6 +333,41 @@ fn step(active: &mut Option<Transfer>, s: &mut Session<Client>) -> Result<Reply,
     }
     Ok(Reply::TransferProgress(offset))
 }
+pub(crate) fn request_reply<P: crate::session::Port>(
+    session: &mut Session<P>,
+    request: Request,
+) -> Result<Reply, Error> {
+    let operation = request.operation().as_str().to_owned();
+    let paste_source = match &request {
+        Request::Duplicate {
+            id, replace: true, ..
+        } => Some(id.clone()),
+        _ => None,
+    };
+    let response = session.request(request).map_err(|mut error| {
+        if error.code == "not_found" && !error.unknown
+            && let Some(id) = paste_source
+        {
+            // The failed paste is never retried. One read in the same worker job
+            // distinguishes a missing source from a missing destination; an
+            // inconclusive read must not claim either one is missing.
+            error.cause = match session.request(Request::Get { id: id.clone() }) {
+                Ok(response) if response.status == rad_api::Status::Ok
+                    && matches!(&response.data, rad_api::ResponseData::Entity(entity) if entity.id == id) =>
+                    Some("paste_destination_missing".into()),
+                Err(source) if source.code == "not_found" && !source.unknown =>
+                    Some("paste_source_missing".into()),
+                _ => None,
+            };
+        }
+        error
+    })?;
+    Ok(Reply::Response {
+        operation,
+        response,
+    })
+}
+
 pub fn start(runtime: PathBuf, theme: PathBuf) -> Worker<Job, Event> {
     start_with_clock(runtime, theme, Instant::now)
 }
@@ -348,6 +385,7 @@ pub fn start_with_clock(
     let mut visual_epoch = String::new();
     let mut visual_revisions = std::collections::BTreeMap::new();
     Worker::spawn(move |job| {
+        let paste = matches!(&job, Job::Request(Request::Duplicate { replace: true, .. }));
         let plugin_apply = matches!(&job, Job::PluginApply(_) | Job::LinkedAction(_));
         let plugin_admin = matches!(&job,Job::Request(r) if r.operation().as_str()=="plugin_admin");
         let plugin_manifest = matches!(&job, Job::Request(Request::PluginManifest { .. }));
@@ -556,13 +594,7 @@ pub fn start_with_clock(
                             crate::icon_save::drop_images(s, tokens)
                         }))
                     }
-                    Job::Request(request) => {
-                        let operation = request.operation().as_str().to_owned();
-                        s.request(request).map(|response| Reply::Response {
-                            operation,
-                            response,
-                        })
-                    }
+                    Job::Request(request) => request_reply(s, request),
                     Job::Transfer { path, kind } => {
                         if active.is_some() {
                             Err(Error {
@@ -623,6 +655,7 @@ pub fn start_with_clock(
             other => other,
         };
         Event {
+            paste,
             plugin_apply,
             plugin_admin,
             plugin_manifest,

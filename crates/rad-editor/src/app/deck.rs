@@ -22,19 +22,6 @@ pub(super) fn comfortable_height(grid: Grid) -> f32 {
     height_for(84., grid)
 }
 
-/// What a key reads: its own text, or its name while it has neither text nor image.
-/// The runtime applies the same rule when it paints the deck.
-pub(super) fn key_label(text: &str, name: &str, has_image: bool) -> String {
-    let label = if !text.is_empty() {
-        text
-    } else if has_image {
-        ""
-    } else {
-        name
-    };
-    label.chars().take(40).collect()
-}
-
 pub(super) fn native_icon(appearance: &serde_json::Value) -> Option<rad_api::NativeIcon> {
     match appearance["native_icon"].as_str() {
         Some("sleep") => Some(rad_api::NativeIcon::Sleep),
@@ -51,19 +38,24 @@ pub(super) fn paint_key(
     ui: &egui::Ui,
     look: &Look,
     rect: egui::Rect,
-    label: &str,
-    text_position: &str,
+    text: rad_api::ResolvedText<'_>,
+    grid: bool,
     picture: Option<(&egui::TextureHandle, f32)>,
     native_icon: Option<rad_api::NativeIcon>,
 ) {
+    let label = text.text;
+    let text_position = super::text_style::position_name(Some(text.position));
+    let text_color = egui::Color32::from_rgb(text.color[0], text.color[1], text.color[2]);
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     let radius = CornerRadius::same(KEY_RADIUS);
     painter.rect_filled(rect, radius, look.key);
     // Same proportions as the 96 px key the deck paints.
     let unit = rect.height() / 96.;
+    let text_band = (32. * f32::from(text.size) / 13.).ceil();
+    let picture_height = 96. - text_band - 2.;
     let area = match (label.is_empty(), text_position) {
-        (false, "above_image") => rect.with_min_y(rect.top() + 34. * unit),
-        (false, "below_image") => rect.with_max_y(rect.top() + 62. * unit),
+        (false, "above_image") => rect.with_min_y(rect.top() + (96. - picture_height) * unit),
+        (false, "below_image") => rect.with_max_y(rect.top() + picture_height * unit),
         _ => rect,
     };
     if let Some((texture, shown)) = picture {
@@ -75,49 +67,56 @@ pub(super) fn paint_key(
             .paint_at(ui, egui::Rect::from_center_size(area.center(), fitted));
     }
     if picture.is_none() {
+        let icon_radius = 22. * unit * (area.height() / (62. * unit)).min(1.);
         match native_icon {
             Some(rad_api::NativeIcon::Sleep) => {
-                super::look::paint_moon(&painter, area.center(), 22. * unit, look.text);
+                super::look::paint_moon(&painter, area.center(), icon_radius, look.text);
             }
             Some(rad_api::NativeIcon::Brightness) => {
-                super::look::paint_sun(&painter, area.center(), 22. * unit, look.text);
+                super::look::paint_sun(&painter, area.center(), icon_radius, look.text);
             }
             None => {}
         }
     }
-    if label.is_empty() {
+    if label.is_empty() || text.position == rad_api::TextPosition::Hidden {
         return;
     }
-    let font = egui::FontId::proportional(if rect.width() < 70. { 11. } else { 12.5 });
-    let mut job =
-        egui::text::LayoutJob::simple(label.to_owned(), font, look.text, rect.width() - 6.);
+    let font = egui::FontId::proportional(text_font_size(text.size, rect.height(), grid));
+    let mut job = egui::text::LayoutJob::simple(
+        label.chars().take(128).collect(),
+        font,
+        text_color,
+        rect.width() - 4. * unit,
+    );
     job.halign = egui::Align::Center;
     job.wrap.max_rows = 2;
     job.wrap.overflow_character = Some('…');
     let galley = painter.layout_job(job);
     let height = galley.size().y;
     // A small key has less room than two rows need: keep them inside it.
-    let fit = |top: f32| top.min(rect.bottom() - height - 2.).max(rect.top());
+    let fit = |top: f32| top.min(rect.bottom() - height - 2. * unit).max(rect.top());
     // Where the text starts and, when it lies over the picture, the rows dimmed behind it.
     let (top, band) = match text_position {
         "top" => {
             let top = fit(rect.top() + 2. * unit);
-            (top, Some((rect.top(), top + height + 3.)))
+            (top, Some((rect.top(), top + height + 3. * unit)))
         }
         "bottom" => {
             let top = fit(rect.bottom() - height - 3. * unit);
-            (top, Some((top - 3., rect.bottom())))
+            (top, Some((top - 3. * unit, rect.bottom())))
         }
         "above_image" => (fit(rect.top() + 2. * unit), None),
-        "below_image" => (fit(rect.top() + 64. * unit), None),
+        "below_image" => (fit(rect.top() + (96. - text_band) * unit), None),
         _ => {
             let top = rect.center().y - height / 2.;
-            (top, Some((top - 3., top + height + 3.)))
+            (top, Some((top - 3. * unit, top + height + 3. * unit)))
         }
     };
     // The band dims what it lies over, so it comes in with the picture.
     let behind = picture.map_or(native_icon.map(|_| 1.), |(_, shown)| Some(shown));
-    if let (Some((from, to)), Some(behind)) = (band, behind) {
+    if text.band
+        && let (Some((from, to)), Some(behind)) = (band, behind)
+    {
         let band =
             egui::Rect::from_min_max(egui::pos2(rect.left(), from), egui::pos2(rect.right(), to));
         // Square corners would poke out of the key where the band reaches its edge.
@@ -133,7 +132,7 @@ pub(super) fn paint_key(
             egui::Color32::from_black_alpha((153. * behind) as u8),
         );
     }
-    painter.galley(egui::pos2(rect.center().x, top), galley, look.text);
+    painter.galley(egui::pos2(rect.center().x, top), galley, text_color);
 }
 
 /// How much of a key shows at its place while it is dragged away.
@@ -195,10 +194,14 @@ impl App {
         if self.plugin_face(ui, look, view.entity["id"].as_str().unwrap_or(""), rect) {
             return;
         }
-        let label = key_label(
-            &string(&view.appearance["text"]),
-            &string(&view.entity["fields"]["name"]),
+        let style = super::text_style::from_view(&view.appearance);
+        let label = string(&view.appearance["text"]);
+        let name = string(&view.entity["fields"]["name"]);
+        let text = style.resolve(
+            &label,
             view.appearance["image"].is_string() || native_icon(&view.appearance).is_some(),
+            None,
+            Some(&name),
         );
         let now = ui.input(|i| i.time);
         let picture = view.appearance["image"]
@@ -208,8 +211,8 @@ impl App {
             ui,
             look,
             rect,
-            &label,
-            &string(&view.appearance["text_position"]),
+            text,
+            true,
             picture,
             native_icon(&view.appearance),
         );
@@ -348,5 +351,146 @@ impl App {
         if let Some(name) = name.filter(|name| !name.is_empty()) {
             response.on_hover_text(name);
         }
+    }
+}
+
+fn text_font_size(size: u8, side: f32, grid: bool) -> f32 {
+    let scaled = f32::from(size) * side / 96.;
+    if grid { scaled.max(9.) } else { scaled }
+}
+#[cfg(test)]
+mod style_tests {
+    use super::*;
+    #[test]
+    fn preview_scales_exactly_while_grid_keeps_a_nine_pixel_minimum() {
+        assert_eq!(text_font_size(8, 48., false), 4.);
+        assert_eq!(text_font_size(8, 48., true), 9.);
+        assert_eq!(text_font_size(24, 80., false), 20.);
+        assert_eq!(text_font_size(13, 96., true), 13.);
+    }
+    #[test]
+    fn middle_band_keeps_equal_scaled_padding_above_and_below_text() {
+        for side in [48., 80., 96.] {
+            let ctx = egui::Context::default();
+            let texture = ctx.load_texture(
+                "test",
+                egui::ColorImage::filled([1, 1], egui::Color32::WHITE),
+                Default::default(),
+            );
+            let output = ctx.run_ui(Default::default(), |ui| {
+                let style = rad_api::TextStyle {
+                    position: Some(rad_api::TextPosition::Middle),
+                    ..Default::default()
+                };
+                paint_key(
+                    ui,
+                    &Look::new(&crate::theme::Palette::default()),
+                    egui::Rect::from_min_size(egui::pos2(10., 10.), egui::Vec2::splat(side)),
+                    style.resolve("X", true, None, None),
+                    false,
+                    Some((&texture, 1.)),
+                    None,
+                );
+            });
+            let mut band = None;
+            let mut text = None;
+            for shape in output.shapes {
+                match shape.shape {
+                    egui::Shape::Rect(rect)
+                        if rect.fill == egui::Color32::from_black_alpha(153) =>
+                    {
+                        band = Some(rect.rect)
+                    }
+                    egui::Shape::Text(shape) => text = Some((shape.pos.y, shape.galley.size().y)),
+                    _ => {}
+                }
+            }
+            let band = band.expect("text band");
+            let (top, height) = text.expect("text");
+            let padding = 3. * side / 96.;
+            assert!((top - band.top() - padding).abs() < 0.001);
+            assert!((band.bottom() - top - height - padding).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn large_text_leaves_native_icons_inside_their_picture_area() {
+        for position in [
+            rad_api::TextPosition::AboveImage,
+            rad_api::TextPosition::BelowImage,
+        ] {
+            for icon in [rad_api::NativeIcon::Sleep, rad_api::NativeIcon::Brightness] {
+                let ctx = egui::Context::default();
+                let output = ctx.run_ui(Default::default(), |ui| {
+                    let style = rad_api::TextStyle {
+                        position: Some(position),
+                        size: 24,
+                        ..Default::default()
+                    };
+                    paint_key(
+                        ui,
+                        &Look::new(&crate::theme::Palette::default()),
+                        egui::Rect::from_min_size(egui::pos2(10., 10.), egui::Vec2::splat(96.)),
+                        style.resolve("TEXT", true, None, None),
+                        false,
+                        None,
+                        Some(icon),
+                    );
+                });
+                let (top, bottom) = if position == rad_api::TextPosition::AboveImage {
+                    (72., 106.)
+                } else {
+                    (10., 44.)
+                };
+                let mut icons = 0;
+                for shape in output.shapes {
+                    if matches!(
+                        shape.shape,
+                        egui::Shape::Mesh(_)
+                            | egui::Shape::Path(_)
+                            | egui::Shape::Circle(_)
+                            | egui::Shape::LineSegment { .. }
+                    ) {
+                        icons += 1;
+                        let bounds = shape.shape.visual_bounding_rect();
+                        assert!(
+                            bounds.top() >= top && bounds.bottom() <= bottom,
+                            "{position:?}: {bounds:?}"
+                        );
+                    }
+                }
+                assert!(icons > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn long_text_uses_the_deck_character_limit_and_proportional_wrap_width() {
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |ui| {
+            let style = rad_api::TextStyle {
+                size: 8,
+                ..Default::default()
+            };
+            paint_key(
+                ui,
+                &Look::new(&crate::theme::Palette::default()),
+                egui::Rect::from_min_size(egui::pos2(10., 10.), egui::Vec2::splat(48.)),
+                style.resolve(&"i".repeat(140), false, None, None),
+                false,
+                None,
+                None,
+            );
+        });
+        let text = output
+            .shapes
+            .into_iter()
+            .find_map(|shape| match shape.shape {
+                egui::Shape::Text(text) => Some(text),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(text.galley.job.text.chars().count(), 128);
+        assert_eq!(text.galley.job.wrap.max_width, 46.);
     }
 }

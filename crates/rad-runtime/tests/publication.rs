@@ -269,7 +269,7 @@ fn retained_image_binds_to_authority_commit_and_rejected_candidate_cleans_on_wor
                 states: Default::default(),
                 text: "Image".into(),
                 image: Some(key.clone()),
-                text_position: None,
+                text_style: Default::default(),
             },
         }]),
     );
@@ -299,7 +299,7 @@ fn retained_image_binds_to_authority_commit_and_rejected_candidate_cleans_on_wor
                 states: Default::default(),
                 text: "bad".into(),
                 image: Some(key),
-                text_position: None,
+                text_style: Default::default(),
             },
         }]),
     );

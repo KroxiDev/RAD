@@ -205,7 +205,7 @@ volver a sumar o restar. El editor refleja cambios externos en Ajustes sin
 descartar modificaciones pendientes del usuario. No navega ni cambia el reposo.
 Se admiten `press` y `long_press`, no `hold`.
 
-La acción existe desde documento v5 (el escritor actual es v6); los envelopes SQLite/RADPKG y el
+La acción existe desde documento v5 (el escritor actual es v7); los envelopes SQLite/RADPKG y el
 framing de clientes conservan sus versiones. Los ajustes nuevos validan
 `brightness_percent` en 10–100; las importaciones históricas conservan el resto
 del contenido y elevan valores válidos 0–9 a 10. Contrato y motivos:
@@ -412,15 +412,35 @@ presentarse juntos.
 ## Caras de visuales y edición atómica
 
 `Appearance` y las vistas de apariencia incluyen `states`, mapa de hasta dos
-identificadores a `{text: string, image: string | null}`. En `FieldEdit::Appearance`,
+identificadores a caras con texto, imagen y estilo propio. En `FieldEdit::Appearance`,
 texto e imagen se reemplazan; `states` omitido conserva las caras del candidato
 vigente, `{}` las elimina y un mapa explícito las reemplaza (`null` es inválido).
-Las vistas siempre incluyen el mapa. La posición de texto continúa compartida.
+Las vistas siempre incluyen el mapa. Enviar solo la cara modificada elimina la
+otra: el editor envía el mapa completo con `expected_revision`.
 Cambiar plugin o tipo de visual, incluido pasar a Manual, elimina sus caras en la
 misma edición; cambiar solo parámetros las conserva. Deshacer recupera ambas.
 Los cambios de un lote se evalúan en orden: para configurar caras del nuevo visual,
 enviar primero el cambio de visual y después el mapa explícito. Una apariencia sin
 `states` nunca repone caras eliminadas por un cambio anterior del lote.
+
+La apariencia base acepta `text_position`, `text_size`, `text_color` y
+`text_band`. Cada campo omitido conserva lo guardado; `null` restablece su
+predeterminado (posición automática, 13 px, `"#FFFFFF"`, barra activada).
+Posiciones: `top`, `middle`, `bottom`, `above_image`, `below_image` y `hidden`.
+El tamaño es entero 8–24, el color tiene forma `"#RRGGBB"` y la barra es booleana.
+Las caras de `states` aceptan los mismos campos de estilo, pero un campo ausente
+usa el predeterminado: el mapa se reemplaza, no se parchea por cara.
+
+`AppearanceView` y cada `StateFaceView` incluyen los valores efectivos del estilo
+y `text_position_automatic: bool`. La posición efectiva no fija la elección:
+`hidden` con automático permite que escribir texto lo coloque abajo; `hidden`
+elegido conserva y oculta todo el texto hasta cambiar la posición. Las vistas del
+visual dinámico incluyen `text_size`, `text_color` y `text_band` junto con su
+posición y texto resueltos; el `color` RGBA del plugin sigue siendo el fondo.
+`source_text` conserva el texto original del plugin, ya acotado por su contrato,
+para que un borrador pueda previsualizar el cambio de `hidden` a una posición
+visible antes de guardar. No incluye el nombre ni el texto propio y no se usa
+como respaldo de las caras de estado.
 
 `plugin_visual` incluye `state` opcional con el identificador observado (el segundo
 del manifest si no está disponible). Su texto está ya resuelto: sin texto propio,
@@ -484,4 +504,18 @@ desconectar o vencer libera las imágenes preparadas.
 
 Framing sigue en v1. Las variantes nuevas requieren actualizar lectores cerrados;
 editor y runtime se distribuyen juntos. Compatibilidad documental y decisiones:
-[ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md).
+[ADR 0021](adr/0021-estados-de-visuales-y-documento-v6.md) y
+[ADR 0022](adr/0022-estilo-del-texto-y-documento-v7.md).
+
+## Duplicar una tecla
+
+`duplicate` recibe `id` (botón fuente), `folder_id`, `position` y el booleano
+opcional `replace`, cuyo valor omitido es `false`. Sin reemplazo, un destino
+ocupado se rechaza con `busy`. Con `replace: true`, se captura primero la
+tecla fuente y se reemplaza el ocupante; si este abre una carpeta, se elimina
+todo su contenido. El retorno está protegido. La copia crea identidades nuevas
+y publica una sola revisión, reversible con un solo `undo`. Solo el editor
+puede pedir esta operación. Una fuente de carpeta copia todo el subárbol,
+incluso al pegar dentro de sí misma o sobre una descendiente. Superar el límite
+de identidades vigentes rechaza la operación con `resource_exhausted`, sin
+publicación parcial.

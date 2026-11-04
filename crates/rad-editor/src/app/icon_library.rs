@@ -292,8 +292,22 @@ impl Library {
                 let mut choice = self.choice.unwrap_or_default();
                 ui.add_enabled_ui(self.choice.is_some() && !pending, |ui| {
                     let previous = choice;
-                    color_row(ui, look, language, "Icon color", &mut choice.foreground);
-                    color_row(ui, look, language, "Background", &mut choice.background);
+                    color_row(
+                        ui,
+                        look,
+                        language,
+                        "Icon color",
+                        &mut choice.foreground,
+                        [235, 237, 240],
+                    );
+                    color_row(
+                        ui,
+                        look,
+                        language,
+                        "Background",
+                        &mut choice.background,
+                        [235, 237, 240],
+                    );
                     ui.label(look.muted_text(tr(language, "Size")));
                     ui.add(
                         egui::Slider::new(&mut choice.scale, SCALES)
@@ -453,7 +467,14 @@ fn texture(ctx: &egui::Context, name: &str, pixels: Pixels) -> egui::TextureHand
 fn rgb([r, g, b]: [u8; 3]) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
-fn color_row(ui: &mut egui::Ui, look: &Look, language: Language, label: &str, color: &mut [u8; 3]) {
+pub(super) fn color_row(
+    ui: &mut egui::Ui,
+    look: &Look,
+    language: Language,
+    label: &str,
+    color: &mut [u8; 3],
+    first: [u8; 3],
+) {
     const SWATCHES: [[u8; 3]; 6] = [
         [235, 237, 240],
         [24, 26, 31],
@@ -465,7 +486,8 @@ fn color_row(ui: &mut egui::Ui, look: &Look, language: Language, label: &str, co
     ui.push_id(label, |ui| {
         ui.label(look.muted_text(tr(language, label)));
         ui.horizontal(|ui| {
-            for value in SWATCHES {
+            for (index, swatch) in SWATCHES.into_iter().enumerate() {
+                let value = if index == 0 { first } else { swatch };
                 let text = format!("#{:02X}{:02X}{:02X}", value[0], value[1], value[2]);
                 let response = ui.add(
                     egui::Button::new(" ")
@@ -829,6 +851,7 @@ mod tests {
                 Ok(Reply::Theme)
             };
             Event {
+                paste: false,
                 plugin_apply: false,
                 plugin_admin: false,
                 plugin_manifest: false,
@@ -921,6 +944,7 @@ mod tests {
         app.worker = Worker::spawn(move |job| {
             sent.send(job).unwrap();
             crate::native::Event {
+                paste: false,
                 plugin_apply: false,
                 plugin_admin: false,
                 plugin_manifest: false,
@@ -1160,6 +1184,7 @@ mod tests {
         app.worker = Worker::spawn(move |job| {
             sent.send(job).unwrap();
             crate::native::Event {
+                paste: false,
                 plugin_apply: false,
                 plugin_admin: false,
                 plugin_manifest: false,

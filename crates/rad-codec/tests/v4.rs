@@ -29,7 +29,7 @@ fn legacy_sleep_roundtrips_current_and_is_rejected_under_every_version_before_v4
         )
         .unwrap();
     let bytes = encode(c.configuration()).unwrap();
-    assert_eq!(rad_codec::document_version(&bytes).unwrap(), 6);
+    assert_eq!(rad_codec::document_version(&bytes).unwrap(), 7);
     assert_eq!(decode_data(&bytes).unwrap(), *c.configuration().data());
     let mut legacy: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     legacy["version"] = serde_json::json!(4);

@@ -88,7 +88,13 @@ pub(super) fn validate_data(
         return Err(ConfigurationError::InvalidTree);
     }
     for button in &data.buttons {
-        if button.appearance.states.len() > 2
+        if !(8..=24).contains(&button.appearance.text_style.size)
+            || button
+                .appearance
+                .states
+                .values()
+                .any(|f| !(8..=24).contains(&f.text_style.size))
+            || button.appearance.states.len() > 2
             || button
                 .appearance
                 .states

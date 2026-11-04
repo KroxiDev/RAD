@@ -20,7 +20,7 @@ fn action(id: &str) -> Value {
 }
 fn views(current: Option<&str>, actions: &[(&str, &str)]) -> BTreeMap<String, Value> {
     let mut result = BTreeMap::new();
-    result.insert("b1".into(), json!({"view_revision":"2","entity":{"visibility":"visible","id":"b1","kind":"button","fields":{"name":"Mic","mode":"sequential","permissions":{"inherit":true},"effective_permissions":{"consult":true,"modify":true,"execute":true},"folder_id":"f1","position":0},"view_revision":"2","sections":[]},"appearance":{"text":"","image":null,"text_position":"bottom","visual_type":current.map(|_|"org.rad.audio#microphone")},"actions":actions.iter().map(|(id,_)|action(id)).collect::<Vec<_>>(),"plugin":current.map(|d|plugin(d,true))}));
+    result.insert("b1".into(), json!({"view_revision":"2","entity":{"visibility":"visible","id":"b1","kind":"button","fields":{"name":"Mic","mode":"sequential","permissions":{"inherit":true},"effective_permissions":{"consult":true,"modify":true,"execute":true},"folder_id":"f1","position":0},"view_revision":"2","sections":[]},"appearance":{"text":"","image":null,"text_position":"bottom","text_position_automatic":false,"text_size":13,"text_color":"#FFFFFF","text_band":true,"visual_type":current.map(|_|"org.rad.audio#microphone")},"actions":actions.iter().map(|(id,_)|action(id)).collect::<Vec<_>>(),"plugin":current.map(|d|plugin(d,true))}));
     for (id, device) in actions {
         result.insert((*id).into(),json!({"view_revision":"2","entity":action(id),"appearance":null,"actions":[],"plugin":plugin(device,false)}));
     }

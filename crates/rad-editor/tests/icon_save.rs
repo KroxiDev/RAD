@@ -211,6 +211,7 @@ fn icon_save_captures_one_state_and_preserves_the_other_face_and_base() {
                     rad_api::StateFace {
                         text: "Quiet".into(),
                         image: None,
+                        ..Default::default()
                     },
                 );
                 a.states.get_or_insert_with(Default::default).insert(
@@ -218,6 +219,7 @@ fn icon_save_captures_one_state_and_preserves_the_other_face_and_base() {
                     rad_api::StateFace {
                         text: "Live".into(),
                         image: Some("other-image".into()),
+                        ..Default::default()
                     },
                 );
             }

@@ -75,6 +75,9 @@ impl App {
                 // A read ahead that was refused is not asked again until the board changes.
                 Err(_) if event.background && event.connected => {}
                 Err(e) => {
+                    if event.paste || !event.connected {
+                        self.pending_paste = None;
+                    }
                     // The runtime did not explain: nothing is retried until something changes.
                     self.recovery_due = false;
                     if matches!(self.recovery, crate::recovery::Mode::Asking) {
@@ -146,7 +149,15 @@ impl App {
                     if matches!(e.code.as_str(), "not_found" | "result_expired") {
                         self.control.terminal();
                     }
-                    let reason = crate::status::describe_failure(&e, self.es);
+                    let reason = match (event.paste, e.code.as_str(), e.cause.as_deref()) {
+                        (true, "not_found", Some("paste_source_missing")) => {
+                            tr(self.es, "The copied key no longer exists")
+                        }
+                        (true, "not_found", Some("paste_destination_missing")) => {
+                            tr(self.es, "The destination folder no longer exists")
+                        }
+                        _ => crate::status::describe_failure(&e, self.es),
+                    };
                     if e.unknown {
                         self.say(format!(
                             "{}: {reason}",
@@ -259,6 +270,7 @@ impl App {
                         }
                         self.board = Some(board);
                         if changed_folder {
+                            self.pending_paste = None;
                             self.abandon_appearance();
                             self.app_picker.cancel();
                             self.plugins.clear_form();
@@ -268,6 +280,7 @@ impl App {
                         } else {
                             self.follow_selection();
                         }
+                        self.follow_paste();
                         if let Some((position, action)) = self.pending_action.take()
                             && let Some(id) = self.slot_id(position)
                         {
@@ -402,6 +415,19 @@ impl App {
                     {
                         self.control.admitted(data.execution_id.clone());
                         self.result_due = true;
+                    }
+                    if event.paste {
+                        if r.status == rad_client::response::Status::Applied {
+                            if let Some(pending) = self.pending_paste.as_mut() {
+                                pending.applied = true;
+                            }
+                            self.say("");
+                        } else {
+                            self.pending_paste = None;
+                        }
+                        self.force = true;
+                        self.inspect_needed = self.selected().is_some();
+                        return ControlFlow::Continue(());
                     }
                     match r.status {
                         rad_client::response::Status::Admitted => {

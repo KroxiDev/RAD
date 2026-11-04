@@ -879,3 +879,278 @@ fn different_plugin_or_visual_does_not_inherit_faces_even_when_state_ids_match()
         assert_eq!(saved.buttons[0].appearance.states.len(), 2);
     }
 }
+
+#[test]
+fn text_style_fields_update_preserve_and_reset_independently() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":0,"name":"Style"}),
+    );
+    let edit =
+        |value| json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":value}]});
+    apply(
+        &mut a,
+        "edit",
+        edit(
+            json!({"text":"Saved","image":null,"text_position":"hidden","text_size":24,"text_color":"#1234AB","text_band":false}),
+        ),
+    );
+    apply(
+        &mut a,
+        "edit",
+        edit(json!({"text":"Still saved","image":null})),
+    );
+    let view = Protocol::new(NonZeroU128::new(7).unwrap())
+        .inspector_view(
+            &a,
+            IncomingContext {
+                request_id: 2,
+                connection: 4,
+                origin: Origin::Editor,
+            },
+            "b1",
+        )
+        .unwrap();
+    let appearance = serde_json::to_value(view.appearance.unwrap()).unwrap();
+    assert_eq!(appearance["text_position"], "hidden");
+    assert_eq!(appearance["text_position_automatic"], false);
+    assert_eq!(appearance["text_size"], 24);
+    assert_eq!(appearance["text_color"], "#1234AB");
+    assert_eq!(appearance["text_band"], false);
+    for (field, expected) in [
+        ("text_size", json!(13)),
+        ("text_color", json!("#FFFFFF")),
+        ("text_band", json!(true)),
+        ("text_position", json!("middle")),
+    ] {
+        let mut value = json!({"text":"Still saved","image":null});
+        value[field] = serde_json::Value::Null;
+        apply(&mut a, "edit", edit(value));
+        let view = Protocol::new(NonZeroU128::new(7).unwrap())
+            .inspector_view(
+                &a,
+                IncomingContext {
+                    request_id: 2,
+                    connection: 4,
+                    origin: Origin::Editor,
+                },
+                "b1",
+            )
+            .unwrap();
+        let appearance = serde_json::to_value(view.appearance.unwrap()).unwrap();
+        assert_eq!(appearance[field], expected);
+    }
+}
+
+#[test]
+fn full_state_style_map_preserves_other_face_and_omitted_fields_default() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":0,"name":"Faces"}),
+    );
+    let edit = |states| json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":{"text":"Base","image":null,"states":states}}]});
+    let faces = json!({"on":{"text":"On","image":null,"text_position":"hidden","text_size":24,"text_color":"#010203","text_band":false},"off":{"text":"Off","image":null,"text_position":"top","text_size":8,"text_color":"#AABBCC","text_band":true}});
+    let before = apply(&mut a, "edit", edit(faces.clone()));
+    let mut changed = faces;
+    changed["on"]["text_size"] = 16.into();
+    let after = apply(&mut a, "edit", edit(changed));
+    assert_eq!(
+        after.buttons[0].appearance.states["off"],
+        before.buttons[0].appearance.states["off"]
+    );
+    assert_eq!(after.buttons[0].appearance.states["on"].text_style.size, 16);
+    let defaults = apply(
+        &mut a,
+        "edit",
+        edit(json!({"on":{"text":"On","image":null},"off":{"text":"Off","image":null}})),
+    );
+    for face in defaults.buttons[0].appearance.states.values() {
+        assert_eq!(face.text_style, TextStyle::default());
+    }
+    let view = Protocol::new(NonZeroU128::new(7).unwrap())
+        .inspector_view(
+            &a,
+            IncomingContext {
+                request_id: 2,
+                connection: 4,
+                origin: Origin::Editor,
+            },
+            "b1",
+        )
+        .unwrap()
+        .appearance
+        .unwrap();
+    assert!(view.states["on"].text_position_automatic);
+    assert_eq!(
+        view.states["on"].text_position,
+        rad_api::TextPosition::Middle
+    );
+}
+
+#[test]
+fn invalid_style_values_are_rejected_before_publication() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":0,"name":"Style"}),
+    );
+    for state in [false, true] {
+        for (field, value) in [
+            ("text_size", json!(7)),
+            ("text_size", json!(25)),
+            ("text_color", json!("#GGFFFF")),
+            ("text_color", json!("red")),
+        ] {
+            let mut face = json!({"text":"Saved","image":null});
+            face[field] = value;
+            let value = if state {
+                json!({"text":"Base","image":null,"states":{"on":face}})
+            } else {
+                face
+            };
+            let result = response(call(
+                &mut a,
+                Origin::Editor,
+                "edit",
+                json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":value}]}),
+            ));
+            assert_eq!(result.error.unwrap().code, "invalid_request");
+        }
+    }
+}
+
+#[test]
+fn duplicate_replace_snapshots_source_before_removing_its_folder_and_undoes_once() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_folder",
+        json!({"parent_id":"f1","position":1,"name":"Container"}),
+    );
+    let before = apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f2","position":1,"name":"Source"}),
+    );
+    let source = before.buttons.iter().find(|b| b.name == "Source").unwrap();
+    let source_id = source.binding.short().to_string();
+    let revision = a.editor_view(Origin::Editor).unwrap().revision;
+    let copied = apply(
+        &mut a,
+        "duplicate",
+        json!({"id":source_id,"folder_id":"f1","position":1,"replace":true}),
+    );
+    assert_eq!(copied.folders.len(), 1);
+    assert_eq!(copied.buttons.len(), 1);
+    assert_eq!(copied.buttons[0].name, "Source");
+    assert_ne!(copied.buttons[0].binding, source.binding);
+    assert_eq!(
+        a.editor_view(Origin::Editor).unwrap().revision,
+        revision + 1
+    );
+    assert_single_undo(&mut a, before, revision);
+}
+
+fn assert_single_undo(a: &mut Authority, before: ConfigurationData, revision: i64) {
+    let Resolution::Command(command) = call(a, Origin::Editor, "undo", json!({})) else {
+        panic!()
+    };
+    let ticket = a.reserve(4, Origin::Editor).unwrap();
+    let request = ticket.request();
+    let effects = a.submit(ticket, command);
+    let rad_authority::Effect::ReadRevision {
+        id,
+        revision: old_revision,
+    } = effects[0]
+    else {
+        panic!("{effects:?}")
+    };
+    assert_eq!(old_revision, revision);
+    let effects = a.loaded(id, Ok(before.clone()));
+    let rad_authority::Effect::Persist {
+        id, ref candidate, ..
+    } = effects[0]
+    else {
+        panic!("{effects:?}")
+    };
+    assert_eq!(candidate.configuration().data(), &before);
+    a.complete(
+        id,
+        rad_authority::Outcome::Applied {
+            revision: revision + 2,
+            changed: true,
+        },
+    );
+    a.finish(request);
+}
+
+#[test]
+fn duplicate_folder_over_its_child_preserves_snapshot_and_undo_restores_the_whole_tree() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_folder",
+        json!({"parent_id":"f1","position":1,"name":"F"}),
+    );
+    apply(
+        &mut a,
+        "create_folder",
+        json!({"parent_id":"f2","position":1,"name":"G"}),
+    );
+    let before = apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f3","position":1,"name":"Leaf"}),
+    );
+    let revision = a.editor_view(Origin::Editor).unwrap().revision;
+    let copied = apply(
+        &mut a,
+        "duplicate",
+        json!({"id":"b1","folder_id":"f2","position":1,"replace":true}),
+    );
+    assert_eq!(copied.folders.len(), 4);
+    assert_eq!(copied.buttons.iter().filter(|b| b.name == "F").count(), 2);
+    assert_eq!(copied.buttons.iter().filter(|b| b.name == "G").count(), 1);
+    assert_eq!(
+        copied.buttons.iter().filter(|b| b.name == "Leaf").count(),
+        1
+    );
+    assert_eq!(
+        a.editor_view(Origin::Editor).unwrap().revision,
+        revision + 1
+    );
+    assert_single_undo(&mut a, before, revision);
+}
+
+#[test]
+fn duplicate_without_replace_keeps_compatibility_and_remains_editor_only() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":1,"name":"Source"}),
+    );
+    let data = apply(
+        &mut a,
+        "duplicate",
+        json!({"id":"b1","folder_id":"f1","position":2}),
+    );
+    assert_eq!(data.buttons.len(), 2);
+    for replace in [false, true] {
+        let rejected = response(call(
+            &mut a,
+            Origin::Automation,
+            "duplicate",
+            json!({"id":"b1","folder_id":"f1","position":2,"replace":replace}),
+        ));
+        assert_eq!(
+            rejected.error.unwrap().outcome,
+            Some(rad_api::response::Outcome::NotApplied)
+        );
+    }
+}

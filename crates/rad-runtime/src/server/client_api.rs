@@ -128,8 +128,14 @@ impl Server {
                 for key in board.keys.iter_mut().flatten() {
                     if key.appearance.visual_type.is_some() {
                         let id=parse_short(&key.entity.id).ok_or("invalid_configuration")?;
-                        let value=self.plugin_visuals.as_ref().map(|v|v.ipc_view(&self.actor,id)).unwrap_or(json!({"availability":"unavailable","revision":"0","text":null,"text_position":"bottom","color":null,"image":false}));
-                        key.visual=Some(serde_json::from_value(value).map_err(|_|"invalid_configuration")?);
+                        let value=self.plugin_visuals.as_ref().map(|v|v.ipc_view(&self.actor,id)).unwrap_or(json!({"availability":"unavailable","revision":"0","text":null,"text_position":"bottom","text_size":13,"text_color":"#FFFFFF","text_band":true,"color":null,"image":false}));
+                        let visual: rad_api::VisualView = serde_json::from_value(value).map_err(|_|"invalid_configuration")?;
+                        if visual.state.is_none() {
+                            key.appearance.text_position = visual.text_position;
+                        } else if let Some(face) = visual.state.as_ref().and_then(|state| key.appearance.states.get_mut(state)) {
+                            face.text_position = visual.text_position;
+                        }
+                        key.visual=Some(visual);
                     }
                 }
                 Ok(rad_api::ResponseData::Board(board))

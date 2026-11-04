@@ -17,3 +17,6 @@ pub mod response;
 mod response_data;
 pub use response::{Error, Outcome, Response, Status};
 pub use response_data::*;
+
+mod text_style;
+pub use text_style::{ResolvedText, TextStyle};

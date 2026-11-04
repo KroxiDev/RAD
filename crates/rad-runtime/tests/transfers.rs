@@ -190,7 +190,7 @@ fn with_image(store: &rad_store::Store, key: String) -> rad_core::configuration:
                     states: Default::default(),
                     text: "Image".into(),
                     image: Some(key),
-                    text_position: None,
+                    text_style: Default::default(),
                 },
             },
         )
@@ -405,6 +405,7 @@ fn two_prepared_state_images_commit_together_and_survive_reload() {
                         (
                             "muted".into(),
                             StateFace {
+                                text_style: Default::default(),
                                 text: "Quiet".into(),
                                 image: Some(images[0].1.clone()),
                             },
@@ -412,6 +413,7 @@ fn two_prepared_state_images_commit_together_and_survive_reload() {
                         (
                             "unmuted".into(),
                             StateFace {
+                                text_style: Default::default(),
                                 text: "Live".into(),
                                 image: Some(images[1].1.clone()),
                             },

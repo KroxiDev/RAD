@@ -248,3 +248,4 @@ Estas piezas parecen simplificables y no lo son:
 | [0019](adr/0019-brightness-persistente-y-documento-v5.md) | Acción Brightness con publicación durable y documento v5; brillo configurable 10–100 |
 | [0020](adr/0020-textos-de-plugins-y-plazo-fijo.md) | Textos de los plugins traducidos en su manifest, opciones con texto propio y plazo fijo de respuesta |
 | [0021](adr/0021-estados-de-visuales-y-documento-v6.md) | Dos estados observados por visual, vínculo declarativo con acciones y documento v6 |
+| [0022](adr/0022-estilo-del-texto-y-documento-v7.md) | Estilo del texto independiente por cara, posición oculta y documento v7 |

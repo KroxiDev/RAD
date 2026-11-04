@@ -2,6 +2,10 @@
 
 **Estado:** aceptada, 2026-10-31.
 
+La posición compartida y el documento v6 descritos aquí evolucionan a estilo
+independiente por cara y documento v7 en
+[ADR 0022](0022-estilo-del-texto-y-documento-v7.md), que define su migración.
+
 Una acción con estado debe mostrar la fuente observada sin configurar otro visual.
 El estado no cuenta pulsaciones: el plugin conserva la autoridad sobre la fuente;
 el runtime conserva la autoridad sobre configuración y proyección.

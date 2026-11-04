@@ -88,11 +88,15 @@ pub enum ActionView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppearanceView {
+    pub text_position_automatic: bool,
     #[serde(default)]
-    pub states: std::collections::BTreeMap<String, crate::StateFace>,
+    pub states: std::collections::BTreeMap<String, StateFaceView>,
     pub text: String,
     pub image: Option<String>,
     pub text_position: TextPosition,
+    pub text_size: u8,
+    pub text_color: String,
+    pub text_band: bool,
     pub visual_type: Option<String>,
     /// A native fallback picture, never a replacement for an image or plugin visual.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,12 +118,17 @@ pub enum Availability {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VisualView {
+    /// Plugin text before face style resolution, for editing an unsaved style.
+    pub source_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
     pub availability: Availability,
     pub revision: String,
     pub text: Option<String>,
     pub text_position: TextPosition,
+    pub text_size: u8,
+    pub text_color: String,
+    pub text_band: bool,
     pub color: Option<[u8; 4]>,
     pub image: bool,
 }
@@ -280,4 +289,16 @@ pub struct RecoveryView {
     pub cause: RecoveryCause,
     pub actions: Vec<RecoveryAction>,
     pub detail: RecoveryDetail,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StateFaceView {
+    pub text: String,
+    pub image: Option<String>,
+    pub text_position: TextPosition,
+    pub text_position_automatic: bool,
+    pub text_size: u8,
+    pub text_color: String,
+    pub text_band: bool,
 }

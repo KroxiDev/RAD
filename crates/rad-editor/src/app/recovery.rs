@@ -20,6 +20,7 @@ impl App {
             return;
         }
         self.icon_library.reset();
+        self.pending_paste = None;
         self.recovery = Mode::Asking;
         self.recovery_due = true;
         self.recovery_reset_confirm = false;

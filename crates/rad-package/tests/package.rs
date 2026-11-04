@@ -462,7 +462,7 @@ fn frozen_v2_package_imports_then_roundtrips_v3_with_portable_settings_and_count
     assert_eq!(
         rad_codec::encode(&configuration).unwrap(),
         include_str!("../../../docs/fixtures/v2/profile.json")
-            .replacen("\"version\":2", "\"version\":6", 1)
+            .replacen("\"version\":2", "\"version\":7", 1)
             .as_bytes()
     );
     let mut encoded = vec![];
@@ -541,6 +541,148 @@ fn native_sleep_survives_a_portable_copy_and_restores_without_running_or_new_set
         ActionKind::Sleep
     );
     assert!(media.catalog().is_empty());
+    drop(media);
+    drop(area);
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn real_v6_package_migrates_style_and_roundtrips_as_v7() {
+    use rad_core::identity::IdentityRecord;
+    let bytes = include_bytes!("../../../docs/fixtures/v6/profile.radpkg");
+    let (root, area) = area();
+    let prepared = prepare(&mut bytes.as_slice(), &area).unwrap();
+    let (verified, mut media) = prepared.into_verified_data().unwrap();
+    let records =
+        verified
+            .data
+            .folders
+            .iter()
+            .map(|f| f.binding)
+            .chain(verified.data.buttons.iter().flat_map(|b| {
+                std::iter::once(b.binding).chain(b.actions.iter().map(|a| a.binding))
+            }))
+            .map(|binding| IdentityRecord::new(binding, false));
+    let registry = IdentityRegistry::from_records_with_counters(
+        verified.identity.installation,
+        records,
+        verified.identity.counters,
+    )
+    .unwrap();
+    let configuration = Configuration::from_data(verified.data, &registry).unwrap();
+    assert_eq!(
+        rad_codec::document_version(&rad_codec::encode(&configuration).unwrap()).unwrap(),
+        7
+    );
+    for face in configuration.data().buttons[0].appearance.states.values() {
+        assert_eq!(
+            face.text_style.position,
+            Some(rad_core::configuration::TextPosition::AboveImage)
+        );
+    }
+    let mut encoded = vec![];
+    export(
+        ExportSnapshot {
+            configuration: &configuration,
+            registry: &registry,
+            media: &mut media,
+        },
+        &mut encoded,
+    )
+    .unwrap();
+    let (reimported, media_again) = prepare(&mut encoded.as_slice(), &area)
+        .unwrap()
+        .into_verified_data()
+        .unwrap();
+    assert_eq!(reimported.data, *configuration.data());
+    drop(media_again);
+    drop(media);
+    drop(area);
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn v7_portable_roundtrip_preserves_complete_independent_face_styles() {
+    use rad_core::configuration::*;
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
+    let c = initial
+        .configuration()
+        .prepare_edit(
+            initial.registry(),
+            Origin::Editor,
+            Edit::CreateButton {
+                folder: initial.configuration().data().principal,
+                position: 0,
+                name: "Styles".into(),
+            },
+        )
+        .unwrap();
+    let appearance = Appearance {
+        text: "Saved while hidden".into(),
+        text_style: TextStyle {
+            position: Some(TextPosition::Hidden),
+            size: 24,
+            color: [1, 2, 3],
+            band: false,
+        },
+        states: [
+            (
+                "on".into(),
+                StateFace {
+                    text: "On".into(),
+                    text_style: TextStyle {
+                        position: Some(TextPosition::Top),
+                        size: 8,
+                        color: [4, 5, 6],
+                        band: false,
+                    },
+                    ..Default::default()
+                },
+            ),
+            (
+                "off".into(),
+                StateFace {
+                    text: "Off".into(),
+                    text_style: TextStyle {
+                        position: Some(TextPosition::BelowImage),
+                        size: 20,
+                        color: [7, 8, 9],
+                        band: true,
+                    },
+                    ..Default::default()
+                },
+            ),
+        ]
+        .into(),
+        ..Default::default()
+    };
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
+            Edit::SetAppearance {
+                button: c.configuration().data().buttons[0].binding.identity(),
+                appearance,
+            },
+        )
+        .unwrap();
+    let mut bytes = vec![];
+    export(
+        ExportSnapshot {
+            configuration: c.configuration(),
+            registry: c.registry(),
+            media: &mut Empty,
+        },
+        &mut bytes,
+    )
+    .unwrap();
+    let (root, area) = area();
+    let (verified, media) = prepare(&mut bytes.as_slice(), &area)
+        .unwrap()
+        .into_verified_data()
+        .unwrap();
+    assert_eq!(verified.data, *c.configuration().data());
     drop(media);
     drop(area);
     std::fs::remove_dir(root).unwrap();

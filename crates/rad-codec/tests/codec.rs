@@ -38,7 +38,7 @@ fn full() -> (Configuration, IdentityRegistry) {
         states: Default::default(),
         text: "á\nquoted\"".into(),
         image: Some("owned-media-reference".into()),
-        text_position: None,
+        text_style: Default::default(),
     };
     button.visual = VisualSource::External {
         type_key: ExternalType::new("p".into(), "v".into()).unwrap(),

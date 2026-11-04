@@ -79,6 +79,12 @@ pub(crate) struct Appearance {
     /// Absent while the position follows the image, as in every earlier document.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_position: Option<TextPosition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_size: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_band: Option<bool>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -88,6 +94,7 @@ pub(crate) enum TextPosition {
     Bottom,
     AboveImage,
     BelowImage,
+    Hidden,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -231,6 +238,14 @@ impl TryFrom<String> for BrightnessDirection {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StateFace {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_position: Option<TextPosition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_size: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_band: Option<bool>,
     pub text: String,
     pub image: Option<String>,
 }

@@ -2,7 +2,7 @@
 
 Referencia de la integración oficial para desarrolladores y agentes. Silencia,
 reactiva y alterna el **micrófono** y la **salida de audio**, y muestra si cada uno
-está silenciado. ID `org.rad.audio`, versión 0.4.0, Linux x86_64, contrato de plugins
+está silenciado. ID `org.rad.audio`, versión 0.4.1, Linux x86_64, contrato de plugins
 v1. Las capacidades negociadas están en el [contrato y la guía para autores](../README.md).
 
 ## Requisitos
@@ -30,8 +30,8 @@ dispositivo se elige primero.
 
 | Estado | Muestra |
 | --- | --- |
-| Estado de salida de audio | `On` (verde) o `Muted` (rojo) |
-| Estado de micrófono | `On` (verde) o `Muted` (rojo) |
+| Estado de salida de audio | Ícono de salida activa o silenciada |
+| Estado de micrófono | Ícono de micrófono activo o silenciado |
 
 El **dispositivo** es *Default device (follows changes)* o un dispositivo concreto.
 

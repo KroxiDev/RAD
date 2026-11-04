@@ -160,7 +160,7 @@ pub(crate) fn migrate_documents(
     path: &Path,
     connection: &mut Connection,
 ) -> Result<(), StoreError> {
-    let mut backup = ".document-v2-backup";
+    let mut backup_version = 2;
     let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
     let registry = ledger::read(&tx)?;
     crate::recovery::validate(&tx)?;
@@ -173,17 +173,9 @@ pub(crate) fn migrate_documents(
     let mut corrupt = Vec::new();
     for (id, bytes) in documents {
         match rad_codec::document_version(&bytes) {
-            Ok(version) if version > 6 => return Err(StoreError::UnsupportedVersion),
-            Ok(version @ 1..=5) => {
-                if version == 5 {
-                    backup = ".document-v5-backup";
-                } else if version == 4 && backup != ".document-v5-backup" {
-                    backup = ".document-v4-backup";
-                } else if version == 3
-                    && ![".document-v4-backup", ".document-v5-backup"].contains(&backup)
-                {
-                    backup = ".document-v3-backup";
-                }
+            Ok(version) if version > 7 => return Err(StoreError::UnsupportedVersion),
+            Ok(version @ 1..=6) => {
+                backup_version = backup_version.max(version);
                 match Store::read_revision(&tx, id, &registry) {
                     Ok(_) => migrate.push(id),
                     Err(StoreError::Corrupt | StoreError::Invalid) => corrupt.push(id),
@@ -196,12 +188,13 @@ pub(crate) fn migrate_documents(
     if migrate.is_empty() {
         return Ok(());
     }
-    preserve(path, backup)?;
+    let backup = format!(".document-v{backup_version}-backup");
+    preserve(path, &backup)?;
     tx.rollback()?;
     database::configure(connection)?;
     let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
     let work = (|| -> Result<(), StoreError> {
-        if !same_bytes(path, &backup_path(path, backup))? || ledger::read(&tx)? != registry {
+        if !same_bytes(path, &backup_path(path, &backup))? || ledger::read(&tx)? != registry {
             return Err(StoreError::Corrupt);
         }
         for id in corrupt {

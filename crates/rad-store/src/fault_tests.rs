@@ -342,7 +342,7 @@ fn pictured(initial: &Candidate) -> (Candidate, rad_media::NormalizedImage) {
                     states: Default::default(),
                     text: String::new(),
                     image: Some(media_key(&image)),
-                    text_position: None,
+                    text_style: Default::default(),
                 },
             },
         )
@@ -828,7 +828,7 @@ fn streaming_preflight_error_in_recovery_performs_no_dml() {
                     states: Default::default(),
                     text: "".into(),
                     image: Some("00".repeat(32)),
-                    text_position: None,
+                    text_style: Default::default(),
                 },
             },
         )

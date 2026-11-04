@@ -13,6 +13,7 @@ pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
             id,
             folder_id: folder,
             position: pos,
+            ..
         }
         | R::MoveFolder {
             id,
@@ -23,6 +24,7 @@ pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
             let folder = parse_id(folder)?;
             let position = position(*pos)?;
             let duplicate = matches!(request, R::Duplicate { .. });
+            let replace = matches!(request, R::Duplicate { replace: true, .. });
             Ok(Command::PrepareEdits(vec![Box::new(move |cfg| {
                 let folder = resolve(cfg, folder)?;
                 let edit = if duplicate {
@@ -30,6 +32,7 @@ pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
                         button: button(cfg, target)?.binding.identity(),
                         folder,
                         position,
+                        replace,
                     }
                 } else {
                     let f = resolve(cfg, target)?;

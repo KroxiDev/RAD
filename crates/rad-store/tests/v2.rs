@@ -273,10 +273,10 @@ fn v3_document_migration_preserves_separate_evidence_and_refuses_future_document
     let current: Vec<u8> = db
         .query_row("SELECT document FROM revisions LIMIT 1", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(rad_codec::document_version(&current).unwrap(), 6);
+    assert_eq!(rad_codec::document_version(&current).unwrap(), 7);
     let future = String::from_utf8(current)
         .unwrap()
-        .replacen("\"version\":6", "\"version\":7", 1);
+        .replacen("\"version\":7", "\"version\":8", 1);
     db.execute(
         "UPDATE revisions SET document=?1,digest=?2",
         rusqlite::params![
@@ -341,7 +341,7 @@ fn v4_migration_preserves_source_and_normalizes_only_legacy_low_brightness() {
     let current: Vec<u8> = db
         .query_row("SELECT document FROM revisions LIMIT 1", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(rad_codec::document_version(&current).unwrap(), 6);
+    assert_eq!(rad_codec::document_version(&current).unwrap(), 7);
 }
 
 #[test]
@@ -383,4 +383,123 @@ fn v5_migration_keeps_exact_backup_and_state_faces_start_empty() {
     assert_eq!(std::fs::read(&backup).unwrap(), before);
     drop(Store::open(&path).unwrap());
     assert_eq!(std::fs::read(backup).unwrap(), before);
+}
+
+#[test]
+fn v6_migration_copies_position_to_faces_and_preserves_exact_backup() {
+    use rad_core::{configuration::*, identity::*};
+    use sha2::{Digest, Sha256};
+    let path = path("v6-text-style");
+    let original = include_bytes!("../../../docs/fixtures/v6/profile.json");
+    let data = rad_codec::decode_data(original).unwrap();
+    let base =
+        Configuration::prepare_new(&IdentityRegistry::new(data.principal.installation()).unwrap())
+            .unwrap();
+    let c = base
+        .configuration()
+        .prepare_restore(base.registry(), Origin::Editor, true, data)
+        .unwrap();
+    drop(Store::create(&path, &c).unwrap());
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute(
+        "UPDATE revisions SET document=?1,digest=?2",
+        rusqlite::params![original.as_slice(), Sha256::digest(original).as_slice()],
+    )
+    .unwrap();
+    drop(db);
+    let before = std::fs::read(&path).unwrap();
+    let store = Store::open(&path).unwrap();
+    let data = store.load().unwrap();
+    let encoded = rad_codec::encode(&data.configuration).unwrap();
+    assert_eq!(rad_codec::document_version(&encoded).unwrap(), 7);
+    for face in data.configuration.data().buttons[0]
+        .appearance
+        .states
+        .values()
+    {
+        assert_eq!(
+            face.text_style.position,
+            Some(rad_core::configuration::TextPosition::AboveImage)
+        );
+    }
+    drop(store);
+    let backup = PathBuf::from(format!("{}.document-v6-backup", path.display()));
+    assert_eq!(std::fs::read(&backup).unwrap(), before);
+    drop(Store::open(&path).unwrap());
+    assert_eq!(std::fs::read(backup).unwrap(), before);
+}
+
+#[test]
+fn v7_reopen_preserves_complete_independent_face_styles() {
+    use rad_core::{configuration::*, identity::*};
+    let initial = Configuration::prepare_new(&IdentityRegistry::new(77).unwrap()).unwrap();
+    let c = initial
+        .configuration()
+        .prepare_edit(
+            initial.registry(),
+            Origin::Editor,
+            Edit::CreateButton {
+                folder: initial.configuration().data().principal,
+                position: 0,
+                name: "Styles".into(),
+            },
+        )
+        .unwrap();
+    let appearance = Appearance {
+        text: "Saved while hidden".into(),
+        text_style: TextStyle {
+            position: Some(TextPosition::Hidden),
+            size: 24,
+            color: [1, 2, 3],
+            band: false,
+        },
+        states: [
+            (
+                "on".into(),
+                StateFace {
+                    text: "On".into(),
+                    text_style: TextStyle {
+                        position: Some(TextPosition::Top),
+                        size: 8,
+                        color: [4, 5, 6],
+                        band: false,
+                    },
+                    ..Default::default()
+                },
+            ),
+            (
+                "off".into(),
+                StateFace {
+                    text: "Off".into(),
+                    text_style: TextStyle {
+                        position: Some(TextPosition::BelowImage),
+                        size: 20,
+                        color: [7, 8, 9],
+                        band: true,
+                    },
+                    ..Default::default()
+                },
+            ),
+        ]
+        .into(),
+        ..Default::default()
+    };
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
+            Edit::SetAppearance {
+                button: c.configuration().data().buttons[0].binding.identity(),
+                appearance,
+            },
+        )
+        .unwrap();
+    let path = path("v7-styles");
+    drop(Store::create(&path, &c).unwrap());
+    let store = Store::open(&path).unwrap();
+    assert_eq!(
+        store.load().unwrap().configuration.data(),
+        c.configuration().data()
+    );
 }

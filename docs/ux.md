@@ -99,6 +99,14 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   posición vacía, la tecla se crea recién al elegir, con el nombre de la aplicación y
   su ícono cuando está disponible; cancelar no deja una tecla vacía. Los cambios de aplicación de un
   lanzador existente se guardan con «Guardar», también desde «Avanzado».
+- **Iconos de Aplicaciones.** Solo la lista de la paleta muestra el icono propio
+  de cada aplicación, dentro del mismo recuadro gris de 22×22 px y radio 5 que
+  usan las otras filas. El icono cabe centrado en 18×18 px sin deformarse. Solo se
+  busca para filas visibles con la categoría abierta o una búsqueda activa; el
+  recuadro permanece vacío hasta que llega el icono o el glifo genérico definitivo,
+  con un fundido de hasta 0,2 s. La carga tiene su propio worker y los resultados,
+  incluso los ausentes, caducan tras 30 s sin mostrarse. El desplegable del
+  inspector conserva su presentación.
 - **Menú Imagen.** Sus opciones (Biblioteca de iconos, Usar icono de la app,
   Importar y Quitar imagen) se ven como botones desde el primer momento, no como
   texto que solo se distingue al pasar el puntero; Quitar imagen usa el estilo
@@ -152,6 +160,17 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   y dice «Cargando…» solo si tarda más de 0,4 s.
 - **Borrar.** La papelera del panel o Supr borran la tecla seleccionada, o la
   carpeta a la que entra, sin confirmación; Ctrl+Z la recupera.
+- **Copiar y pegar teclas.** Ctrl+C copia la tecla seleccionada y Ctrl+V la pega
+  en la posición seleccionada de la carpeta visible. Se copia su contenido publicado
+  al pegar; las carpetas incluyen su subárbol. Pegar sobre una tecla la reemplaza
+  (una carpeta, con su contenido) y selecciona la nueva tecla en la misma
+  actualización; Ctrl+Z deshace cada pegado en un paso. Cambiar de carpeta mientras
+  llega la respuesta cancela esa selección pendiente. Copiar muestra «Tecla copiada»;
+  pegar con éxito no agrega un aviso. Si la fuente ya no existe, se avisa «La tecla
+  copiada ya no existe». Volver y pegar sobre la propia fuente no producen cambios.
+  Los atajos solo actúan en Teclas, sin formulario ni menú abierto y sin foco en
+  texto; dentro de un campo se conserva el copiar y pegar de texto. Copiar otro
+  contenido al portapapeles invalida el pegado de tecla; no hay atajo para cortar.
 - **Mover una tecla.** Al arrastrarla, su cara (imagen, texto o cara de plugin,
   tal como se ve en el deck) sigue al puntero al tamaño de la tecla, tomada por el
   mismo punto; la original queda atenuada hasta soltar. Las acciones y la carpeta
@@ -175,8 +194,9 @@ la escena u otro parámetro los conserva.
 
 Solo para esos visuales, debajo de la vista previa aparecen dos pestañas con los
 textos traducidos del manifest. Abren en el estado observado disponible; texto,
-imagen importada y biblioteca de iconos editan la cara elegida, con una única
-posición de texto compartida. Cambiar de pestaña conserva el borrador de texto y
+imagen importada, biblioteca de iconos y estilo del texto editan la cara elegida.
+Cada cara tiene un estilo independiente y una cara nueva empieza con el
+predeterminado. Cambiar de pestaña conserva el borrador de texto, estilo y
 medios de ambas caras; invalida la elección local aún no guardada de la biblioteca,
 como cambiar su destino. Una respuesta tardía nunca se aplica a otra cara.
 
@@ -189,6 +209,38 @@ no una cara externa. Las caras conservan importación de imagen y biblioteca.
 Cada estado trae un icono reemplazable. Sin texto propio, solo icono, también en
 escenas. Una fuente no disponible muestra el segundo estado con marca roja; una
 observación vencida conserva la marca ámbar. No se cuenta cuántas veces se pulsó.
+
+## Estilo del texto
+
+«Style» («Estilo») junto al campo de texto abre los controles de la cara elegida,
+en este orden:
+
+| Control | Opciones | Deshabilitado cuando |
+|---|---|---|
+| Posición | Top, Middle, Bottom, No text (Arriba, Centro, Abajo, Sin texto) | Nunca |
+| Junto a la imagen | Over the image, Moves the image (Sobre la imagen, Mueve la imagen) | Centro o Sin texto |
+| Tamaño | Barra de 8 a 24 px, paso 1 y número visible; predeterminado 13 | Sin texto |
+| Color | Muestras y selector, con blanco como primera muestra y predeterminado | Sin texto |
+| Barra | Bar behind the text (Barra detrás del texto), activada por defecto | Sin texto o texto que no va sobre una imagen |
+
+La vista previa cambia al instante y «Guardar» aplica todo el borrador. El tamaño
+y el color afectan también al nombre y al texto enviado por plugins. Apagar la
+barra conserva el texto sin contorno ni sombra; activarla conserva el
+oscurecimiento de fondo existente. El tamaño se escala respecto de una tecla de
+96 px: la vista previa es proporcional sin mínimo y la rejilla usa un mínimo de
+9 px para mantenerla legible.
+
+El automático es el estado inicial de cada cara. Si muestra cualquier imagen
+pero no tiene texto propio ni del plugin, el menú marca «Sin texto» y el campo
+permanece habilitado; escribir cambia inmediatamente la posición efectiva a
+Abajo. Sin imagen, el texto o el nombre aparece centrado. Los estados solo usan
+su texto propio. Elegir una posición la fija, sin opción de volver al automático.
+
+«Sin texto» elegido oculta el texto propio, el nombre y el texto del plugin solo
+en esa cara. El campo queda deshabilitado y muestra atenuado el texto guardado;
+elegir otra posición lo recupera. Cambiar el estilo en una pestaña no cambia el
+de la otra ni el de la cara base. El guardado envía las caras completas con la
+revisión de origen para conservar los cambios de ambas.
 
 ## Actualizaciones de RAD
 

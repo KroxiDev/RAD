@@ -131,7 +131,6 @@ pub(super) fn appearance(
     c: IncomingContext,
     id: ShortId,
 ) -> Checked<AppearanceView> {
-    use rad_core::configuration::TextPosition as P;
     let v = a.appearance(c.origin, id).ok_or("not_found")?;
     let fallback = match a.get(c.origin, id) {
         Some(rad_authority::EntityView::Button(button)) => {
@@ -147,28 +146,33 @@ pub(super) fn appearance(
         } else {
             None
         };
-    let stateful = match &v.visual {
-        rad_authority::VisualView::External(key) => a.plugin_manifests().any(|(manifest, _, _)| {
-            manifest.id == key.plugin()
-                && manifest
+    let state_icons: std::collections::BTreeSet<String> = match &v.visual {
+        rad_authority::VisualView::External(key) => a
+            .plugin_manifests()
+            .filter(|(manifest, _, _)| manifest.id == key.plugin())
+            .flat_map(|(manifest, _, _)| {
+                manifest
                     .visuals
                     .iter()
-                    .any(|visual| visual.id == key.name() && visual.states.len() == 2)
-        }),
-        _ => false,
+                    .filter(|visual| visual.id == key.name())
+                    .flat_map(|visual| visual.states.iter())
+                    .filter(|state| state.icon.is_some())
+                    .map(|state| state.id.clone())
+            })
+            .collect(),
+        _ => Default::default(),
     };
-    let position = if native_icon.is_some() || stateful {
-        v.appearance.text_position.unwrap_or(P::Bottom)
-    } else {
-        v.appearance.effective_text_position()
-    };
-    let text_position = match position {
-        P::Top => rad_api::TextPosition::Top,
-        P::Middle => rad_api::TextPosition::Middle,
-        P::Bottom => rad_api::TextPosition::Bottom,
-        P::AboveImage => rad_api::TextPosition::AboveImage,
-        P::BelowImage => rad_api::TextPosition::BelowImage,
-    };
+    let style = v.appearance.text_style;
+    let text_position = text_position(
+        style
+            .resolve(
+                &v.appearance.text,
+                v.appearance.image.is_some() || native_icon.is_some(),
+                None,
+                None,
+            )
+            .position,
+    );
     let visual_type = match v.visual {
         rad_authority::VisualView::Static => None,
         rad_authority::VisualView::External(key) => {
@@ -181,9 +185,15 @@ pub(super) fn appearance(
             .states
             .into_iter()
             .map(|(id, f)| {
+                let has_icon = state_icons.contains(&id);
                 (
                     id,
-                    rad_api::StateFace {
+                    rad_api::StateFaceView {
+                        text_position: text_position_of_face(&f, has_icon),
+                        text_position_automatic: f.text_style.position.is_none(),
+                        text_size: f.text_style.size,
+                        text_color: text_color(f.text_style.color),
+                        text_band: f.text_style.band,
                         text: f.text,
                         image: f.image,
                     },
@@ -193,6 +203,10 @@ pub(super) fn appearance(
         text: v.appearance.text,
         image: v.appearance.image,
         text_position,
+        text_position_automatic: style.position.is_none(),
+        text_size: style.size,
+        text_color: text_color(style.color),
+        text_band: style.band,
         visual_type,
         native_icon,
     })
@@ -303,5 +317,30 @@ impl Protocol {
         id: &str,
     ) -> Checked<InspectorView> {
         inspector(a, c, id)
+    }
+}
+
+fn text_position_of_face(
+    face: &rad_core::configuration::StateFace,
+    state_icon: bool,
+) -> rad_api::TextPosition {
+    text_position(
+        face.text_style
+            .resolve(&face.text, face.image.is_some() || state_icon, None, None)
+            .position,
+    )
+}
+fn text_color(c: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2])
+}
+fn text_position(p: rad_core::configuration::TextPosition) -> rad_api::TextPosition {
+    use rad_core::configuration::TextPosition as P;
+    match p {
+        P::Top => rad_api::TextPosition::Top,
+        P::Middle => rad_api::TextPosition::Middle,
+        P::Bottom => rad_api::TextPosition::Bottom,
+        P::AboveImage => rad_api::TextPosition::AboveImage,
+        P::BelowImage => rad_api::TextPosition::BelowImage,
+        P::Hidden => rad_api::TextPosition::Hidden,
     }
 }

@@ -54,6 +54,7 @@ pub enum TextPosition {
     Bottom,
     AboveImage,
     BelowImage,
+    Hidden,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,19 +71,37 @@ pub struct Appearance {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "nullable_position"
+        deserialize_with = "nullable_style"
     )]
     pub text_position: Option<Option<TextPosition>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_style"
+    )]
+    pub text_size: Option<Option<u8>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_style"
+    )]
+    pub text_color: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_style"
+    )]
+    pub text_band: Option<Option<bool>>,
 }
 fn state_faces<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> Result<Option<std::collections::BTreeMap<String, StateFace>>, D::Error> {
     std::collections::BTreeMap::deserialize(d).map(Some)
 }
-fn nullable_position<'de, D: serde::Deserializer<'de>>(
+fn nullable_style<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     d: D,
-) -> Result<Option<Option<TextPosition>>, D::Error> {
-    Option::<TextPosition>::deserialize(d).map(Some)
+) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -261,7 +280,7 @@ requests! {
     CreateFolder => "create_folder", true { parent_id:String, position:usize, name:String },
     AddAction => "add_action", true { button_id:String, #[serde(rename="type")] type_key:String, parameters:ActionParameters },
     Edit => "edit", true { changes:Vec<Change>, #[serde(default,skip_serializing_if="Option::is_none")] expected_revision:Option<String> },
-    Duplicate => "duplicate", true { id:String, folder_id:String, position:usize },
+    Duplicate => "duplicate", true { id:String, folder_id:String, position:usize, #[serde(default,skip_serializing_if="std::ops::Not::not")] replace:bool },
     Delete => "delete", true { id:String, confirm_contents:bool },
     MoveFolder => "move_folder", true { id:String, parent_id:String, position:usize },
     SetPermissions => "set_permissions", true { target:String, value:LocalPermissions },
@@ -340,6 +359,14 @@ impl TryFrom<String> for BrightnessDirection {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StateFace {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_position: Option<TextPosition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_size: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_band: Option<bool>,
     pub text: String,
     pub image: Option<String>,
 }
