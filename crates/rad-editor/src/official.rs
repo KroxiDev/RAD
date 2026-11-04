@@ -15,8 +15,8 @@ pub const OFFICIAL: [Official; 4] = [
     Official {
         id: "org.rad.audio",
         name: "Audio",
-        version: [0, 4, 0],
-        source: "https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.4.0",
+        version: [0, 4, 1],
+        source: "https://github.com/KroxiDev/rad-plugins/releases/tag/audio-v0.4.1",
     },
     Official {
         id: "org.rad.media",
@@ -27,8 +27,8 @@ pub const OFFICIAL: [Official; 4] = [
     Official {
         id: "org.rad.obs",
         name: "OBS",
-        version: [0, 4, 0],
-        source: "https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.4.0",
+        version: [0, 4, 1],
+        source: "https://github.com/KroxiDev/rad-plugins/releases/tag/obs-v0.4.1",
     },
     Official {
         id: "org.rad.metrics",
