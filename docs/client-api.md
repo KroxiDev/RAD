@@ -515,4 +515,7 @@ ocupado se rechaza con `occupied`. Con `replace: true`, se captura primero la
 tecla fuente y se reemplaza el ocupante; si este abre una carpeta, se elimina
 todo su contenido. El retorno está protegido. La copia crea identidades nuevas
 y publica una sola revisión, reversible con un solo `undo`. Solo el editor
-puede pedir esta operación.
+puede pedir esta operación. Una fuente de carpeta copia todo el subárbol,
+incluso al pegar dentro de sí misma o sobre una descendiente. Superar el límite
+de identidades vigentes rechaza la operación con `resource_exhausted`, sin
+publicación parcial.

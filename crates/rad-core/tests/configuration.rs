@@ -619,3 +619,153 @@ fn duplicate_preserves_content_with_fresh_ids_and_replace_controls_occupied_slot
     assert_eq!(copied.configuration().data().folders.len(), 1);
     assert_eq!(copied.configuration().data().buttons.len(), 3);
 }
+
+#[test]
+fn duplicate_folder_snapshots_complete_subtree_even_inside_itself_and_over_a_descendant() {
+    let c = fresh();
+    let root = c.configuration().data().principal;
+    let c = apply(
+        &c,
+        Edit::CreateFolder {
+            parent: root,
+            position: 1,
+            name: "F".into(),
+        },
+    );
+    let f = c.configuration().data().folders[1].binding.identity();
+    let entry = c.configuration().data().folders[0].slots[1].unwrap();
+    let c = apply(
+        &c,
+        Edit::CreateFolder {
+            parent: f,
+            position: 1,
+            name: "G".into(),
+        },
+    );
+    let g = c.configuration().data().folders[2].binding.identity();
+    let c = create(&c, g, 1, "leaf");
+    let leaf = c.configuration().data().folders[2].slots[1].unwrap();
+    let c = apply(
+        &c,
+        Edit::AddAction {
+            button: leaf,
+            kind: launcher(),
+        },
+    );
+    let c = apply(
+        &c,
+        Edit::SetAppearance {
+            button: leaf,
+            appearance: Appearance {
+                image: Some("a".repeat(64)),
+                text: "leaf image".into(),
+                states: std::collections::BTreeMap::from([(
+                    "on".into(),
+                    StateFace {
+                        image: Some("b".repeat(64)),
+                        text: "On".into(),
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            },
+        },
+    );
+    let before = c.configuration().data();
+    let old_ids: std::collections::BTreeSet<_> = before
+        .folders
+        .iter()
+        .map(|f| f.binding.identity())
+        .chain(before.buttons.iter().flat_map(|b| {
+            std::iter::once(b.binding.identity())
+                .chain(b.actions.iter().map(|a| a.binding.identity()))
+        }))
+        .collect();
+    for (destination, position, expected_folders) in [(root, 2, 5), (f, 2, 5), (f, 1, 4)] {
+        let copied = apply(
+            &c,
+            Edit::DuplicateButton {
+                button: entry,
+                folder: destination,
+                position,
+                replace: true,
+            },
+        );
+        let data = copied.configuration().data();
+        assert_eq!(data.folders.len(), expected_folders);
+        let copy_entry = data
+            .folders
+            .iter()
+            .find(|f| f.binding.identity() == destination)
+            .unwrap()
+            .slots[position]
+            .unwrap();
+        assert!(!old_ids.contains(&copy_entry));
+        let button = data
+            .buttons
+            .iter()
+            .find(|b| b.binding.identity() == copy_entry)
+            .unwrap();
+        let ActionKind::EnterFolder(copy_f) = button.actions[0].kind else {
+            panic!()
+        };
+        let folder = data
+            .folders
+            .iter()
+            .find(|f| f.binding.identity() == copy_f)
+            .unwrap();
+        assert_eq!(folder.parent, Some(destination));
+        let copy_g_button = data
+            .buttons
+            .iter()
+            .find(|b| Some(b.binding.identity()) == folder.slots[1])
+            .unwrap();
+        let ActionKind::EnterFolder(copy_g) = copy_g_button.actions[0].kind else {
+            panic!()
+        };
+        let child = data
+            .folders
+            .iter()
+            .find(|f| f.binding.identity() == copy_g)
+            .unwrap();
+        assert_eq!(child.parent, Some(copy_f));
+        let copy_leaf = data
+            .buttons
+            .iter()
+            .find(|b| Some(b.binding.identity()) == child.slots[1])
+            .unwrap();
+        assert_eq!(
+            copy_leaf.appearance,
+            before
+                .buttons
+                .iter()
+                .find(|b| b.binding.identity() == leaf)
+                .unwrap()
+                .appearance
+        );
+        assert_eq!(copy_leaf.actions[0].kind, launcher());
+        for folder in [folder, child] {
+            assert!(!old_ids.contains(&folder.binding.identity()));
+            for id in folder.slots.iter().flatten() {
+                assert!(!old_ids.contains(id));
+                let b = data
+                    .buttons
+                    .iter()
+                    .find(|b| b.binding.identity() == *id)
+                    .unwrap();
+                assert!(
+                    b.actions
+                        .iter()
+                        .all(|a| !old_ids.contains(&a.binding.identity()))
+                );
+            }
+            let back = data
+                .buttons
+                .iter()
+                .find(|b| Some(b.binding.identity()) == folder.slots[0])
+                .unwrap();
+            assert_eq!(back.actions[0].kind, ActionKind::Return);
+        }
+        Configuration::from_data(data.clone(), copied.registry()).unwrap();
+    }
+}

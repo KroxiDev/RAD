@@ -73,3 +73,34 @@ fn preparing_an_edit_enforces_the_live_entity_ceiling_without_mutation() {
     assert_eq!(result.unwrap_err(), ConfigurationError::ResourceExhausted);
     assert_eq!(registry, before);
 }
+
+#[test]
+fn copying_a_folder_over_the_live_limit_fails_without_consuming_identities_or_content() {
+    let (configuration, registry) = populated(MAX_LIVE_IDENTITIES);
+    let before = configuration.data().clone();
+    let counters = registry.counters();
+    let source = before.folders[0].slots[0].unwrap();
+    let (destination, position) = before
+        .folders
+        .iter()
+        .find_map(|f| {
+            f.slots
+                .iter()
+                .position(Option::is_none)
+                .map(|p| (f.binding.identity(), p))
+        })
+        .unwrap();
+    let result = configuration.prepare_edit(
+        &registry,
+        Origin::Editor,
+        Edit::DuplicateButton {
+            button: source,
+            folder: destination,
+            position,
+            replace: true,
+        },
+    );
+    assert_eq!(result.unwrap_err(), ConfigurationError::ResourceExhausted);
+    assert_eq!(registry.counters(), counters);
+    assert_eq!(configuration.data(), &before);
+}

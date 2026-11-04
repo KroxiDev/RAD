@@ -1053,7 +1053,11 @@ fn duplicate_replace_snapshots_source_before_removing_its_folder_and_undoes_once
         a.editor_view(Origin::Editor).unwrap().revision,
         revision + 1
     );
-    let Resolution::Command(command) = call(&mut a, Origin::Editor, "undo", json!({})) else {
+    assert_single_undo(&mut a, before, revision);
+}
+
+fn assert_single_undo(a: &mut Authority, before: ConfigurationData, revision: i64) {
+    let Resolution::Command(command) = call(a, Origin::Editor, "undo", json!({})) else {
         panic!()
     };
     let ticket = a.reserve(4, Origin::Editor).unwrap();
@@ -1083,4 +1087,70 @@ fn duplicate_replace_snapshots_source_before_removing_its_folder_and_undoes_once
         },
     );
     a.finish(request);
+}
+
+#[test]
+fn duplicate_folder_over_its_child_preserves_snapshot_and_undo_restores_the_whole_tree() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_folder",
+        json!({"parent_id":"f1","position":1,"name":"F"}),
+    );
+    apply(
+        &mut a,
+        "create_folder",
+        json!({"parent_id":"f2","position":1,"name":"G"}),
+    );
+    let before = apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f3","position":1,"name":"Leaf"}),
+    );
+    let revision = a.editor_view(Origin::Editor).unwrap().revision;
+    let copied = apply(
+        &mut a,
+        "duplicate",
+        json!({"id":"b1","folder_id":"f2","position":1,"replace":true}),
+    );
+    assert_eq!(copied.folders.len(), 4);
+    assert_eq!(copied.buttons.iter().filter(|b| b.name == "F").count(), 2);
+    assert_eq!(copied.buttons.iter().filter(|b| b.name == "G").count(), 1);
+    assert_eq!(
+        copied.buttons.iter().filter(|b| b.name == "Leaf").count(),
+        1
+    );
+    assert_eq!(
+        a.editor_view(Origin::Editor).unwrap().revision,
+        revision + 1
+    );
+    assert_single_undo(&mut a, before, revision);
+}
+
+#[test]
+fn duplicate_without_replace_keeps_compatibility_and_remains_editor_only() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f1","position":1,"name":"Source"}),
+    );
+    let data = apply(
+        &mut a,
+        "duplicate",
+        json!({"id":"b1","folder_id":"f1","position":2}),
+    );
+    assert_eq!(data.buttons.len(), 2);
+    for replace in [false, true] {
+        let rejected = response(call(
+            &mut a,
+            Origin::Automation,
+            "duplicate",
+            json!({"id":"b1","folder_id":"f1","position":2,"replace":replace}),
+        ));
+        assert_eq!(
+            rejected.error.unwrap().outcome,
+            Some(rad_api::response::Outcome::NotApplied)
+        );
+    }
 }
