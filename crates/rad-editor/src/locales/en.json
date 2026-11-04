@@ -577,5 +577,6 @@
   "Text color": "Text color",
   "Bar behind the text": "Bar behind the text",
   "Key copied": "Key copied",
-  "The copied key no longer exists": "The copied key no longer exists"
+  "The copied key no longer exists": "The copied key no longer exists",
+  "The destination folder no longer exists": "The destination folder no longer exists"
 }

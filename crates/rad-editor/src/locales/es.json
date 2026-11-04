@@ -577,5 +577,6 @@
   "Text color": "Color del texto",
   "Bar behind the text": "Barra detrás del texto",
   "Key copied": "Tecla copiada",
-  "The copied key no longer exists": "La tecla copiada ya no existe"
+  "The copied key no longer exists": "La tecla copiada ya no existe",
+  "The destination folder no longer exists": "La carpeta de destino ya no existe"
 }

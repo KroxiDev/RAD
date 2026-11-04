@@ -172,7 +172,7 @@ fn a_deleted_source_reports_why_paste_failed_and_does_not_select_a_later_replace
         if matches!(job, Job::Request(Request::Duplicate { .. })) {
             let mut answer = event(Err(crate::session::Error {
                 code: "not_found".into(),
-                cause: None,
+                cause: Some("paste_source_missing".into()),
                 source_change: None,
                 unknown: false,
             }));
@@ -370,5 +370,101 @@ fn an_earlier_poll_does_not_consume_the_paste_but_a_folder_change_cancels_select
             app.selected().as_deref(),
             if changed_folder { None } else { Some("b11") }
         );
+    }
+}
+
+#[test]
+fn paste_failure_checks_the_source_once_and_only_names_a_confirmed_missing_entity() {
+    use crate::session::{Port, Session};
+    use std::sync::{Arc, Mutex};
+    struct Server {
+        diagnosis: Result<rad_api::Response, rad_client::connection::Failure>,
+        requests: Arc<Mutex<Vec<String>>>,
+    }
+    fn missing() -> rad_api::Response {
+        rad_api::Response {
+            v: 1,
+            id: Some("1".into()),
+            session_id: None,
+            status: rad_api::Status::Error,
+            data: rad_api::ResponseData::None,
+            error: Some(rad_api::Error {
+                code: rad_api::ErrorCode::parse("not_found").unwrap(),
+                message: "missing".into(),
+                details: json!({}),
+                outcome: Some(rad_api::Outcome::NotApplied),
+            }),
+        }
+    }
+    impl Port for Server {
+        fn call(
+            &mut self,
+            request: Request,
+        ) -> Result<rad_api::Response, rad_client::connection::Failure> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push(request.operation().as_str().into());
+            match request {
+                Request::Duplicate { replace: true, .. } => Ok(missing()),
+                Request::Get { id } => {
+                    assert_eq!(id, "b2");
+                    std::mem::replace(&mut self.diagnosis, Ok(missing()))
+                }
+                _ => panic!("unexpected request"),
+            }
+        }
+    }
+    for case in ["destination", "source", "unavailable"] {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        paste_target(&mut app, &ctx);
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let diagnosis = match case {
+            "destination" => Ok(rad_api::Response {
+                v: 1, id: Some("2".into()), session_id: None,
+                status: rad_api::Status::Ok,
+                data: rad_api::ResponseData::Entity(serde_json::from_value(json!({"visibility":"visible","id":"b2","kind":"button","fields":{"name":"Original","mode":"sequential","gesture":"press","permissions":{"inherit":true},"effective_permissions":{"consult":true,"modify":true,"execute":false},"folder_id":"f1","position":1},"view_revision":"2","sections":[]})).unwrap()),
+                error: None,
+            }),
+            "source" => Ok(missing()),
+            _ => Err(rad_client::connection::Failure { code: "runtime_unavailable", id: None, session_id: None, outcome: None }),
+        };
+        let mut session = Session::new(Server {
+            diagnosis,
+            requests: requests.clone(),
+        });
+        app.worker = Worker::spawn(move |job| {
+            let Job::Request(request) = job else {
+                panic!("unexpected job")
+            };
+            let result = crate::native::request_reply(&mut session, request);
+            let mut answer = event(result);
+            answer.paste = true;
+            answer.connected = session.is_open();
+            answer
+        });
+        input(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Paste("rad-key:b2".into())],
+        );
+        pump_reply(&mut app, &ctx);
+        assert_eq!(
+            app.message,
+            match case {
+                "destination" => "The destination folder no longer exists",
+                "source" => "The copied key no longer exists",
+                _ => "It no longer exists",
+            },
+            "{case}"
+        );
+        assert_eq!(
+            *requests.lock().unwrap(),
+            ["duplicate", "get"],
+            "one bounded read, no replay"
+        );
+        assert_eq!(app.connected, case != "unavailable");
+        assert!(app.pending_paste.is_none());
     }
 }

@@ -149,10 +149,14 @@ impl App {
                     if matches!(e.code.as_str(), "not_found" | "result_expired") {
                         self.control.terminal();
                     }
-                    let reason = if event.paste && e.code == "not_found" {
-                        tr(self.es, "The copied key no longer exists")
-                    } else {
-                        crate::status::describe_failure(&e, self.es)
+                    let reason = match (event.paste, e.code.as_str(), e.cause.as_deref()) {
+                        (true, "not_found", Some("paste_source_missing")) => {
+                            tr(self.es, "The copied key no longer exists")
+                        }
+                        (true, "not_found", Some("paste_destination_missing")) => {
+                            tr(self.es, "The destination folder no longer exists")
+                        }
+                        _ => crate::status::describe_failure(&e, self.es),
                     };
                     if e.unknown {
                         self.say(format!(
