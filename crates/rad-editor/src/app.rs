@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use std::{path::PathBuf, time::Instant};
 
 mod actions;
+mod application_icons;
 mod ahead;
 mod bar;
 mod credentials;
@@ -359,6 +360,7 @@ pub struct App {
     /// The user asked for the application icon, so a missing one deserves a word.
     icon_asked: bool,
     /// Action categories the user folded away in the list.
+    application_icons: application_icons::ApplicationIcons,
     folded: std::collections::BTreeSet<actions::Category>,
     /// Key pictures on the board and, within a budget, those it may show next.
     pictures: pictures::Pictures,
@@ -496,6 +498,7 @@ impl App {
             pending_action: None,
             icon_candidate: None,
             icon_asked: false,
+            application_icons: Default::default(),
             folded: [actions::Category::Applications].into(),
             pictures: Default::default(),
             ahead: Default::default(),
@@ -1035,6 +1038,7 @@ impl App {
 }
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.application_icons.begin(ui.ctx(), self.started.elapsed());
         let wait = self.frame_pacer.wait(Instant::now());
         if !wait.is_zero() {
             std::thread::sleep(wait);

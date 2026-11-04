@@ -13,7 +13,7 @@ zeroize = "=1.9.1"
 rad-plugin-contract = { path = "../rad-plugin-contract" }
 rad-client = { path = "../rad-client" }
 serde_json = "=1.0.154"
-image = { version = "=0.25.10", default-features = false, features = ["png"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 eframe = { version = "=0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland"], optional = true }
 toml = { version = "=1.1.8", default-features = false, features = ["parse", "serde", "std"] }
 
