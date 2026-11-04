@@ -14,6 +14,7 @@ use std::{path::PathBuf, time::Instant};
 
 mod actions;
 mod ahead;
+mod application_icons;
 mod bar;
 mod credentials;
 mod deck;
@@ -31,6 +32,7 @@ mod recovery;
 mod replies;
 mod service;
 mod settings;
+mod text_style;
 mod updates;
 
 use look::Look;
@@ -89,8 +91,7 @@ struct Draft {
     image: String,
     /// Published reference when this draft was read; never a local prepared image.
     published_image: String,
-    /// `top`, `middle` or `bottom`, as the runtime resolved it or as just chosen.
-    text_position: String,
+    style: rad_api::TextStyle,
     mode: String,
     gesture: String,
     order: Vec<usize>,
@@ -110,7 +111,8 @@ impl Draft {
             || self.image
                 != published
                     .and_then(|face| face.image.as_deref())
-                    .unwrap_or_default();
+                    .unwrap_or_default()
+            || self.style != published.map(text_style::from_face).unwrap_or_default();
         if self.state.is_some() && (protect || edited) {
             self.state_initialized = true;
         }
@@ -122,10 +124,11 @@ impl Draft {
     fn state_faces(&self) -> std::collections::BTreeMap<String, rad_api::StateFace> {
         let mut states = self.states.clone();
         if let Some(id) = &self.state {
-            let face = rad_api::StateFace {
-                text: self.text.clone(),
-                image: (!self.image.is_empty()).then(|| self.image.clone()),
-            };
+            let face = text_style::face(
+                self.text.clone(),
+                (!self.image.is_empty()).then(|| self.image.clone()),
+                self.style,
+            );
             // Preserve an explicitly empty published face; selecting it is not an edit.
             if face == rad_api::StateFace::default() && states.get(id) != Some(&face) {
                 states.remove(id);
@@ -138,6 +141,7 @@ impl Draft {
     fn select_state(&mut self, id: String) {
         self.states = self.state_faces();
         let face = self.states.get(&id).cloned().unwrap_or_default();
+        self.style = text_style::from_face(&face);
         self.text = face.text;
         self.image = face.image.unwrap_or_default();
         self.published_image = self
@@ -160,8 +164,15 @@ impl Draft {
                 if previous != edited {
                     let face = self.states.entry(id.clone()).or_default();
                     if previous.text != edited.text {
-                        face.text = edited.text;
+                        face.text = edited.text.clone();
                     }
+                    let mut style = text_style::from_face(face);
+                    text_style::retain(
+                        &mut style,
+                        text_style::from_face(&previous),
+                        text_style::from_face(&edited),
+                    );
+                    *face = text_style::face(face.text.clone(), face.image.clone(), style);
                     if previous.image != edited.image {
                         face.image = edited.image;
                     }
@@ -174,6 +185,7 @@ impl Draft {
             self.select_state(state.clone());
             self.state_initialized = edited.state_initialized;
         } else {
+            text_style::retain(&mut self.style, before.style, edited.style);
             if edited.text != before.text {
                 self.text = edited.text.clone();
             }
@@ -182,9 +194,6 @@ impl Draft {
             }
         }
         self.published_image = published_image;
-        if edited.text_position != before.text_position {
-            self.text_position = edited.text_position.clone();
-        }
         fn retain<T: Clone + PartialEq>(fresh: &mut T, before: &T, edited: &T) {
             if fresh == before {
                 *fresh = edited.clone();
@@ -209,20 +218,16 @@ impl Draft {
             visual_type: v.appearance["visual_type"].as_str().map(str::to_owned),
             state: None,
             state_initialized: false,
-            states: serde_json::from_value(v.appearance["states"].clone()).unwrap_or_default(),
-            published_states: serde_json::from_value(v.appearance["states"].clone())
-                .unwrap_or_default(),
-            base_face: rad_api::StateFace {
-                text: string(&v.appearance["text"]),
-                image: v.appearance["image"].as_str().map(str::to_owned),
-            },
+            states: text_style::states(&v.appearance["states"]),
+            published_states: text_style::states(&v.appearance["states"]),
+            base_face: text_style::face_from_view(&v.appearance),
             action_ids: v.actions.iter().map(|a| string(&a["id"])).collect(),
             id: string(&v.button["id"]),
             name: string(&v.button["fields"]["name"]),
             text: string(&v.appearance["text"]),
             image: string(&v.appearance["image"]),
             published_image: string(&v.appearance["image"]),
-            text_position: string(&v.appearance["text_position"]),
+            style: text_style::from_view(&v.appearance),
             mode: string(&v.button["fields"]["mode"]),
             gesture: v.button["fields"]["gesture"]
                 .as_str()
@@ -359,6 +364,7 @@ pub struct App {
     /// The user asked for the application icon, so a missing one deserves a word.
     icon_asked: bool,
     /// Action categories the user folded away in the list.
+    application_icons: application_icons::ApplicationIcons,
     folded: std::collections::BTreeSet<actions::Category>,
     /// Key pictures on the board and, within a budget, those it may show next.
     pictures: pictures::Pictures,
@@ -496,6 +502,7 @@ impl App {
             pending_action: None,
             icon_candidate: None,
             icon_asked: false,
+            application_icons: Default::default(),
             folded: [actions::Category::Applications].into(),
             pictures: Default::default(),
             ahead: Default::default(),
@@ -1035,6 +1042,8 @@ impl App {
 }
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.application_icons
+            .begin(ui.ctx(), self.started.elapsed());
         let wait = self.frame_pacer.wait(Instant::now());
         if !wait.is_zero() {
             std::thread::sleep(wait);
@@ -1189,13 +1198,17 @@ mod state_draft_tests {
         assert_eq!(library.state.as_deref(), Some("off"));
     }
     #[test]
-    fn tabs_preserve_both_faces_and_share_position_without_replacing_the_base() {
+    fn tabs_preserve_both_faces_with_independent_style_without_replacing_the_base() {
         let mut draft = Draft {
             base_face: rad_api::StateFace {
                 text: "Base".into(),
                 image: Some("base".into()),
+                ..Default::default()
             },
-            text_position: "top".into(),
+            style: rad_api::TextStyle {
+                position: Some(rad_api::TextPosition::Top),
+                ..Default::default()
+            },
             ..Default::default()
         };
         draft.select_state("muted".into());
@@ -1210,10 +1223,39 @@ mod state_draft_tests {
         let faces = draft.state_faces();
         assert_eq!(faces.len(), 2);
         assert_eq!(faces["unmuted"].image.as_deref(), Some("second"));
-        assert_eq!(draft.text_position, "top");
+        assert_eq!(draft.style.position, None, "new state starts automatic");
         assert_eq!(draft.base_face.image.as_deref(), Some("base"));
         draft.text.clear();
         draft.image.clear();
         assert!(!draft.state_faces().contains_key("muted"));
+    }
+    #[test]
+    fn style_edits_protect_the_tab_and_rebase_each_field_independently() {
+        let before = crate::session::Inspection {
+            button: serde_json::json!({"id":"b1","fields":{}}),
+            actions: vec![],
+            appearance: serde_json::json!({"text":"Base","image":null,"text_position":"middle","text_position_automatic":true,"states":{
+                "off":{"text":"Quiet","image":null,"text_position":"bottom","text_position_automatic":true,"text_size":13,"text_color":"#FFFFFF","text_band":true},
+                "on":{"text":"Live","image":null,"text_position":"top","text_position_automatic":false,"text_size":20,"text_color":"#FF8040","text_band":false}
+            }}),
+        };
+        let mut edited = Draft::load(&before);
+        edited.initial_state(None, "off", false);
+        edited.style.size = 8;
+        edited.style.band = false;
+        edited.initial_state(Some("on"), "off", false);
+        assert_eq!(edited.state.as_deref(), Some("off"));
+        let mut changed = before.clone();
+        changed.appearance["states"]["off"]["text_color"] = serde_json::json!("#123456");
+        changed.appearance["states"]["on"]["text_size"] = serde_json::json!(24);
+        let mut fresh = Draft::load(&changed);
+        fresh.retain_appearance_edits(&before, &edited);
+        assert_eq!(fresh.style.size, 8);
+        assert!(!fresh.style.band);
+        assert_eq!(fresh.style.color, [0x12, 0x34, 0x56]);
+        assert_eq!(fresh.style.position, None);
+        fresh.select_state("on".into());
+        assert_eq!(fresh.style.size, 24);
+        assert_eq!(fresh.style.position, Some(rad_api::TextPosition::Top));
     }
 }

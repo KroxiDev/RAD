@@ -1,7 +1,7 @@
 //! Bottom panel: what the selected key is and does. Only Try runs anything.
 use super::{
     App, Draft, Drag,
-    deck::{key_label, native_icon, paint_key},
+    deck::{native_icon, paint_key},
     look::{Icon, Look, glyph_button, icon_button, menu_button, paint_icon},
     string, tr,
 };
@@ -79,7 +79,7 @@ impl App {
                     || published.name != draft.name
                     || published.text != draft.text
                     || published.image != draft.image
-                    || published.text_position != draft.text_position
+                    || published.style != draft.style
                     || published.mode != draft.mode
                     || published.gesture != draft.gesture
                     || published.order != draft.order
@@ -112,14 +112,18 @@ impl App {
                 "A wait is a number of milliseconds, up to 600000 (10 minutes)",
             ));
         };
-        // Sent only when changed here, so an untouched key keeps following its image.
-        let published_position = self
+        let published_style = self
             .inspection
             .as_ref()
-            .map(|i| string(&i.appearance["text_position"]));
-        let text_position = (published_position.as_deref()
-            != Some(self.draft.text_position.as_str()))
-        .then_some(self.draft.text_position.as_str());
+            .map(|i| super::text_style::from_view(&i.appearance))
+            .unwrap_or_default();
+        let base_style = if self.draft.state.is_some() {
+            super::text_style::from_face(&self.draft.base_face)
+        } else {
+            self.draft.style
+        };
+        let text_position = (base_style.position != published_style.position)
+            .then_some(super::text_style::position_name(base_style.position));
         let launchers: Vec<_> = self
             .inspection
             .iter()
@@ -170,6 +174,12 @@ impl App {
                     ..
                 } = change
                 {
+                    a.text_size =
+                        (base_style.size != published_style.size).then_some(Some(base_style.size));
+                    a.text_color = (base_style.color != published_style.color)
+                        .then(|| Some(super::text_style::color_string(base_style.color)));
+                    a.text_band =
+                        (base_style.band != published_style.band).then_some(Some(base_style.band));
                     a.states = Some(self.draft.state_faces());
                     if self.draft.state.is_some() {
                         a.text = self.draft.base_face.text.clone();
@@ -249,12 +259,18 @@ impl App {
                     } else {
                         tr(self.es, "No text").to_owned()
                     };
+                    let controls = super::text_style::controls(
+                        self.draft.style,
+                        self.draft_resolved_text().position,
+                        self.draft_has_image(),
+                    );
                     ui.horizontal(|ui| {
-                        ui.add(
+                        ui.add_enabled(
+                            controls.text,
                             look.field(&mut self.draft.text, &placeholder)
                                 .desired_width(FIELD),
                         );
-                        self.text_placement_menu(ui);
+                        self.text_placement_menu(ui, look);
                     });
                     ui.end_row();
                     ui.label(look.muted_text(tr(self.es, "Image")));
@@ -409,159 +425,193 @@ impl App {
     /// The key face as the deck will show it; once loaded it follows the draft, so edits
     /// show before saving.
     fn paint_preview(&self, ui: &egui::Ui, look: &Look, id: &str, preview: egui::Rect) {
-        let Some(view) = self
-            .board
-            .as_ref()
-            .and_then(|b| b.buttons.iter().find(|b| b.entity["id"] == id))
-        else {
-            return;
-        };
-        if let Some(texture) = self.icon_library.preview(id) {
-            paint_key(
-                ui,
-                look,
-                preview,
-                &key_label(&self.draft.text, &self.draft.name, true),
-                &self.draft.text_position,
-                Some((texture, 1.)),
-                None,
-            );
-            return;
-        }
-        if let Some(state) = &self.draft.state {
-            let key = format!("{}:{state}", string(&view.appearance["visual_type"]));
-            let image = self
-                .pictures
-                .get(&self.draft.image, ui.input(|i| i.time))
-                .or_else(|| {
-                    self.plugins
-                        .state_icons
-                        .get(&key)
-                        .map(|(_, texture)| (texture, 1.))
-                })
-                .or_else(|| {
-                    self.plugins
-                        .visuals
-                        .get(id)
-                        .filter(|f| f.visual_state.as_ref() == Some(state))
-                        .and_then(|f| f.texture.as_ref())
-                        .map(|t| (t, 1.))
-                });
-            paint_key(
-                ui,
-                look,
-                preview,
-                &self.draft.text,
-                &self.draft.text_position,
-                image,
-                None,
-            );
-            return;
-        }
-        let published = view.appearance["image"].as_str();
-        let icon = if self.draft.image.is_empty() && view.appearance["visual_type"].is_null() {
-            native_icon(&view.appearance).or_else(|| {
-                self.inspection.as_ref().and_then(|inspection| {
-                    [
-                        ("sleep", rad_api::NativeIcon::Sleep),
-                        ("brightness", rad_api::NativeIcon::Brightness),
-                    ]
-                    .into_iter()
-                    .find_map(|(kind, icon)| {
-                        inspection
-                            .actions
-                            .iter()
-                            .any(|action| action["fields"]["type"] == kind)
-                            .then_some(icon)
-                    })
-                })
-            })
-        } else {
-            None
-        };
-        let (label, position, image) = if self.inspection.is_some() {
-            (
-                key_label(
-                    &self.draft.text,
-                    &self.draft.name,
-                    !self.draft.image.is_empty() || icon.is_some(),
-                ),
-                self.draft.text_position.clone(),
-                published.filter(|reference| *reference == self.draft.image),
-            )
-        } else {
-            (
-                key_label(
-                    &string(&view.appearance["text"]),
-                    &string(&view.entity["fields"]["name"]),
-                    published.is_some() || icon.is_some(),
-                ),
-                string(&view.appearance["text_position"]),
-                published,
-            )
-        };
+        let face = self.plugins.visuals.get(id);
+        let state = self.draft.state.as_ref();
         let now = ui.input(|i| i.time);
-        let picture = image.and_then(|reference| self.pictures.get(reference, now));
-        if !self.plugin_face(ui, look, id, preview) {
-            paint_key(ui, look, preview, &label, &position, picture, icon);
+        let state_key = state.map(|state| {
+            format!(
+                "{}:{state}",
+                self.draft.visual_type.as_deref().unwrap_or("")
+            )
+        });
+        let picture = self
+            .icon_library
+            .preview(id)
+            .map(|texture| (texture, 1.))
+            .or_else(|| self.pictures.get(&self.draft.image, now))
+            .or_else(|| {
+                state_key
+                    .as_ref()
+                    .and_then(|key| self.plugins.state_icons.get(key))
+                    .map(|(_, texture)| (texture, 1.))
+            })
+            .or_else(|| {
+                face.filter(|face| state.is_none() || face.visual_state.as_ref() == state)
+                    .and_then(|face| face.texture.as_ref())
+                    .map(|texture| (texture, 1.))
+            });
+        let native = self
+            .inspection
+            .as_ref()
+            .filter(|view| view.appearance["visual_type"].is_null())
+            .and_then(|view| {
+                native_icon(&view.appearance).or_else(|| {
+                    view.actions
+                        .iter()
+                        .find_map(|a| match a["fields"]["type"].as_str() {
+                            Some("sleep") => Some(rad_api::NativeIcon::Sleep),
+                            Some("brightness") => Some(rad_api::NativeIcon::Brightness),
+                            _ => None,
+                        })
+                })
+            });
+        let mut preview_look = Look::new(&self.palette);
+        if let Some(c) = face.and_then(|face| face.color) {
+            preview_look.key = egui::Color32::from_rgb(
+                (u16::from(c[0]) * u16::from(c[3]) / 255) as u8,
+                (u16::from(c[1]) * u16::from(c[3]) / 255) as u8,
+                (u16::from(c[2]) * u16::from(c[3]) / 255) as u8,
+            );
+        }
+        paint_key(
+            ui,
+            &preview_look,
+            preview,
+            self.draft_resolved_text(),
+            false,
+            picture,
+            native,
+        );
+        if let Some(face) = face {
+            self.paint_plugin_status(ui, look, preview, &face.state);
         }
     }
-    /// Button that opens how the text is placed: at the top, in the middle or at the
-    /// bottom, and either over the image or beside it. Applied with Save.
-    fn text_placement_menu(&mut self, ui: &mut egui::Ui) {
-        let button = menu_button(ui, tr(self.es, "Position"))
-            .on_hover_text(tr(self.es, "Where the text goes on the key"));
+    fn draft_has_image(&self) -> bool {
+        if !self.draft.image.is_empty() || self.icon_library.preview(&self.draft.id).is_some() {
+            return true;
+        }
+        if let Some(state) = &self.draft.state {
+            let key = format!(
+                "{}:{state}",
+                self.draft.visual_type.as_deref().unwrap_or("")
+            );
+            self.plugins.state_icons.contains_key(&key)
+                || self
+                    .plugins
+                    .visuals
+                    .get(&self.draft.id)
+                    .is_some_and(|face| {
+                        face.visual_state.as_ref() == Some(state) && face.texture.is_some()
+                    })
+        } else {
+            self.plugins
+                .visuals
+                .get(&self.draft.id)
+                .is_some_and(|face| face.texture.is_some())
+                || self.inspection.as_ref().is_some_and(|view| {
+                    native_icon(&view.appearance).is_some()
+                        || (view.appearance["visual_type"].is_null()
+                            && view.actions.iter().any(|a| {
+                                matches!(a["fields"]["type"].as_str(), Some("sleep" | "brightness"))
+                            }))
+                })
+        }
+    }
+    fn draft_resolved_text(&self) -> rad_api::ResolvedText<'_> {
+        let plugin = self
+            .draft
+            .state
+            .is_none()
+            .then(|| self.plugins.visuals.get(&self.draft.id))
+            .flatten()
+            .and_then(|face| face.source_text.as_deref());
+        self.draft.style.resolve(
+            &self.draft.text,
+            self.draft_has_image(),
+            plugin,
+            self.draft
+                .state
+                .is_none()
+                .then_some(self.draft.name.as_str()),
+        )
+    }
+    /// A position click fixes the automatic choice; changing color, size or band does not.
+    fn text_placement_menu(&mut self, ui: &mut egui::Ui, look: &Look) {
+        use rad_api::TextPosition as P;
+        let button = menu_button(ui, tr(self.es, "Style"));
         egui::Popup::menu(&button)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
-                let (row, beside) = match self.draft.text_position.as_str() {
-                    "top" => ("top", false),
-                    "above_image" => ("top", true),
-                    "bottom" => ("bottom", false),
-                    "below_image" => ("bottom", true),
-                    _ => ("middle", false),
+                let effective = self.draft_resolved_text().position;
+                let controls = super::text_style::controls(
+                    self.draft.style,
+                    effective,
+                    self.draft_has_image(),
+                );
+                let row = match effective {
+                    P::AboveImage => P::Top,
+                    P::BelowImage => P::Bottom,
+                    p => p,
                 };
-                let mut choice = (row, beside);
+                let beside = matches!(effective, P::AboveImage | P::BelowImage);
                 ui.horizontal(|ui| {
-                    for (value, en) in [("top", "Top"), ("middle", "Middle"), ("bottom", "Bottom")]
-                    {
-                        if ui.selectable_label(row == value, tr(self.es, en)).clicked() {
-                            choice.0 = value;
+                    for (value, label) in [
+                        (P::Top, "Top"),
+                        (P::Middle, "Middle"),
+                        (P::Bottom, "Bottom"),
+                        (P::Hidden, "No text"),
+                    ] {
+                        if ui
+                            .selectable_label(row == value, tr(self.es, label))
+                            .clicked()
+                        {
+                            self.draft.style.position = Some(match (value, beside) {
+                                (P::Top, true) => P::AboveImage,
+                                (P::Bottom, true) => P::BelowImage,
+                                _ => value,
+                            });
                         }
                     }
                 });
-                ui.add_enabled_ui(row != "middle", |ui| {
+                ui.add_enabled_ui(controls.placement, |ui| {
                     ui.horizontal(|ui| {
-                        for (value, en, hint_en) in [
-                            (
-                                false,
-                                "Over the image",
-                                "The image fills the key and the text is drawn on it",
-                            ),
-                            (
-                                true,
-                                "Moves the image",
-                                "The image shrinks so the text has room of its own",
-                            ),
-                        ] {
+                        for (value, label) in [(false, "Over the image"), (true, "Moves the image")]
+                        {
                             if ui
-                                .selectable_label(beside == value, tr(self.es, en))
-                                .on_hover_text(tr(self.es, hint_en))
+                                .selectable_label(beside == value, tr(self.es, label))
                                 .clicked()
                             {
-                                choice.1 = value;
+                                self.draft.style.position = Some(match (row, value) {
+                                    (P::Top, true) => P::AboveImage,
+                                    (P::Top, false) => P::Top,
+                                    (_, true) => P::BelowImage,
+                                    (_, false) => P::Bottom,
+                                });
                             }
                         }
                     });
                 });
-                self.draft.text_position = match choice {
-                    ("top", false) => "top",
-                    ("top", true) => "above_image",
-                    ("bottom", false) => "bottom",
-                    ("bottom", true) => "below_image",
-                    _ => "middle",
-                }
-                .into();
+                ui.add_enabled_ui(controls.size_color, |ui| {
+                    ui.add(
+                        egui::Slider::new(&mut self.draft.style.size, 8..=24)
+                            .step_by(1.)
+                            .text(tr(self.es, "Size")),
+                    );
+                    super::icon_library::color_row(
+                        ui,
+                        look,
+                        self.es,
+                        "Text color",
+                        &mut self.draft.style.color,
+                        [255; 3],
+                    );
+                });
+                ui.add_enabled_ui(controls.band, |ui| {
+                    ui.checkbox(
+                        &mut self.draft.style.band,
+                        tr(self.es, "Bar behind the text"),
+                    );
+                });
             });
     }
     /// Button with everything about the key's picture: open the icon library, take the icon
@@ -1080,5 +1130,35 @@ mod brightness_tests {
             ]
         );
         assert!(app.unsaved(), "sending a request is not a publication");
+    }
+    #[test]
+    fn hidden_plugin_text_returns_in_preview_before_saving_and_states_ignore_it() {
+        let mut app = app();
+        app.plugins.visuals.insert(
+            "b2".into(),
+            super::super::plugins::Face {
+                visual_state: None,
+                revision: "1".into(),
+                state: "current".into(),
+                text: Some(String::new()),
+                source_text: Some("Playing".into()),
+                style: rad_api::TextStyle {
+                    position: Some(rad_api::TextPosition::Hidden),
+                    ..Default::default()
+                },
+                color: None,
+                texture: None,
+            },
+        );
+        app.draft.style.position = Some(rad_api::TextPosition::Hidden);
+        app.draft.text = "Preserved".into();
+        assert_eq!(app.draft_resolved_text().text, "");
+        assert_eq!(app.draft.text, "Preserved");
+        app.draft.style.position = Some(rad_api::TextPosition::Top);
+        assert_eq!(app.draft_resolved_text().text, "Playing");
+        app.draft.select_state("off".into());
+        assert_eq!(app.draft_resolved_text().text, "");
+        app.draft.text = "Quiet".into();
+        assert_eq!(app.draft_resolved_text().text, "Quiet");
     }
 }

@@ -2,7 +2,7 @@ use super::*;
 use crate::admin;
 use rad_core::configuration::{
     ActionKind, ActionParameters, Appearance, ButtonData, Configuration, ConfigurationError,
-    DesktopEntry, Edit, ExternalType, Mode, TextPosition, VisualSource, Wait,
+    DesktopEntry, Edit, ExternalType, Mode, TextPosition, TextStyle, VisualSource, Wait,
 };
 use rad_core::identity::EntityIdentity;
 pub(super) fn command(request: &rad_api::Request) -> Checked<Command> {
@@ -169,6 +169,9 @@ enum Change {
         text: String,
         image: Option<String>,
         text_position: Option<Option<TextPosition>>,
+        text_size: Option<u8>,
+        text_color: Option<[u8; 3]>,
+        text_band: Option<bool>,
     },
     Mode(ShortId, Mode),
     Parameters(ShortId, ActionParameters),
@@ -242,32 +245,41 @@ fn convert_change(change: &rad_api::Change) -> Checked<Change> {
                     },
                 ),
                 F::Appearance(v) => Change::Appearance {
-                    states: v.states.as_ref().map(|states| {
-                        states
-                            .iter()
-                            .map(|(id, f)| {
-                                (
-                                    id.clone(),
-                                    rad_core::configuration::StateFace {
-                                        text: f.text.clone(),
-                                        image: f.image.clone(),
-                                    },
-                                )
-                            })
-                            .collect()
-                    }),
+                    states: v
+                        .states
+                        .as_ref()
+                        .map(|states| {
+                            states
+                                .iter()
+                                .map(|(id, f)| {
+                                    Ok((
+                                        id.clone(),
+                                        rad_core::configuration::StateFace {
+                                            text: f.text.clone(),
+                                            image: f.image.clone(),
+                                            text_style: TextStyle {
+                                                position: f.text_position.map(text_position),
+                                                size: text_size(f.text_size)?,
+                                                color: text_color(f.text_color.as_deref())?,
+                                                band: f.text_band.unwrap_or(true),
+                                            },
+                                        },
+                                    ))
+                                })
+                                .collect::<Checked<_>>()
+                        })
+                        .transpose()?,
                     id: target,
                     text: v.text.clone(),
                     image: v.image.clone(),
-                    text_position: v.text_position.map(|p| {
-                        p.map(|p| match p {
-                            rad_api::TextPosition::Top => TextPosition::Top,
-                            rad_api::TextPosition::Middle => TextPosition::Middle,
-                            rad_api::TextPosition::Bottom => TextPosition::Bottom,
-                            rad_api::TextPosition::AboveImage => TextPosition::AboveImage,
-                            rad_api::TextPosition::BelowImage => TextPosition::BelowImage,
-                        })
-                    }),
+                    text_position: v.text_position.map(|p| p.map(text_position)),
+                    text_size: v.text_size.map(text_size).transpose()?,
+                    text_color: v
+                        .text_color
+                        .as_ref()
+                        .map(|c| text_color(c.as_deref()))
+                        .transpose()?,
+                    text_band: v.text_band.map(|b| b.unwrap_or(true)),
                 },
                 F::DesktopEntry(v) => {
                     Change::Parameters(target, ActionParameters::Launcher(launcher(v)?))
@@ -308,6 +320,9 @@ impl Change {
                 text,
                 image,
                 text_position,
+                text_size,
+                text_color,
+                text_band,
             } => {
                 let b = button(cfg, id)?;
                 Edit::SetAppearance {
@@ -316,7 +331,12 @@ impl Change {
                         states: states.unwrap_or_else(|| b.appearance.states.clone()),
                         text,
                         image,
-                        text_position: text_position.unwrap_or(b.appearance.text_position),
+                        text_style: TextStyle {
+                            position: text_position.unwrap_or(b.appearance.text_style.position),
+                            size: text_size.unwrap_or(b.appearance.text_style.size),
+                            color: text_color.unwrap_or(b.appearance.text_style.color),
+                            band: text_band.unwrap_or(b.appearance.text_style.band),
+                        },
                     },
                 }
             }
@@ -394,4 +414,36 @@ fn brightness_direction(
             rad_core::configuration::BrightnessDirection::Decrease
         }
     }
+}
+
+fn text_position(p: rad_api::TextPosition) -> TextPosition {
+    match p {
+        rad_api::TextPosition::Top => TextPosition::Top,
+        rad_api::TextPosition::Middle => TextPosition::Middle,
+        rad_api::TextPosition::Bottom => TextPosition::Bottom,
+        rad_api::TextPosition::AboveImage => TextPosition::AboveImage,
+        rad_api::TextPosition::BelowImage => TextPosition::BelowImage,
+        rad_api::TextPosition::Hidden => TextPosition::Hidden,
+    }
+}
+fn text_size(size: Option<u8>) -> Checked<u8> {
+    let size = size.unwrap_or(13);
+    if (8..=24).contains(&size) {
+        Ok(size)
+    } else {
+        Err("invalid_request")
+    }
+}
+fn text_color(color: Option<&str>) -> Checked<[u8; 3]> {
+    let Some(c) = color else {
+        return Ok([255; 3]);
+    };
+    if c.len() != 7 || !c.starts_with('#') || !c.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit) {
+        return Err("invalid_request");
+    }
+    Ok([
+        u8::from_str_radix(&c[1..3], 16).unwrap(),
+        u8::from_str_radix(&c[3..5], 16).unwrap(),
+        u8::from_str_radix(&c[5..7], 16).unwrap(),
+    ])
 }

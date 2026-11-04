@@ -54,6 +54,7 @@ pub enum TextPosition {
     Bottom,
     AboveImage,
     BelowImage,
+    Hidden,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,19 +71,37 @@ pub struct Appearance {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "nullable_position"
+        deserialize_with = "nullable_style"
     )]
     pub text_position: Option<Option<TextPosition>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_style"
+    )]
+    pub text_size: Option<Option<u8>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_style"
+    )]
+    pub text_color: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_style"
+    )]
+    pub text_band: Option<Option<bool>>,
 }
 fn state_faces<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> Result<Option<std::collections::BTreeMap<String, StateFace>>, D::Error> {
     std::collections::BTreeMap::deserialize(d).map(Some)
 }
-fn nullable_position<'de, D: serde::Deserializer<'de>>(
+fn nullable_style<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     d: D,
-) -> Result<Option<Option<TextPosition>>, D::Error> {
-    Option::<TextPosition>::deserialize(d).map(Some)
+) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -340,6 +359,14 @@ impl TryFrom<String> for BrightnessDirection {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StateFace {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_position: Option<TextPosition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_size: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_band: Option<bool>,
     pub text: String,
     pub image: Option<String>,
 }

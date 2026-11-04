@@ -22,6 +22,7 @@ pub struct KeySave<'a> {
 pub fn save_button(save: &KeySave) -> Request {
     use rad_api::{Appearance, Change, FieldEdit, Gesture, Mode, TextPosition};
     let text_position = save.text_position.map(|p| match p {
+        "hidden" => Some(TextPosition::Hidden),
         "top" => Some(TextPosition::Top),
         "middle" => Some(TextPosition::Middle),
         "bottom" => Some(TextPosition::Bottom),
@@ -42,6 +43,9 @@ pub fn save_button(save: &KeySave) -> Request {
                 text: save.text.into(),
                 image: save.image.map(str::to_owned),
                 text_position,
+                text_size: None,
+                text_color: None,
+                text_band: None,
             }),
         ),
         set(

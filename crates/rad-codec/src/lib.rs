@@ -11,6 +11,8 @@ mod v4;
 mod v4_document;
 mod v5;
 mod v5_document;
+mod v6;
+mod v6_document;
 use document as d;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecError {
@@ -19,13 +21,13 @@ pub enum CodecError {
     InvalidValue,
     TooLarge,
 }
-/// Encode the canonical v6 deck document.
+/// Encode the canonical v7 deck document.
 /// No historical ledger, media bytes or runtime state.
 pub fn encode(config: &Configuration) -> Result<Vec<u8>, CodecError> {
     let data = config.data();
     let doc = d::Document {
         settings: write_settings(data.settings),
-        version: 6,
+        version: 7,
         grid: [data.grid.columns(), data.grid.rows()],
         plugin_dependencies: data
             .plugin_dependencies
@@ -80,7 +82,8 @@ pub fn decode_data(bytes: &[u8]) -> Result<ConfigurationData, CodecError> {
         3 => v3::import(bytes)?,
         4 => v4::import(bytes)?,
         5 => v5::import(bytes)?,
-        6 => serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?,
+        6 => v6::import(bytes)?,
+        7 => serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?,
         _ => return Err(CodecError::UnsupportedVersion),
     };
     if version < 5 && doc.settings.brightness_percent < 10 {
@@ -248,6 +251,11 @@ fn write_button(v: &ButtonData) -> d::Button {
                     (
                         id.clone(),
                         d::StateFace {
+                            text_position: face.text_style.position.map(write_position),
+                            text_size: (face.text_style.size != 13).then_some(face.text_style.size),
+                            text_color: (face.text_style.color != [255; 3])
+                                .then(|| write_color(face.text_style.color)),
+                            text_band: (!face.text_style.band).then_some(false),
                             text: face.text.clone(),
                             image: face.image.clone(),
                         },
@@ -256,13 +264,11 @@ fn write_button(v: &ButtonData) -> d::Button {
                 .collect(),
             text: v.appearance.text.clone(),
             image: v.appearance.image.clone(),
-            text_position: v.appearance.text_position.map(|position| match position {
-                TextPosition::Top => d::TextPosition::Top,
-                TextPosition::Middle => d::TextPosition::Middle,
-                TextPosition::Bottom => d::TextPosition::Bottom,
-                TextPosition::AboveImage => d::TextPosition::AboveImage,
-                TextPosition::BelowImage => d::TextPosition::BelowImage,
-            }),
+            text_position: v.appearance.text_style.position.map(write_position),
+            text_size: (v.appearance.text_style.size != 13).then_some(v.appearance.text_style.size),
+            text_color: (v.appearance.text_style.color != [255; 3])
+                .then(|| write_color(v.appearance.text_style.color)),
+            text_band: (!v.appearance.text_style.band).then_some(false),
         },
         visual: match &v.visual {
             VisualSource::Manual => d::Visual::Manual,
@@ -324,24 +330,29 @@ fn read_button(v: d::Button) -> Result<ButtonData, CodecError> {
                 .states
                 .into_iter()
                 .map(|(id, face)| {
-                    (
+                    Ok((
                         id,
                         StateFace {
+                            text_style: read_style(
+                                face.text_position,
+                                face.text_size,
+                                face.text_color,
+                                face.text_band,
+                            )?,
                             text: face.text,
                             image: face.image,
                         },
-                    )
+                    ))
                 })
-                .collect(),
+                .collect::<Result<_, CodecError>>()?,
             text: v.appearance.text,
             image: v.appearance.image,
-            text_position: v.appearance.text_position.map(|position| match position {
-                d::TextPosition::Top => TextPosition::Top,
-                d::TextPosition::Middle => TextPosition::Middle,
-                d::TextPosition::Bottom => TextPosition::Bottom,
-                d::TextPosition::AboveImage => TextPosition::AboveImage,
-                d::TextPosition::BelowImage => TextPosition::BelowImage,
-            }),
+            text_style: read_style(
+                v.appearance.text_position,
+                v.appearance.text_size,
+                v.appearance.text_color,
+                v.appearance.text_band,
+            )?,
         },
         visual: match v.visual {
             d::Visual::Manual => VisualSource::Manual,
@@ -532,4 +543,58 @@ pub fn document_version(bytes: &[u8]) -> Result<u64, CodecError> {
     let version: Version =
         serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?;
     Ok(version.version)
+}
+
+fn write_position(p: TextPosition) -> d::TextPosition {
+    match p {
+        TextPosition::Top => d::TextPosition::Top,
+        TextPosition::Middle => d::TextPosition::Middle,
+        TextPosition::Bottom => d::TextPosition::Bottom,
+        TextPosition::AboveImage => d::TextPosition::AboveImage,
+        TextPosition::BelowImage => d::TextPosition::BelowImage,
+        TextPosition::Hidden => d::TextPosition::Hidden,
+    }
+}
+fn write_color(c: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2])
+}
+fn read_style(
+    position: Option<d::TextPosition>,
+    size: Option<u8>,
+    color: Option<String>,
+    band: Option<bool>,
+) -> Result<TextStyle, CodecError> {
+    let size = size.unwrap_or(13);
+    if !(8..=24).contains(&size) {
+        return Err(CodecError::InvalidValue);
+    }
+    let color = match color {
+        None => [255; 3],
+        Some(c) => {
+            if c.len() != 7
+                || !c.starts_with('#')
+                || !c.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
+            {
+                return Err(CodecError::InvalidValue);
+            }
+            [
+                u8::from_str_radix(&c[1..3], 16).unwrap(),
+                u8::from_str_radix(&c[3..5], 16).unwrap(),
+                u8::from_str_radix(&c[5..7], 16).unwrap(),
+            ]
+        }
+    };
+    Ok(TextStyle {
+        position: position.map(|p| match p {
+            d::TextPosition::Top => TextPosition::Top,
+            d::TextPosition::Middle => TextPosition::Middle,
+            d::TextPosition::Bottom => TextPosition::Bottom,
+            d::TextPosition::AboveImage => TextPosition::AboveImage,
+            d::TextPosition::BelowImage => TextPosition::BelowImage,
+            d::TextPosition::Hidden => TextPosition::Hidden,
+        }),
+        size,
+        color,
+        band: band.unwrap_or(true),
+    })
 }

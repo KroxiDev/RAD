@@ -175,7 +175,7 @@ fn media_is_owned_deduplicated_and_committed_with_configuration() {
                     states: Default::default(),
                     text: "".into(),
                     image: Some(key.clone()),
-                    text_position: None,
+                    text_style: Default::default(),
                 },
             },
         )
@@ -268,7 +268,7 @@ fn shared_corrupt_media_makes_both_revisions_unrecoverable_without_empty_reset()
                     states: Default::default(),
                     text: "".into(),
                     image: Some(key),
-                    text_position: None,
+                    text_style: Default::default(),
                 },
             },
         )

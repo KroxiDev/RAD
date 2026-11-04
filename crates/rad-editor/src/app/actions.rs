@@ -18,10 +18,14 @@ pub(super) enum Category {
 }
 
 /// What a row shows before its name: a glyph of the font, or an icon drawn with strokes.
-#[derive(Clone, Copy)]
-enum Badge {
+enum Badge<'a> {
     Glyph(&'static str),
     Icon(Icon),
+    Application(
+        &'a mut super::application_icons::ApplicationIcons,
+        &'a str,
+        std::time::Duration,
+    ),
 }
 
 /// Category title with a chevron: pointing down while its rows show, right while folded.
@@ -64,7 +68,7 @@ fn header(
 }
 
 /// One draggable, clickable row: its badge, then its name.
-fn row(ui: &mut egui::Ui, look: &Look, badge: Badge, name: &str, drag: Drag) -> egui::Response {
+fn row(ui: &mut egui::Ui, look: &Look, badge: Badge<'_>, name: &str, drag: Drag) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_HEIGHT),
         egui::Sense::click_and_drag(),
@@ -91,6 +95,27 @@ fn row(ui: &mut egui::Ui, look: &Look, badge: Badge, name: &str, drag: Drag) -> 
                 );
             }
             Badge::Icon(icon) => paint_icon(painter, square.center(), icon, look.muted),
+            Badge::Application(icons, desktop, now) => {
+                if let Some((texture, alpha)) = icons.show(ui.ctx(), desktop, now) {
+                    if let Some(texture) = texture {
+                        let size = texture.size_vec2();
+                        let size = size * (18. / size.x.max(size.y));
+                        painter.image(
+                            texture.id(),
+                            egui::Rect::from_center_size(square.center(), size),
+                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1., 1.)),
+                            egui::Color32::WHITE.gamma_multiply(alpha),
+                        );
+                    } else {
+                        paint_icon(
+                            painter,
+                            square.center(),
+                            Icon::Apps,
+                            look.muted.gamma_multiply(alpha),
+                        );
+                    }
+                }
+            }
         }
         let color = if ui.is_enabled() {
             look.text
@@ -268,7 +293,7 @@ impl App {
         }
     }
     /// A row that puts `action` on a key: dragged there, or double-clicked with one selected.
-    fn list_action(&mut self, ui: &mut egui::Ui, look: &Look, badge: Badge, action: NewAction) {
+    fn list_action(&mut self, ui: &mut egui::Ui, look: &Look, badge: Badge<'_>, action: NewAction) {
         if !self.action_matches(&action) {
             return;
         }
@@ -287,6 +312,14 @@ impl App {
                 self.es,
                 "Drag it onto a key, or double-click to add it to the selected key",
             )
+        };
+        let badge = match &action {
+            NewAction::Launcher(entry) => Badge::Application(
+                &mut self.application_icons,
+                &entry.desktop_entry,
+                self.started.elapsed(),
+            ),
+            _ => badge,
         };
         let response = row(ui, look, badge, &label, drag).on_hover_text(hint);
         if response.double_clicked()
@@ -333,5 +366,50 @@ impl App {
                 self.catalog_due = Some(0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn application_icons_are_requested_only_for_visible_open_rows() {
+        let mut app = App::with_preferences_path(
+            "/nonexistent/rad-test".into(),
+            "/nonexistent/theme".into(),
+            None,
+        );
+        app.catalog.entries.push(crate::catalog::Entry {
+            desktop_entry: "x.desktop".into(),
+            name: "X".into(),
+        });
+        let ctx = egui::Context::default();
+        let look = Look::new(&crate::theme::Palette::default());
+        let draw = |app: &mut App, visible: bool| {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                if !visible {
+                    ui.set_clip_rect(egui::Rect::NOTHING);
+                }
+                app.actions(ui, &look);
+            });
+        };
+        draw(&mut app, true);
+        assert!(!app.application_icons.requested(), "folded category");
+        app.folded.remove(&Category::Applications);
+        draw(&mut app, false);
+        assert!(!app.application_icons.requested(), "clipped rows");
+        draw(&mut app, true);
+        assert!(
+            app.application_icons.requested(),
+            "visible open row requests its icon"
+        );
+        app.application_icons = Default::default();
+        app.folded.insert(Category::Applications);
+        app.catalog.query = "X".into();
+        draw(&mut app, true);
+        assert!(
+            app.application_icons.requested(),
+            "search reveals folded rows"
+        );
     }
 }

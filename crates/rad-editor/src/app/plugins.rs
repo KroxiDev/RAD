@@ -295,7 +295,8 @@ pub(super) struct Face {
     pub revision: String,
     pub state: String,
     pub text: Option<String>,
-    pub position: String,
+    pub style: rad_api::TextStyle,
+    pub source_text: Option<String>,
     pub color: Option<[u8; 4]>,
     pub texture: Option<egui::TextureHandle>,
 }
@@ -1343,7 +1344,13 @@ impl App {
                     revision: v.revision,
                     state: v.availability,
                     text: v.text,
-                    position: v.text_position,
+                    style: rad_api::TextStyle {
+                        position: super::text_style::position(&v.text_position),
+                        size: v.text_size,
+                        color: super::text_style::color(&v.text_color),
+                        band: v.text_band,
+                    },
+                    source_text: v.source_text,
                     color: v.color,
                     texture,
                 },
@@ -1388,30 +1395,49 @@ impl App {
                 (u16::from(c[2]) * u16::from(c[3]) / 255) as u8,
             );
         }
-        let custom = face
-            .and_then(|f| f.visual_state.as_ref())
-            .and_then(|state| {
-                self.board
-                    .as_ref()?
+        let custom = self
+            .board
+            .as_ref()
+            .and_then(|board| {
+                board
                     .buttons
                     .iter()
-                    .find(|b| b.entity["id"] == id)?
-                    .appearance["states"][state]["image"]
-                    .as_str()
+                    .find(|button| button.entity["id"] == id)
+            })
+            .and_then(|button| {
+                custom_image(
+                    &button.appearance,
+                    face.and_then(|face| face.visual_state.as_deref()),
+                )
             });
         let custom_picture = custom.and_then(|key| self.pictures.get(key, ui.input(|i| i.time)));
         super::deck::paint_key(
             ui,
             &look,
             rect,
-            text,
-            face.map(|f| f.position.as_str()).unwrap_or("middle"),
+            face.map(|f| f.style).unwrap_or_default().resolve(
+                text,
+                face.is_some_and(|f| f.texture.is_some()) || custom_picture.is_some(),
+                None,
+                None,
+            ),
+            true,
             custom_picture.or_else(|| {
                 face.and_then(|f| f.texture.as_ref())
                     .map(|texture| (texture, 1.))
             }),
             None,
         );
+        self.paint_plugin_status(ui, &look, rect, state);
+        true
+    }
+    pub(super) fn paint_plugin_status(
+        &self,
+        ui: &egui::Ui,
+        look: &Look,
+        rect: egui::Rect,
+        state: &str,
+    ) {
         if state != "current" {
             // A small tag in the corner: the face is not live, whatever it still shows.
             let painter = ui.painter().with_clip_rect(rect);
@@ -1431,7 +1457,6 @@ impl App {
             );
             painter.galley(tag.min + egui::vec2(4., 2.), galley, look.warn);
         }
-        true
     }
 }
 pub(super) fn form_ui(
@@ -1582,5 +1607,23 @@ mod source_change_tests {
         plugins.selected = "second".into();
         assert!(plugins.pending_confirmation().is_none(), "another plugin");
         assert!(plugins.confirm().is_none(), "nothing valid to confirm");
+    }
+}
+
+fn custom_image<'a>(appearance: &'a Value, state: Option<&str>) -> Option<&'a str> {
+    match state {
+        Some(state) => appearance["states"][state]["image"].as_str(),
+        None => appearance["image"].as_str(),
+    }
+}
+#[cfg(test)]
+mod image_priority_tests {
+    use super::*;
+    #[test]
+    fn custom_image_uses_base_for_stateless_plugins_and_only_current_state_otherwise() {
+        let appearance = serde_json::json!({"image":"base", "states":{"on":{"image":"active"},"off":{"image":null}}});
+        assert_eq!(custom_image(&appearance, None), Some("base"));
+        assert_eq!(custom_image(&appearance, Some("on")), Some("active"));
+        assert_eq!(custom_image(&appearance, Some("off")), None);
     }
 }

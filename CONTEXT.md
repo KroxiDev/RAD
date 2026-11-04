@@ -38,6 +38,11 @@ Presentación de un botón mediante texto e imagen, complementada cuando corresp
 por un visual dinámico.
 _No confundir con_: nombre del botón.
 
+**Estilo del texto**:
+Posición, tamaño, color y barra de fondo del texto de una cara. La apariencia base
+y cada cara de estado tienen un estilo independiente.
+_No confundir con_: texto escrito, tema del editor.
+
 **Carpeta**:
 Organización de posiciones dentro del árbol de navegación del deck. Su nombre de
 presentación, cuando tiene entrada, es el del botón de entrada.
