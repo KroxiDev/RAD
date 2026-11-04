@@ -36,6 +36,11 @@ relación de esa carpeta con su padre; moverlo dentro de su propia descendencia
 crearía un ciclo y se rechaza. Intercambiar posiciones ocupadas no autoriza a
 desplazar el retorno a otra carpeta.
 
+Duplicar con reemplazo captura primero el botón fuente y después retira al
+ocupante, incluida su carpeta y descendencia si es una entrada. Así se puede
+pegar una tecla sobre la carpeta que la contiene. La copia recibe identidades
+nuevas y el reemplazo completo se deshace en un paso; el retorno no se reemplaza.
+
 Fuentes: `FolderData`, `ButtonData`, `ActionData` y `Edit` en
 [configuration.rs](../crates/rad-core/src/configuration.rs),
 [ediciones](../crates/rad-core/src/configuration/edits.rs) y

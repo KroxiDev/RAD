@@ -1023,3 +1023,64 @@ fn invalid_style_values_are_rejected_before_publication() {
         }
     }
 }
+
+#[test]
+fn duplicate_replace_snapshots_source_before_removing_its_folder_and_undoes_once() {
+    let mut a = actor();
+    apply(
+        &mut a,
+        "create_folder",
+        json!({"parent_id":"f1","position":1,"name":"Container"}),
+    );
+    let before = apply(
+        &mut a,
+        "create_button",
+        json!({"folder_id":"f2","position":1,"name":"Source"}),
+    );
+    let source = before.buttons.iter().find(|b| b.name == "Source").unwrap();
+    let source_id = source.binding.short().to_string();
+    let revision = a.editor_view(Origin::Editor).unwrap().revision;
+    let copied = apply(
+        &mut a,
+        "duplicate",
+        json!({"id":source_id,"folder_id":"f1","position":1,"replace":true}),
+    );
+    assert_eq!(copied.folders.len(), 1);
+    assert_eq!(copied.buttons.len(), 1);
+    assert_eq!(copied.buttons[0].name, "Source");
+    assert_ne!(copied.buttons[0].binding, source.binding);
+    assert_eq!(
+        a.editor_view(Origin::Editor).unwrap().revision,
+        revision + 1
+    );
+    let Resolution::Command(command) = call(&mut a, Origin::Editor, "undo", json!({})) else {
+        panic!()
+    };
+    let ticket = a.reserve(4, Origin::Editor).unwrap();
+    let request = ticket.request();
+    let effects = a.submit(ticket, command);
+    let rad_authority::Effect::ReadRevision {
+        id,
+        revision: old_revision,
+    } = effects[0]
+    else {
+        panic!("{effects:?}")
+    };
+    assert_eq!(old_revision, revision);
+    let effects = a.loaded(id, Ok(before.clone()));
+    let rad_authority::Effect::Persist {
+        id, ref candidate, ..
+    } = effects[0]
+    else {
+        panic!("{effects:?}")
+    };
+    assert_eq!(candidate.configuration().data(), &before);
+    a.complete(
+        id,
+        rad_authority::Outcome::Applied {
+            revision: revision + 2,
+            changed: true,
+        },
+    );
+    a.finish(request);
+}

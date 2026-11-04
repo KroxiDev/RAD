@@ -69,3 +69,22 @@ fn response_status_and_mutation_outcomes_belong_to_the_operation_contract() {
     assert!(Response::decode_value(error.clone(), 2, Some(session), Operation::Status).is_ok());
     assert!(Response::decode_value(error, 2, Some(session), Operation::Edit).is_err());
 }
+
+#[test]
+fn duplicate_replace_is_optional_and_false_preserves_the_original_wire_shape() {
+    let old = json!({"id":"b1","folder_id":"f1","position":2});
+    let request = Request::parse("duplicate", old.clone()).unwrap();
+    assert!(matches!(request, Request::Duplicate { replace: false, .. }));
+    assert_eq!(request.arguments(), old);
+    let new = json!({"id":"b1","folder_id":"f1","position":2,"replace":true});
+    let request = Request::parse("duplicate", new.clone()).unwrap();
+    assert!(matches!(request, Request::Duplicate { replace: true, .. }));
+    assert_eq!(request.arguments(), new);
+    assert!(
+        Request::parse(
+            "duplicate",
+            json!({"id":"b1","folder_id":"f1","position":2,"replace":null})
+        )
+        .is_err()
+    );
+}

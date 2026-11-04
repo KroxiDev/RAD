@@ -64,27 +64,50 @@ impl Configuration {
                     button,
                     folder,
                     position,
+                    replace,
                 } => {
                     let mut duplicate = get_button(&data, *button)?.clone();
                     if is_navigation(&duplicate) {
                         return Err(ConfigurationError::ProtectedNavigation);
                     }
-                    let slot = data
+                    let occupied = *data
                         .folders
-                        .iter_mut()
+                        .iter()
                         .find(|f| f.binding.identity() == *folder)
                         .ok_or(ConfigurationError::NotFound)?
                         .slots
-                        .get_mut(*position)
+                        .get(*position)
                         .ok_or(ConfigurationError::InvalidPosition)?;
-                    if slot.is_some() {
-                        return Err(ConfigurationError::Occupied);
+                    if let Some(occupied) = occupied {
+                        if !replace {
+                            return Err(ConfigurationError::Occupied);
+                        }
+                        let occupant = get_button(&data, occupied)?;
+                        if occupant
+                            .actions
+                            .iter()
+                            .any(|a| a.kind == ActionKind::Return)
+                        {
+                            return Err(ConfigurationError::ProtectedNavigation);
+                        }
+                        if let Some(child) = occupant.actions.iter().find_map(|a| match a.kind {
+                            ActionKind::EnterFolder(child) => Some(child),
+                            _ => None,
+                        }) {
+                            delete_folder(&mut data, child, true)?;
+                        } else {
+                            data.buttons.retain(|b| b.binding.identity() != occupied);
+                        }
                     }
                     duplicate.binding = registry.allocate(EntityKind::Button)?;
                     for action in &mut duplicate.actions {
                         action.binding = registry.allocate(EntityKind::Action)?;
                     }
-                    *slot = Some(duplicate.binding.identity());
+                    data.folders
+                        .iter_mut()
+                        .find(|f| f.binding.identity() == *folder)
+                        .ok_or(ConfigurationError::NotFound)?
+                        .slots[*position] = Some(duplicate.binding.identity());
                     data.buttons.push(duplicate);
                 }
                 Edit::RemoveAction { action } => {
@@ -186,54 +209,7 @@ impl Configuration {
                     folder,
                     confirm_contents,
                 } => {
-                    if *folder == data.principal {
-                        return Err(ConfigurationError::ProtectedNavigation);
-                    }
-                    if !confirm_contents {
-                        return Err(ConfigurationError::ConfirmationRequired);
-                    }
-                    if !data.folders.iter().any(|f| f.binding.identity() == *folder) {
-                        return Err(ConfigurationError::NotFound);
-                    }
-                    let mut removed = std::collections::BTreeSet::from([*folder]);
-                    loop {
-                        let before = removed.len();
-                        for f in &data.folders {
-                            if f.parent.is_some_and(|p| removed.contains(&p)) {
-                                removed.insert(f.binding.identity());
-                            }
-                        }
-                        if before == removed.len() {
-                            break;
-                        }
-                    }
-                    let buttons: std::collections::BTreeSet<_> = data
-                        .folders
-                        .iter()
-                        .filter(|f| removed.contains(&f.binding.identity()))
-                        .flat_map(|f| f.slots.iter().flatten().copied())
-                        .chain(
-                            data.buttons
-                                .iter()
-                                .filter(|b| {
-                                    b.actions
-                                        .iter()
-                                        .any(|a| a.kind == ActionKind::EnterFolder(*folder))
-                                })
-                                .map(|b| b.binding.identity()),
-                        )
-                        .collect();
-                    data.folders
-                        .retain(|f| !removed.contains(&f.binding.identity()));
-                    data.buttons
-                        .retain(|b| !buttons.contains(&b.binding.identity()));
-                    for f in &mut data.folders {
-                        for slot in &mut f.slots {
-                            if slot.is_some_and(|b| buttons.contains(&b)) {
-                                *slot = None;
-                            }
-                        }
-                    }
+                    delete_folder(&mut data, *folder, *confirm_contents)?;
                 }
                 Edit::DeleteButton { button } => {
                     let index = data
@@ -596,4 +572,60 @@ impl Configuration {
             root_adoption: None,
         })
     }
+}
+
+fn delete_folder(
+    data: &mut ConfigurationData,
+    folder: EntityIdentity,
+    confirm_contents: bool,
+) -> Result<(), ConfigurationError> {
+    if folder == data.principal {
+        return Err(ConfigurationError::ProtectedNavigation);
+    }
+    if !confirm_contents {
+        return Err(ConfigurationError::ConfirmationRequired);
+    }
+    if !data.folders.iter().any(|f| f.binding.identity() == folder) {
+        return Err(ConfigurationError::NotFound);
+    }
+    let mut removed = std::collections::BTreeSet::from([folder]);
+    loop {
+        let before = removed.len();
+        for f in &data.folders {
+            if f.parent.is_some_and(|p| removed.contains(&p)) {
+                removed.insert(f.binding.identity());
+            }
+        }
+        if before == removed.len() {
+            break;
+        }
+    }
+    let buttons: std::collections::BTreeSet<_> = data
+        .folders
+        .iter()
+        .filter(|f| removed.contains(&f.binding.identity()))
+        .flat_map(|f| f.slots.iter().flatten().copied())
+        .chain(
+            data.buttons
+                .iter()
+                .filter(|b| {
+                    b.actions
+                        .iter()
+                        .any(|a| a.kind == ActionKind::EnterFolder(folder))
+                })
+                .map(|b| b.binding.identity()),
+        )
+        .collect();
+    data.folders
+        .retain(|f| !removed.contains(&f.binding.identity()));
+    data.buttons
+        .retain(|b| !buttons.contains(&b.binding.identity()));
+    for f in &mut data.folders {
+        for slot in &mut f.slots {
+            if slot.is_some_and(|b| buttons.contains(&b)) {
+                *slot = None;
+            }
+        }
+    }
+    Ok(())
 }

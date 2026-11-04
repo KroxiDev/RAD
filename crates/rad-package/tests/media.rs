@@ -143,6 +143,7 @@ fn full_settings_shared_media_roundtrip_into_real_store() {
             c.registry(),
             Origin::Editor,
             Edit::DuplicateButton {
+                replace: false,
                 button: c.configuration().data().buttons[0].binding.identity(),
                 folder: c.configuration().data().principal,
                 position: 2,

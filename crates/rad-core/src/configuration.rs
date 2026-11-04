@@ -274,6 +274,7 @@ pub enum Edit {
         button: EntityIdentity,
         folder: EntityIdentity,
         position: usize,
+        replace: bool,
     },
     SetName {
         button: EntityIdentity,

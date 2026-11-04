@@ -516,3 +516,106 @@ fn initialization_cannot_discard_an_existing_registry_and_failed_batch_does_not_
     );
     assert_eq!(registry, before);
 }
+
+#[test]
+fn duplicate_preserves_content_with_fresh_ids_and_replace_controls_occupied_slots() {
+    let c = fresh();
+    let root = c.configuration().data().principal;
+    let c = create(&c, root, 1, "source");
+    let source = c.configuration().data().folders[0].slots[1].unwrap();
+    let c = apply(
+        &c,
+        Edit::AddAction {
+            button: source,
+            kind: launcher(),
+        },
+    );
+    let c = create(&c, root, 2, "previous");
+    let original = c.configuration().data().buttons[0].clone();
+    for replace in [false, true] {
+        let copy = apply(
+            &c,
+            Edit::DuplicateButton {
+                button: source,
+                folder: root,
+                position: 3,
+                replace,
+            },
+        );
+        let duplicate = copy.configuration().data().buttons.last().unwrap();
+        assert_ne!(duplicate.binding, original.binding);
+        assert_ne!(duplicate.actions[0].binding, original.actions[0].binding);
+        let mut normalized = duplicate.clone();
+        normalized.binding = original.binding;
+        normalized.actions[0].binding = original.actions[0].binding;
+        assert_eq!(normalized, original);
+    }
+    assert_eq!(
+        c.configuration()
+            .prepare_edit(
+                c.registry(),
+                Origin::Editor,
+                Edit::DuplicateButton {
+                    button: source,
+                    folder: root,
+                    position: 2,
+                    replace: false
+                }
+            )
+            .unwrap_err(),
+        ConfigurationError::Occupied
+    );
+    let copied = apply(
+        &c,
+        Edit::DuplicateButton {
+            button: source,
+            folder: root,
+            position: 2,
+            replace: true,
+        },
+    );
+    assert_eq!(copied.configuration().data().buttons.len(), 2);
+    assert!(
+        copied
+            .configuration()
+            .data()
+            .buttons
+            .iter()
+            .all(|b| b.name == "source")
+    );
+    let c = apply(
+        &c,
+        Edit::CreateFolder {
+            parent: root,
+            position: 4,
+            name: "folder".into(),
+        },
+    );
+    let folder = c.configuration().data().folders[1].binding.identity();
+    assert_eq!(
+        c.configuration()
+            .prepare_edit(
+                c.registry(),
+                Origin::Editor,
+                Edit::DuplicateButton {
+                    button: source,
+                    folder,
+                    position: 0,
+                    replace: true
+                }
+            )
+            .unwrap_err(),
+        ConfigurationError::ProtectedNavigation
+    );
+    let copied = apply(
+        &c,
+        Edit::DuplicateButton {
+            button: source,
+            folder: root,
+            position: 4,
+            replace: true,
+        },
+    );
+    assert_eq!(copied.configuration().data().folders.len(), 1);
+    assert_eq!(copied.configuration().data().buttons.len(), 3);
+}
