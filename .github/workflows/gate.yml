@@ -22,6 +22,7 @@ env:
   CACHE_PATHS: |
     target/cargo-home/registry/index
     target/cargo-home/registry/cache
+    target/cargo-home/registry/src
     target/release
     target/plugins/release
 
@@ -51,25 +52,59 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Restaurar toolchain
+        id: toolchain-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/rustup-home
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ env.RUST_TOOLCHAIN }}
+
       - name: Restaurar caché
         id: cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.CACHE_PATHS }}
-          key: gate-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'plugins/Cargo.lock') }}
-          restore-keys: gate-${{ env.RUST_TOOLCHAIN }}-
+          # Cada commit deja artefactos recientes; una clave solo por lockfile
+          # conservaría indefinidamente el primer build de esas dependencias.
+          key: gate-v2-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'plugins/Cargo.lock', 'scripts/conformance/metrics/fixture/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            gate-v2-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'plugins/Cargo.lock', 'scripts/conformance/metrics/fixture/Cargo.lock') }}-
+            gate-v2-${{ env.RUST_TOOLCHAIN }}-
 
-      - name: Gate
+      - name: Preparar Rust y dependencias
         run: |
           chown -R ci: "$GITHUB_WORKSPACE"
           runuser -u ci -- env HOME=/home/ci bash -euo pipefail -c '
+            export RUSTUP_HOME="$PWD/target/rustup-home"
             rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
             rustup default "$RUST_TOOLCHAIN"
             export CARGO_HOME="$PWD/target/cargo-home"
             cargo fetch --locked
             cargo fetch --locked --manifest-path plugins/Cargo.toml
-            bash scripts/gate.sh
+            cargo fetch --locked --manifest-path scripts/conformance/metrics/fixture/Cargo.toml
           '
+
+      - name: Restaurar fechas de fuentes idénticas
+        run: |
+          runuser -u ci -- python3 -B scripts/cache_mtimes.py restore
+
+      - name: Gate
+        run: |
+          runuser -u ci -- env HOME=/home/ci RUSTUP_HOME="$GITHUB_WORKSPACE/target/rustup-home" \
+            bash scripts/gate.sh
+
+      # La estampa se guarda dentro de target/release, junto a estos artefactos.
+      # Solo un gate completo en verde puede publicar una estampa nueva.
+      - name: Registrar fechas de fuentes compiladas
+        run: |
+          runuser -u ci -- python3 -B scripts/cache_mtimes.py record
+
+      - name: Guardar toolchain
+        if: always() && steps.toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/rustup-home
+          key: ${{ steps.toolchain-cache.outputs.cache-primary-key }}
 
       # También si el gate falló: lo compilado sirve para la próxima corrida.
       - name: Guardar caché
@@ -80,7 +115,7 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Logs del gate
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gate-logs

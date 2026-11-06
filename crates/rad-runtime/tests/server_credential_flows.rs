@@ -200,16 +200,29 @@ fn call(client: &mut Client, op: &str, args: Value) -> Value {
     serde_json::to_value(response.data).unwrap()
 }
 
-/// Waits for selected metadata; credentials remain configurable while dormant.
+/// Waits for selected metadata and the independent initial credential refresh.
+/// Credentials remain configurable while the plugin is dormant.
 fn ready(editor: &mut Client) {
     let end = Instant::now() + Duration::from_secs(20);
     loop {
         let status = call(editor, "plugin_status", json!({}));
         if status["state"] == "idle" && status["items"][0]["id"] == PLUGIN {
-            return;
+            let credentials = editor
+                .request(
+                    "credential_status",
+                    json!({"plugin_id":PLUGIN,"slot":"password"}),
+                )
+                .unwrap();
+            match credentials.error {
+                None => return,
+                Some(error) => assert_eq!(error.code, "busy", "{error:?}"),
+            }
         }
         assert!(status["state"] != "failed", "plugin admin failed: {status}");
-        assert!(Instant::now() < end, "plugin never became ready: {status}");
+        assert!(
+            Instant::now() < end,
+            "plugin or credential worker never became ready: {status}"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }
