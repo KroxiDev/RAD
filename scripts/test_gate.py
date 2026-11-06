@@ -73,6 +73,7 @@ for name in sys.argv[2:]:
         (self.root / "packaging/tests/test_fixture.py").write_text(trivial_test)
         # El gate prueba su orquestación real; el checkout hijo no se prueba a sí mismo.
         (self.root / "scripts/test_gate.py").write_text(trivial_test)
+        (self.root / "scripts/test_cache_mtimes.py").write_text(trivial_test)
         self.env = os.environ | {
             "TEST_ROOT": str(self.root),
             "PATH": str(self.bin) + ":" + os.environ["PATH"],

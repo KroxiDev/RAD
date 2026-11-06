@@ -393,6 +393,29 @@ pub fn discard_prepared(prepared: &crate::Prepared) -> Result<(), Error> {
 mod temporary_cleanup_tests {
     use super::*;
     use crate::cleanup::{self, Liveness, ProcessState};
+    use std::process::Command;
+    // A sibling test can fork while these tests hold a lease. Until exec, that
+    // child retains the SH lock even after this process drops its own descriptor.
+    // Run each scenario alone so immediate cleanup only depends on its own pins.
+    fn run_isolated() -> bool {
+        let thread = std::thread::current();
+        let test = thread.name().expect("named test thread");
+        if std::env::var("RAD_UPDATE_CLEANUP_TEST").as_deref() == Ok(test) {
+            return false;
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture"])
+            .env("RAD_UPDATE_CLEANUP_TEST", test)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated {test}:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        true
+    }
     struct Dead;
     impl Liveness for Dead {
         fn state(&self, _: u32) -> ProcessState {
@@ -421,6 +444,9 @@ mod temporary_cleanup_tests {
     }
     #[test]
     fn temporary_provenance_and_pin_prevent_drop_or_gc_from_removing_a_consumers_files() {
+        if run_isolated() {
+            return;
+        }
         let parent = Parent::new();
         let mut temporary = Temporary::new_in(&parent.0, "fetch").unwrap();
         let mut response = temporary.create("response").unwrap();
@@ -475,6 +501,9 @@ mod temporary_cleanup_tests {
     }
     #[test]
     fn explicit_prepared_discard_accepts_new_ownership_files_but_never_deletes_unknown_content() {
+        if run_isolated() {
+            return;
+        }
         let candidate = candidate();
         let mut temporary = Temporary::new("stage").unwrap();
         drop(temporary.create(&candidate.metadata.file).unwrap());

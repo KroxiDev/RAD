@@ -93,7 +93,17 @@ verificado: una suite verde no certifica hardware real ni todas las distribucion
 dentro de un contenedor de Arch con un usuario sin privilegios. Usa el toolchain
 fijado en `RUST_TOOLCHAIN` del workflow, que se sube junto con el local. Conserva
 ese toolchain en una caché propia y actualiza la caché de compilación por commit,
-con respaldo por lockfiles y toolchain. La instalación de herramientas y la
+con respaldo por lockfiles y toolchain. Antes del Gate,
+[`cache_mtimes.py`](../scripts/cache_mtimes.py) recupera las fechas de archivos
+rastreados solo si su contenido SHA-256 y sus permisos coinciden con la estampa
+guardada junto a los artefactos. Conserva también fechas de directorios con el
+mismo inventario completo, como los catálogos que observa `build.rs`. Los archivos
+nuevos, modificados, no rastreados y los enlaces no recuperan fechas antiguas.
+La estampa anterior se consume antes de compilar y se registra una nueva solo
+tras un Gate en verde: una caché de un build parcial fallido no lleva una estampa
+que pueda ocultar cambios. Una caché anterior sin estampa sigue siendo utilizable,
+pero puede requerir recompilar los crates del checkout.
+La instalación de herramientas y la
 descarga de dependencias tienen un paso separado del Gate. Los logs de
 `target/gate/` quedan como artefacto `gate-logs`, tanto si pasa como si falla.
 

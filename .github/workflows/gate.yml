@@ -84,10 +84,20 @@ jobs:
             cargo fetch --locked --manifest-path scripts/conformance/metrics/fixture/Cargo.toml
           '
 
+      - name: Restaurar fechas de fuentes idénticas
+        run: |
+          runuser -u ci -- python3 -B scripts/cache_mtimes.py restore
+
       - name: Gate
         run: |
           runuser -u ci -- env HOME=/home/ci RUSTUP_HOME="$GITHUB_WORKSPACE/target/rustup-home" \
             bash scripts/gate.sh
+
+      # La estampa se guarda dentro de target/release, junto a estos artefactos.
+      # Solo un gate completo en verde puede publicar una estampa nueva.
+      - name: Registrar fechas de fuentes compiladas
+        run: |
+          runuser -u ci -- python3 -B scripts/cache_mtimes.py record
 
       - name: Guardar toolchain
         if: always() && steps.toolchain-cache.outputs.cache-hit != 'true'
