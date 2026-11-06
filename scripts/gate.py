@@ -236,7 +236,7 @@ def main():
         else:
             ready = True
             if args.mode == "completo":
-                ready = gate.step("test-gate", ["python3", "-B", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_gate.py", "-v"])
+                ready = gate.step("test-gate", ["python3", "-B", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py", "-v"])
                 for plugin, name in ((False, "raiz"), (True, "plugins")):
                     manifest = ["--manifest-path", "plugins/Cargo.toml"] if plugin else []
                     ready = gate.step(f"fmt-{name}", ["cargo", "fmt", *manifest, "--all", "--", "--check"]) and ready
