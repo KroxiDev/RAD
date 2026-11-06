@@ -25,8 +25,9 @@ iterar, pero no sustituyen la validación completa de cambios ejecutables.
 
 ## Validación completa
 
-Ejecutar `bash scripts/gate.sh`: es el gate canónico. Corre en serie, sin hardware
-ni ventanas, reutiliza la caché y no descarga dependencias ni instala herramientas.
+Ejecutar `bash scripts/gate.sh`: es el gate canónico. Prepara los artefactos en
+serie y ejecuta las suites independientes en paralelo, sin hardware ni ventanas.
+Reutiliza la caché y no descarga dependencias ni instala herramientas.
 El target queda en el disco del repo: los builds en tmpfs agotaron su cuota.
 
 - Cada corrida deja en `target/gate/<corrida>/` un log por paso, `resumen.tsv`
@@ -35,10 +36,28 @@ El target queda en el disco del repo: los builds en tmpfs agotaron su cuota.
   árbol cambió durante la corrida.
 - Compila con hasta 8 trabajos simultáneos, el mismo límite que `make up`;
   `CARGO_BUILD_JOBS` lo cambia.
+- Compila los binarios, ejemplos y tests de ambos workspaces y el fixture de
+  fallos de Metrics antes de ejecutar las suites. Los ejecutables de test se
+  obtienen de la salida de Cargo de esa preparación, con el directorio del
+  paquete como directorio de trabajo; no se eligen por fecha ni por un glob de
+  artefactos anteriores. Los doctests se ejecutan también.
+- Los cuatro verificadores de plugins corren en paralelo y conservan sus
+  ventanas reales de vigencia y cancelación. Las conformidades integradas de
+  Audio/Media, OBS y Metrics se ejecutan una vez cada una, conservando sus casos.
+  Cada etapa de ejecución tiene directorios XDG privados. Los temporales son
+  privados por etapa o los reserva el propio fixture bajo `/tmp`; sus rutas se
+  mantienen cortas para respetar el límite de los sockets Unix.
 - El entorno vive en [`scripts/gate-env.sh`](../scripts/gate-env.sh): caché,
   target y estado aislado de los tests. En un worktree secundario usa la caché
   del checkout principal y siembra `target/` desde él con copias reflink, así que
   solo recompila los crates del repo.
+
+El objetivo de duración es **hasta 180 segundos con caché de compilación
+reutilizable**. Medir el tiempo total de pared: los segundos de etapas paralelas
+no se suman para obtenerlo. La compilación desde cero y la preparación o espera
+de un runner de CI se informan por separado; un límite de tiempo que interrumpe
+las comprobaciones no certifica un pase. Al cambiar la orquestación, comprobar
+también que los fallos de procesos hijos y los cambios del árbol rechazan el gate.
 
 Un gate completo en verde certifica el árbol de su `estado.txt`. Antes de
 repetirlo, comparar con `git diff --stat <árbol> HEAD`:
@@ -72,8 +91,11 @@ verificado: una suite verde no certifica hardware real ni todas las distribucion
 [`.github/workflows/gate.yml`](../.github/workflows/gate.yml) ejecuta
 `bash scripts/gate.sh` en cada PR a `beta` o `main` y en cada push a esas ramas,
 dentro de un contenedor de Arch con un usuario sin privilegios. Usa el toolchain
-fijado en `RUST_TOOLCHAIN` del workflow, que se sube junto con el local. Si falla,
-los logs de `target/gate/` quedan como artefacto `gate-logs` de la ejecución.
+fijado en `RUST_TOOLCHAIN` del workflow, que se sube junto con el local. Conserva
+ese toolchain en una caché propia y actualiza la caché de compilación por commit,
+con respaldo por lockfiles y toolchain. La instalación de herramientas y la
+descarga de dependencias tienen un paso separado del Gate. Los logs de
+`target/gate/` quedan como artefacto `gate-logs`, tanto si pasa como si falla.
 
 El check **Gate** en verde certifica el commit que probó, igual que un gate local:
 al revisar ese mismo commit, citar el check en vez de repetir el gate. Otro commit
@@ -128,6 +150,15 @@ personal ni una publicación:
 
 Tests nativos de Rust; contratos públicos críticos en `crates/<paquete>/tests/`.
 Controlar reloj, identidades e I/O en el dominio puro.
+
+- Probar resultados y errores observables por la interface del módulo; un
+  refactor que conserve el contrato debe conservar las pruebas. Mantener casos
+  precisos por regla y recorridos integrados que comprueben la composición.
+- Verificar archivos directamente cuando sean el contrato: manifests,
+  formatos persistidos, traducciones, paquetes y dependencias permitidas.
+  Contrastar identidades y versiones entre sus fuentes, sin fijar la versión
+  actual en una prueba cuyo propósito sea otro. Evitar aserciones sobre nombres
+  privados, organización del código o secuencias internas no contractuales.
 
 - Conservar sin preguntar las pruebas de comportamiento crítico. Cualquier otra
   prueba permanente requiere pedido explícito.

@@ -44,9 +44,10 @@ fn binary_official_manifests_fit_wire_budget_and_translate_all_state_labels() {
         assert!(bytes.len() <= 65536);
         let manifest = rad_plugin_contract::Document::new(bytes)
             .unwrap()
-            .manifest(1, "x86_64-unknown-linux-gnu")
+            .manifest(rad_plugin_contract::HOST_API, rad_plugin_host::TARGET)
             .unwrap();
-        assert_eq!(manifest.version.minor, 4);
+        // La identidad y versión se contrastan con el proceso en rad-plugin-check;
+        // estos presupuestos y traducciones se conservan al publicar otra versión.
         for action in &manifest.actions {
             assert!(action.visual.is_some());
         }
