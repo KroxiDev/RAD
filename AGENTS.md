@@ -47,7 +47,7 @@ claros.
 ## Validación completa
 
 Antes de compilar, probar o cerrar una entrega: aplicar
-[docs/testing.md](docs/testing.md). Es la fuente única del gate en serie de ambos
+[docs/testing.md](docs/testing.md). Es la fuente única del gate de ambos
 workspaces, variables de helpers, conformidades, requisitos y límites de evidencia.
 
 ## Ciclo de vida de los tests
