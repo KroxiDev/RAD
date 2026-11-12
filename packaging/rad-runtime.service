@@ -5,6 +5,9 @@
 # ("Use the Stream Deck with RAD"); nothing about it belongs in this unit.
 [Unit]
 Description=RAD local action deck authority
+# Start with the graphical environment available, and discard it when that session ends.
+After=graphical-session.target
+PartOf=graphical-session.target
 # Optional desktop companion; its failure must not stop the authority.
 Wants=rad-tray.service
 # Restart without loops (ADR 0011): at most 5 starts in 5 minutes, then the unit stays
@@ -36,4 +39,4 @@ RestartMaxDelaySec=30
 TimeoutStopSec=30
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

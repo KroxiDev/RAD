@@ -58,6 +58,13 @@ no inspeccionan hogares, no tocan datos del deck ni activan servicios de usuario
 La configuración, medios, plugins, credenciales y preferencias siguen en XDG,
 fuera del paquete. No se distribuyen plugins oficiales dentro de RAD.
 
+El autoinicio del runtime depende de `graphical-session.target` y se ordena después
+de él para heredar el entorno gráfico; al terminar la sesión, el servicio se detiene.
+Al reconciliar las unidades, el editor migra el autoinicio antiguo de `default.target`
+con `reenable`, solo si estaba habilitado allí. No activa el autoinicio de quienes
+lo tenían deshabilitado ni reinicia un runtime en curso; el cambio de entorno se
+aplica en su próximo arranque.
+
 ## Construir sin instalar ni publicar
 
 Prerequisitos: caché Cargo y lockfiles completos, toolchain compatible, herramientas
