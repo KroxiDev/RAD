@@ -77,7 +77,7 @@ enum Drag {
     /// A row of the selected key's actions, by its place in the draft order.
     Reorder(usize),
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Draft {
     /// Baseline survives a temporarily incoherent/missing on-screen inspection.
     source: Option<Inspection>,
@@ -156,8 +156,7 @@ impl Draft {
     }
     /// Rebase local edits onto a newer view. Untouched fields follow the runtime;
     /// edited fields stay local, including each native action's parameters.
-    fn retain_appearance_edits(&mut self, before: &Inspection, edited: &Self) {
-        let before = Self::load(before);
+    fn retain_appearance_edits(&mut self, before: &Self, edited: &Self) {
         let published_image = self.published_image.clone();
         if let Some(state) = &edited.state {
             let local = edited.state_faces();
@@ -339,6 +338,11 @@ pub struct App {
     status: Value,
     inspection: Option<Inspection>,
     draft: Draft,
+    save_ticket: u64,
+    /// At most the worker's in-flight Save and its one queued Save.
+    saves: std::collections::BTreeMap<u64, (u64, Draft)>,
+    /// Confirmed values sent by Save, separate from the published inspection.
+    saved_draft: Option<(u64, Draft)>,
     icon_library: icon_library::Library,
     selected_slot: Option<usize>,
     message: String,
@@ -491,6 +495,9 @@ impl App {
             status: Value::Null,
             inspection: None,
             draft: Draft::default(),
+            save_ticket: 0,
+            saves: Default::default(),
+            saved_draft: None,
             icon_library: Default::default(),
             selected_slot: None,
             message: String::new(),
@@ -623,6 +630,7 @@ impl App {
     /// that never left is said not to have been applied. Replacement is bounded; once the
     /// limit is reached the bar offers Retry.
     fn worker_lost(&mut self, ctx: &egui::Context, in_flight: bool, unsent: bool) {
+        self.saves.clear();
         self.machine_request_failed();
         ctx.request_repaint();
         self.connected = false;
@@ -1299,7 +1307,7 @@ mod state_draft_tests {
         changed.appearance["states"]["off"]["text_color"] = serde_json::json!("#123456");
         changed.appearance["states"]["on"]["text_size"] = serde_json::json!(24);
         let mut fresh = Draft::load(&changed);
-        fresh.retain_appearance_edits(&before, &edited);
+        fresh.retain_appearance_edits(&Draft::load(&before), &edited);
         assert_eq!(fresh.style.size, 8);
         assert!(!fresh.style.band);
         assert_eq!(fresh.style.color, [0x12, 0x34, 0x56]);

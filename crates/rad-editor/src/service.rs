@@ -145,6 +145,13 @@ impl Failure {
     }
 }
 
+/// Autostart could not be migrated, but the installed unit can still be started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutostartWarning {
+    /// Technical text for "View details"; never part of the normal view.
+    pub details: String,
+}
+
 /// What `systemctl show` says about the unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnitState {
@@ -313,8 +320,20 @@ impl<S: Systemctl> Service<S> {
             )))
         }
     }
+    /// Installs the units, then attempts to preserve any existing autostart choice.
+    /// Migration failures are warnings: they do not invalidate the installed units.
+    pub fn install(&self) -> Result<Option<AutostartWarning>, Failure> {
+        self.install_units()?;
+        Ok(self
+            .migrate_autostart()
+            .err()
+            .map(|failure| AutostartWarning {
+                details: failure.details,
+            }))
+    }
+
     /// Installs the runtime and available tray units if missing or changed, then reloads once.
-    pub fn install(&self) -> Result<(), Failure> {
+    fn install_units(&self) -> Result<(), Failure> {
         let runtime = sibling_runtime(&self.editor).ok_or_else(|| {
             Failure::could_not_start(format!(
                 "rad-runtime was not found next to {}",
@@ -351,31 +370,83 @@ impl<S: Systemctl> Service<S> {
         if changed {
             self.call_ok(&["daemon-reload"])?;
         }
+        Ok(())
+    }
+
+    fn migrate_autostart(&self) -> Result<(), Failure> {
         // Updating [Install] does not move existing enablement links. Preserve an
         // enabled user's choice while moving the old early autostart to the
-        // graphical session; retry on later installs if reenable fails.
+        // graphical session. Reenable removes the old link first, so keep durable
+        // intent until the new link is confirmed, including across a restart.
+        if self.record_autostart_migration()? {
+            self.call_ok(&["reenable", UNIT])?;
+            if !self.autostart_migration_complete() {
+                return Err(Failure::could_not_start(format!(
+                    "autostart migration did not replace the old link with {}",
+                    self.unit_dir
+                        .join("graphical-session.target.wants")
+                        .join(UNIT)
+                        .display()
+                )));
+            }
+            self.clear_autostart_migration()?;
+        }
+        Ok(())
+    }
+
+    /// Keep the old enabled choice before any command can partially remove its links.
+    fn record_autostart_migration(&self) -> Result<bool, Failure> {
+        let migration = self.unit_dir.join(".rad-runtime-autostart-migration");
         if self
             .unit_dir
             .join("default.target.wants")
             .join(UNIT)
             .is_symlink()
+            || migration.is_file()
         {
-            self.call_ok(&["reenable", UNIT])?;
+            write_atomic(&migration, b"").map_err(|e| {
+                Failure::could_not_start(format!("could not record autostart migration: {e}"))
+            })?;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
+    }
+
+    fn autostart_migration_complete(&self) -> bool {
+        self.unit_dir
+            .join("graphical-session.target.wants")
+            .join(UNIT)
+            .is_symlink()
+            && !self
+                .unit_dir
+                .join("default.target.wants")
+                .join(UNIT)
+                .is_symlink()
+    }
+
+    fn clear_autostart_migration(&self) -> Result<(), Failure> {
+        let migration = self.unit_dir.join(".rad-runtime-autostart-migration");
+        match std::fs::remove_file(&migration) {
+            Ok(()) => File::open(&self.unit_dir).and_then(|dir| dir.sync_all()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+        .map_err(|e| Failure::could_not_start(format!("could not finish autostart migration: {e}")))
     }
 
     /// Installs if needed and starts the unit, with or without autostart.
-    pub fn start(&self) -> Result<(), Failure> {
-        self.install()?;
-        self.start_unit()
+    pub fn start(&self) -> Result<Option<AutostartWarning>, Failure> {
+        let warning = self.install()?;
+        self.start_unit()?;
+        Ok(warning)
     }
     /// The user asked again: forgets the failure, then starts once.
-    pub fn retry(&self) -> Result<(), Failure> {
-        self.install()?;
+    pub fn retry(&self) -> Result<Option<AutostartWarning>, Failure> {
+        let warning = self.install()?;
         // A unit that never failed has nothing to reset, so only a missing systemd matters.
         self.call(&["reset-failed", UNIT])?;
-        self.start_unit()
+        self.start_unit()?;
+        Ok(warning)
     }
     fn start_unit(&self) -> Result<(), Failure> {
         let answer = self.call(&["start", UNIT])?;
@@ -398,10 +469,27 @@ impl<S: Systemctl> Service<S> {
         Err(failure)
     }
     /// Only enables or disables the unit (installing it first if missing); never starts it.
-    pub fn set_autostart(&self, enabled: bool) -> Result<(), Failure> {
-        self.install()?;
-        self.call_ok(&[if enabled { "enable" } else { "disable" }, UNIT])
-            .map(drop)
+    pub fn set_autostart(&self, enabled: bool) -> Result<Option<AutostartWarning>, Failure> {
+        let mut warning = if enabled {
+            self.install()?
+        } else {
+            // An explicit opt-out supersedes migration; do not reenable first.
+            self.install_units()?;
+            self.record_autostart_migration()?;
+            None
+        };
+        self.call_ok(&[if enabled { "enable" } else { "disable" }, UNIT])?;
+        if enabled && warning.is_some() && self.autostart_migration_complete() {
+            warning = self
+                .clear_autostart_migration()
+                .err()
+                .map(|failure| AutostartWarning {
+                    details: failure.details,
+                });
+        } else if !enabled {
+            self.clear_autostart_migration()?;
+        }
+        Ok(warning)
     }
     pub fn state(&self) -> UnitState {
         match self.systemctl.run(&[
@@ -467,6 +555,8 @@ pub struct Outcome {
     pub job: Job,
     /// `None` when the job succeeded (for `Inspect`: never).
     pub failure: Option<Failure>,
+    /// A successful operation may leave autostart migration pending.
+    pub warning: Option<AutostartWarning>,
 }
 /// The worker that owns every blocking call to systemd, off the GUI thread. After a start it
 /// waits `settle` so the runtime can open its socket before the editor connects.
@@ -475,8 +565,8 @@ pub fn worker<S: Systemctl>(
     settle: Duration,
 ) -> crate::worker::Worker<Job, Outcome> {
     crate::worker::Worker::spawn(move |job| {
-        let failure = match (&service, job) {
-            (Err(failure), _) => Some(failure.clone()),
+        let result = match (&service, job) {
+            (Err(failure), _) => Err(failure.clone()),
             (Ok(service), Job::Start | Job::Retry) => {
                 let started = if job == Job::Start {
                     service.start()
@@ -486,15 +576,21 @@ pub fn worker<S: Systemctl>(
                 if started.is_ok() {
                     std::thread::sleep(settle);
                 }
-                started.err()
+                started
             }
-            (Ok(service), Job::SetAutostart(enabled)) => service.set_autostart(enabled).err(),
-            (Ok(service), Job::Inspect) => service.failure().or_else(|| {
-                Some(Failure::could_not_start(
-                    "the unit is running but RAD did not answer",
-                ))
-            }),
+            (Ok(service), Job::SetAutostart(enabled)) => service.set_autostart(enabled),
+            (Ok(service), Job::Inspect) => Err(service.failure().unwrap_or_else(|| {
+                Failure::could_not_start("the unit is running but RAD did not answer")
+            })),
         };
-        Outcome { job, failure }
+        let (failure, warning) = match result {
+            Ok(warning) => (None, warning),
+            Err(failure) => (Some(failure), None),
+        };
+        Outcome {
+            job,
+            failure,
+            warning,
+        }
     })
 }

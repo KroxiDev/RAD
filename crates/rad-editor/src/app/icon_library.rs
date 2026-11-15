@@ -627,6 +627,10 @@ impl App {
             return;
         }
         let mut fresh = super::Draft::load(&view);
+        let saved = self
+            .saved_draft
+            .take()
+            .filter(|(selection, draft)| *selection == self.selection && draft.id == fresh.id);
         let same_visual = fresh.id == self.draft.id && fresh.visual_type == self.draft.visual_type;
         if !same_visual {
             self.discard_imports();
@@ -643,7 +647,11 @@ impl App {
         let retry = self.appearance_retry.take();
         if let Some(before) = &retry {
             if same_visual {
-                fresh.retain_appearance_edits(before, &self.draft);
+                let before = saved
+                    .as_ref()
+                    .map(|(_, draft)| draft.clone())
+                    .unwrap_or_else(|| super::Draft::load(before));
+                fresh.retain_appearance_edits(&before, &self.draft);
                 self.warn(tr(
                     self.es,
                     "The key changed. Your appearance changes are still here. Save again.",
@@ -656,7 +664,11 @@ impl App {
             && same_visual
             && let Some(before) = &self.draft.source
         {
-            fresh.retain_appearance_edits(before, &self.draft);
+            let before = saved
+                .as_ref()
+                .map(|(_, draft)| draft.clone())
+                .unwrap_or_else(|| super::Draft::load(before));
+            fresh.retain_appearance_edits(&before, &self.draft);
         }
         if retry.is_none()
             && (!self.icon_library.owns_draft(&fresh.id)
@@ -816,7 +828,7 @@ mod tests {
             fresh.button["view_revision"] = json!("2");
             fresh.appearance["text"] = json!("Historical text");
             let (sent, received) = std::sync::mpsc::channel();
-            app.worker = Worker::spawn(move |job| {
+            app.worker = super::super::reload_tests::worker(move |job| {
                 super::super::reload_tests::event(Ok(match job {
                     Job::Request(request @ (Request::Undo {} | Request::Redo {})) => {
                         Reply::Response {
@@ -913,7 +925,7 @@ mod tests {
         fresh.appearance["image"] = json!("remote-base");
         let fresh_board = make_board(&fresh);
         let (sent, received) = std::sync::mpsc::channel();
-        app.worker = Worker::spawn(move |job| {
+        app.worker = super::super::reload_tests::worker(move |job| {
             let result = if matches!(job, Job::Refresh { .. }) {
                 Ok(Reply::Refresh(Refresh {
                     status: Value::Null,
@@ -1015,7 +1027,7 @@ mod tests {
         app.icon_library.begin("b7", None);
         prepare(&mut app.icon_library, &ctx, Choice::default());
         let (sent, received) = std::sync::mpsc::channel();
-        app.worker = Worker::spawn(move |job| {
+        app.worker = super::super::reload_tests::worker(move |job| {
             sent.send(job).unwrap();
             crate::native::Event {
                 paste: false,
@@ -1255,7 +1267,7 @@ mod tests {
         app.icon_library.begin("b7", None);
         prepare(&mut app.icon_library, &ctx, Choice::default());
         let (sent, received) = std::sync::mpsc::channel();
-        app.worker = Worker::spawn(move |job| {
+        app.worker = super::super::reload_tests::worker(move |job| {
             sent.send(job).unwrap();
             crate::native::Event {
                 paste: false,
