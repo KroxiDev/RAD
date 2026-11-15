@@ -799,6 +799,81 @@ mod tests {
         );
     }
     #[test]
+    fn confirmed_undo_and_redo_discard_the_library_draft_and_late_render() {
+        use crate::{
+            Request,
+            native::{Job, Reply},
+        };
+        for request in [Request::Undo {}, Request::Redo {}] {
+            let ctx = egui::Context::default();
+            let mut app = app();
+            app.connected = true;
+            app.icon_library.begin("b7", None);
+            prepare(&mut app.icon_library, &ctx, Choice::default());
+            let generation = app.icon_library.generation;
+            assert!(app.unsaved());
+            let mut fresh = app.inspection.clone().unwrap();
+            fresh.button["view_revision"] = json!("2");
+            fresh.appearance["text"] = json!("Historical text");
+            let (sent, received) = std::sync::mpsc::channel();
+            app.worker = Worker::spawn(move |job| {
+                super::super::reload_tests::event(Ok(match job {
+                    Job::Request(request @ (Request::Undo {} | Request::Redo {})) => {
+                        Reply::Response {
+                            operation: request.operation().as_str().into(),
+                            response: rad_api::Response {
+                                v: 1,
+                                id: None,
+                                session_id: None,
+                                status: rad_api::Status::Applied,
+                                data: rad_api::ResponseData::Applied(rad_api::Applied {
+                                    changed: true,
+                                    revision: "2".into(),
+                                }),
+                                error: None,
+                            },
+                        }
+                    }
+                    job => {
+                        sent.send(job).unwrap();
+                        Reply::Theme
+                    }
+                }))
+            });
+            app.send(request);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while app.worker.busy() {
+                assert!(std::time::Instant::now() < deadline);
+                let _ = app.pump_replies(&ctx);
+                std::thread::yield_now();
+            }
+            app.adopt_inspection(fresh);
+            app.icon_library.accept_preview(
+                &ctx,
+                generation,
+                Choice::default(),
+                Renderer::default().render(Choice::default()),
+            );
+            assert_eq!(app.draft.text, "Historical text");
+            assert!(
+                !app.unsaved(),
+                "confirmed history must discard the unfinished icon"
+            );
+            assert!(app.icon_library.preview("b7").is_none());
+            app.draft.name = "New name".into();
+            app.save();
+            assert!(
+                matches!(
+                    received
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .unwrap(),
+                    Job::Request(Request::Edit { .. })
+                ),
+                "the next save must not publish the discarded icon"
+            );
+        }
+    }
+    #[test]
     fn refreshed_other_face_and_base_survive_a_library_save_with_the_new_revision() {
         use crate::{
             native::{Event, Job, Reply},

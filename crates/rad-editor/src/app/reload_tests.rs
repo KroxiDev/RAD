@@ -183,6 +183,73 @@ fn inspector_refresh_preserves_unsaved_fields_and_adopts_untouched_fields() {
 }
 
 #[test]
+fn action_list_changes_preserve_edited_parameters_by_identity() {
+    let actions = vec![
+        json!({"id":"a3","fields":{"type":"sleep","parameters":{}}}),
+        json!({"id":"a4","fields":{"type":"wait","parameters":{"milliseconds":100}}}),
+        json!({"id":"a5","fields":{"type":"launcher","parameters":{"desktop_entry":"before.desktop"}}}),
+        json!({"id":"a6","fields":{"type":"brightness","parameters":{"direction":"increase"}}}),
+        json!({"id":"a7","fields":{"type":"wait","parameters":{"milliseconds":200}}}),
+    ];
+    for change in ["remove", "add", "reorder"] {
+        let mut app = app();
+        app.adopt_inspection(inspection(1, actions.clone()));
+        app.draft.waits[1] = "250".into();
+        app.draft.entries[2] = "edited.desktop".into();
+        app.draft.brightness_directions[3] = rad_api::BrightnessDirection::Decrease;
+        let mut fresh = actions.clone();
+        fresh[4]["fields"]["parameters"]["milliseconds"] = json!(350);
+        match change {
+            "remove" => {
+                fresh.remove(0);
+            }
+            "add" => fresh.insert(
+                0,
+                json!({"id":"a8","fields":{"type":"wait","parameters":{"milliseconds":900}}}),
+            ),
+            _ => fresh.rotate_left(2),
+        }
+        let count = fresh.len();
+        app.adopt_inspection(inspection(2, fresh));
+        let (sent, received) = std::sync::mpsc::channel();
+        app.worker = Worker::spawn(move |job| {
+            sent.send(job).unwrap();
+            event(Ok(Reply::Theme))
+        });
+        app.save();
+        let Job::Request(request @ Request::Edit { .. }) = received
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap()
+        else {
+            panic!("expected a key edit after {change}");
+        };
+        let args = request.arguments();
+        let changes = args["changes"].as_array().unwrap();
+        for (id, field, value) in [
+            ("a4", "milliseconds", json!(250)),
+            ("a5", "desktop_entry", json!("edited.desktop")),
+            ("a6", "parameters", json!({"direction":"decrease"})),
+            ("a7", "milliseconds", json!(350)),
+        ] {
+            assert!(
+                changes
+                    .iter()
+                    .any(|c| c["id"] == id && c["field"] == field && c["value"] == value),
+                "{change} lost {id}'s {field}: {changes:?}"
+            );
+        }
+        assert!(
+            changes
+                .iter()
+                .any(|c| c["indices"] == json!((0..count).collect::<Vec<_>>()))
+        );
+        if change == "add" {
+            assert!(changes.iter().any(|c| c["id"] == "a8" && c["value"] == 900));
+        }
+    }
+}
+
+#[test]
 fn saving_a_formatted_wait_adopts_its_published_number_without_losing_later_edits() {
     for (typed, after_send) in [
         (" 250", None),

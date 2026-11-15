@@ -456,6 +456,7 @@ impl App {
                                 // An explicit history change replaces the local draft on reread.
                                 self.draft.source = None;
                                 self.appearance_retry = None;
+                                self.icon_library.reset();
                             }
                             if operation == "edit" {
                                 self.discard_imports();

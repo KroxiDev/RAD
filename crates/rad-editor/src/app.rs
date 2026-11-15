@@ -202,31 +202,38 @@ impl Draft {
                 *fresh = edited.clone();
             }
         }
-        fn retain_values<T: Clone + PartialEq>(fresh: &mut [T], before: &[T], edited: &[T]) {
-            for ((fresh, before), edited) in fresh.iter_mut().zip(before).zip(edited) {
-                retain(fresh, before, edited);
-            }
-        }
         retain(&mut self.name, &before.name, &edited.name);
         retain(&mut self.mode, &before.mode, &edited.mode);
         retain(&mut self.gesture, &before.gesture, &edited.gesture);
         if self.action_ids == before.action_ids {
             retain(&mut self.order, &before.order, &edited.order);
-            for ((fresh, before), edited) in
-                self.waits.iter_mut().zip(&before.waits).zip(&edited.waits)
-            {
-                // Save publishes a number, not the spacing/leading zeroes typed in the field.
-                // Adopt that confirmation while retaining any different or unfinished edit.
-                let typed = edited.trim().parse::<u64>().ok();
-                if typed.is_none() || typed != fresh.parse::<u64>().ok() {
-                    retain(fresh, before, edited);
-                }
+        }
+        for (index, id) in self.action_ids.iter().enumerate() {
+            let Some(previous) = before.action_ids.iter().position(|old| old == id) else {
+                continue;
+            };
+            let Some(local) = edited.action_ids.iter().position(|old| old == id) else {
+                continue;
+            };
+            // Save publishes a number, not the spacing/leading zeroes typed in the field.
+            // Adopt that confirmation while retaining any different or unfinished edit.
+            let typed = edited.waits[local].trim().parse::<u64>().ok();
+            if typed.is_none() || typed != self.waits[index].parse::<u64>().ok() {
+                retain(
+                    &mut self.waits[index],
+                    &before.waits[previous],
+                    &edited.waits[local],
+                );
             }
-            retain_values(&mut self.entries, &before.entries, &edited.entries);
-            retain_values(
-                &mut self.brightness_directions,
-                &before.brightness_directions,
-                &edited.brightness_directions,
+            retain(
+                &mut self.entries[index],
+                &before.entries[previous],
+                &edited.entries[local],
+            );
+            retain(
+                &mut self.brightness_directions[index],
+                &before.brightness_directions[previous],
+                &edited.brightness_directions[local],
             );
         }
     }
