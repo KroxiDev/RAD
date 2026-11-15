@@ -18,6 +18,7 @@ impl App {
             Polled::Ready(_) | Polled::Pending => {}
         }
         if let Polled::Ready(event) = polled {
+            let machine_failed = matches!(&event.result, Ok(Reply::MachineFailed(_)));
             self.finish_application_catalog(&event.result);
             // Some handlers finish this turn early; keep newly invalidated work runnable.
             ctx.request_repaint();
@@ -74,7 +75,15 @@ impl App {
                 }
                 // A read ahead that was refused is not asked again until the board changes.
                 Err(_) if event.background && event.connected => {}
-                Err(e) => {
+                Ok(Reply::MachineFailed(e)) if e.code == "recovery_required" => {
+                    self.machine_request_failed();
+                    self.enter_recovery();
+                }
+                Err(e) | Ok(Reply::MachineFailed(e)) => {
+                    // Other worker jobs may precede a queued machine change.
+                    if machine_failed {
+                        self.machine_request_failed();
+                    }
                     if event.paste || !event.connected {
                         self.pending_paste = None;
                     }
@@ -193,6 +202,13 @@ impl App {
                     self.recovery_due = false;
                     self.machine = None;
                     self.machine_due = true;
+                    match self.machine_pending {
+                        Some(super::machine::Pending::Saving(_)) => self.machine_request_failed(),
+                        Some(
+                            super::machine::Pending::Reading | super::machine::Pending::Unresolved,
+                        ) => self.reconcile_machine(),
+                        _ => {}
+                    }
                     self.plugins.reconnect();
                     self.credentials.clear();
                     self.attempted = true;
@@ -436,6 +452,12 @@ impl App {
                             }
                         }
                         rad_client::response::Status::Applied => {
+                            if matches!(operation.as_str(), "undo" | "redo") {
+                                // An explicit history change replaces the local draft on reread.
+                                self.draft.source = None;
+                                self.appearance_retry = None;
+                                self.icon_library.reset();
+                            }
                             if operation == "edit" {
                                 self.discard_imports();
                             }

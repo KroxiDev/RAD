@@ -83,6 +83,8 @@ pub enum Job {
     },
 }
 pub enum Reply {
+    /// Correlate failed machine reads/writes so an autostart change can be reconciled.
+    MachineFailed(Error),
     PluginApplied(Response),
     PluginCatalog(Vec<crate::plugins::CatalogEntry>),
     Plugins {
@@ -385,6 +387,10 @@ pub fn start_with_clock(
     let mut visual_epoch = String::new();
     let mut visual_revisions = std::collections::BTreeMap::new();
     Worker::spawn(move |job| {
+        let machine = matches!(
+            &job,
+            Job::Request(Request::SetMachineSettings { .. } | Request::MachineSettings {})
+        );
         let paste = matches!(&job, Job::Request(Request::Duplicate { replace: true, .. }));
         let plugin_apply = matches!(&job, Job::PluginApply(_) | Job::LinkedAction(_));
         let plugin_admin = matches!(&job,Job::Request(r) if r.operation().as_str()=="plugin_admin");
@@ -649,6 +655,7 @@ pub fn start_with_clock(
             active = None;
         }
         let result = match result {
+            Err(error) if machine => Ok(Reply::MachineFailed(error)),
             Err(error) if recovery_aware && error.code == "recovery_required" => {
                 Ok(Reply::RecoveryRequired)
             }
@@ -734,8 +741,88 @@ fn application_appearance(
     json!({"text":appearance["text"],"image":image,"states":appearance.get("states").cloned().unwrap_or_else(|| json!({}))})
 }
 #[cfg(test)]
-mod state_tests {
+mod tests {
     use super::*;
+    #[test]
+    fn machine_failures_keep_their_identity_including_recovery_required() {
+        use std::{
+            io::{Read, Write},
+            os::unix::{fs::PermissionsExt, net::UnixListener},
+        };
+        let root = std::env::temp_dir().join(format!("rad-machine-errors-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let dir = root.join("rad");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = dir.join("editor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let session = "00000000000000000000000000000001";
+            let mut number = 0;
+            loop {
+                let mut header = [0; 4];
+                if stream.read_exact(&mut header).is_err() {
+                    break;
+                }
+                let mut bytes = vec![0; u32::from_be_bytes(header) as usize];
+                stream.read_exact(&mut bytes).unwrap();
+                let request: Value = serde_json::from_slice(&bytes).unwrap();
+                let hello = request["op"] == "hello";
+                let code = if number < 2 {
+                    "storage_error"
+                } else {
+                    "recovery_required"
+                };
+                let response = json!({"v":1,"id":request["id"],"session_id":session,
+                    "status":if hello {"ok"} else {"error"},
+                    "data":if hello {json!({"protocol":1,"session_id":session,
+                        "limits":serde_json::from_str::<Value>(include_str!("../../rad-api/vectors/limits-v1.json")).unwrap(),"capabilities":[]})} else {Value::Null},
+                    "error":if hello {Value::Null} else {json!({"code":code,"message":"synthetic machine failure","details":{},"outcome":"not_applied"})}});
+                let bytes = serde_json::to_vec(&response).unwrap();
+                stream
+                    .write_all(&(bytes.len() as u32).to_be_bytes())
+                    .unwrap();
+                stream.write_all(&bytes).unwrap();
+                if !hello {
+                    number += 1;
+                }
+            }
+        });
+        let mut worker = start(root.clone(), root.join("theme"));
+        worker.submit(Job::Connect).unwrap();
+        assert!(matches!(
+            worker.receive().ready().unwrap().result,
+            Ok(Reply::Connected)
+        ));
+        for code in ["storage_error", "recovery_required"] {
+            for request in [
+                Request::MachineSettings {},
+                crate::machine::Change::start_with_session(true).request(),
+            ] {
+                worker.submit(Job::Request(request)).unwrap();
+                let event = worker.receive().ready().unwrap();
+                assert!(event.connected);
+                assert!(
+                    matches!(event.result, Ok(Reply::MachineFailed(error)) if error.code == code && !error.unknown)
+                );
+            }
+        }
+        worker.submit(Job::Request(Request::Status {})).unwrap();
+        assert!(matches!(
+            worker.receive().ready().unwrap().result,
+            Ok(Reply::RecoveryRequired)
+        ));
+        drop(worker);
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn application_icon_keeps_state_faces() {
         let appearance = json!({"text":"Base","image":null,"states":{"muted":{"text":"Quiet","image":"state-image"}}});
