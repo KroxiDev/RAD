@@ -351,6 +351,17 @@ impl<S: Systemctl> Service<S> {
         if changed {
             self.call_ok(&["daemon-reload"])?;
         }
+        // Updating [Install] does not move existing enablement links. Preserve an
+        // enabled user's choice while moving the old early autostart to the
+        // graphical session; retry on later installs if reenable fails.
+        if self
+            .unit_dir
+            .join("default.target.wants")
+            .join(UNIT)
+            .is_symlink()
+        {
+            self.call_ok(&["reenable", UNIT])?;
+        }
         Ok(())
     }
 

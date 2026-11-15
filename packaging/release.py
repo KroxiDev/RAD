@@ -253,14 +253,16 @@ def build(development=False, plan=False, reuse_build=False):
         raise ValueError("the initial target is x86_64")
     os_release = dict(line.split("=", 1) for line in Path("/etc/os-release").read_text().splitlines()
                       if "=" in line)
+    build_version = os_release.get("VERSION_ID", "").strip('"')
     if (os_release.get("ID", "").strip('"') != "omarchy"
-            or os_release.get("VERSION_ID", "").strip('"') != "4.0.6"):
-        raise ValueError("the identified build base must be Omarchy 4.0.6; this does not certify its rolling snapshot")
+            or build_version not in ("4.0.6", "4.5.0")):
+        raise ValueError("the identified build base must be Omarchy 4.0.6 or 4.5.0; this does not certify its rolling snapshot")
+    build_base = f"omarchy-{build_version}"
     commit = git("rev-parse", "HEAD")
     epoch = git("show", "-s", "--format=%ct", "HEAD")
     tag = f"v{source['version']}-{source['pkgrel']}"
     if plan:
-        print(f"{tag}: commit={commit}, development={development}, dirty={dirty}")
+        print(f"{tag}: commit={commit}, development={development}, dirty={dirty}, build_base={build_base}")
         print("cargo build --offline --locked --release --workspace --bins --target x86_64-unknown-linux-gnu")
         print("assemble allowlisted layout, preserve dependency licenses, makepkg (no install, no publish)")
         return
@@ -286,7 +288,7 @@ def build(development=False, plan=False, reuse_build=False):
     snapshot = run("/usr/bin/pacman", "-Q", "glibc", "gcc-libs", "glib2", "libxkbcommon",
                    "wayland", "libglvnd", "systemd", "polkit", "pacman", "curl",
                    capture_output=True, text=True).stdout
-    info = (f"base={source['base']}\ncommit={commit}\ndirty={str(dirty).lower()}\n"
+    info = (f"base={source['base']}\nbuild_base={build_base}\ncommit={commit}\ndirty={str(dirty).lower()}\n"
             f"development={str(development).lower()}\n" + snapshot)
     docs = tree / "usr/share/doc/rust-action-deck"
     docs.mkdir(parents=True)

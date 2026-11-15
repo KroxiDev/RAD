@@ -6,9 +6,10 @@ y [gate canónico](../docs/testing.md) fijan diseño y validación.
 
 ## Alcance y estado
 
-Nombre de paquete: **`rust-action-deck`**, arquitectura **x86_64**. Base objetivo:
-**Omarchy 4.0.6**, publicada en su [release oficial](https://github.com/omacom/omarchy/releases/tag/v4.0.6).
-Omarchy es rolling: ese nombre no fija un snapshot de todas sus bibliotecas.
+Nombre de paquete: **`rust-action-deck`**, arquitectura **x86_64**. Entornos de
+construcción admitidos: **Omarchy 4.0.6 y 4.5.0**, según
+[ADR 0023](../docs/adr/0023-identidad-de-actualizacion-y-entorno-de-construccion.md).
+Omarchy es rolling: su versión no fija un snapshot de todas sus bibliotecas.
 Cada artefacto declara su ABI glibc mínima real y conserva información del entorno
 de construcción. No se presupone compatibilidad con instalaciones antiguas.
 
@@ -23,6 +24,14 @@ No hay AUR, CI, repositorio pacman propio, AppImage ni canal beta en este flujo.
 arquitectura y base. No cambia la versión del documento del deck ni las APIs.
 Una revisión de empaquetado también es una actualización: `0.1.0-2 > 0.1.0-1`.
 El tag se deriva como `v<version>-<pkgrel>`, sin prerelease ni build metadata.
+
+`base: "omarchy-4.0.6"` es la identidad de compatibilidad del protocolo de
+actualización y se conserva para que las instalaciones existentes reconozcan la
+release. No describe el sistema usado para compilar ni garantiza compatibilidad
+con bibliotecas antiguas. `build-environment.txt` registra por separado
+`build_base`, obtenido del `/etc/os-release` real, junto con las versiones de las
+dependencias. La ABI y las dependencias del paquete determinan los requisitos de
+la instalación.
 
 | Ruta | Contenido |
 |---|---|
@@ -58,12 +67,20 @@ no inspeccionan hogares, no tocan datos del deck ni activan servicios de usuario
 La configuración, medios, plugins, credenciales y preferencias siguen en XDG,
 fuera del paquete. No se distribuyen plugins oficiales dentro de RAD.
 
+El autoinicio del runtime depende de `graphical-session.target` y se ordena después
+de él para heredar el entorno gráfico; al terminar la sesión, el servicio se detiene.
+Al reconciliar las unidades, el editor migra el autoinicio antiguo de `default.target`
+con `reenable`, solo si estaba habilitado allí. No activa el autoinicio de quienes
+lo tenían deshabilitado ni reinicia un runtime en curso; el cambio de entorno se
+aplica en su próximo arranque.
+
 ## Construir sin instalar ni publicar
 
 Prerequisitos: caché Cargo y lockfiles completos, toolchain compatible, herramientas
 de construcción Arch (`makepkg`, `fakeroot`, `bsdtar`, `tar`, `zstd`, `readelf`),
 Python 3 y dependencias de compilación del workspace. No se descargan o instalan
-herramientas por este procedimiento. La base debe ser Omarchy 4.0.6 x86_64.
+herramientas por este procedimiento. El entorno debe ser Omarchy 4.0.6 o 4.5.0
+x86_64; cualquier otra base se rechaza.
 Usar un entorno de construcción limpio para una release; revisar también los
 metadatos `.BUILDINFO` de makepkg antes de distribuirlos.
 
