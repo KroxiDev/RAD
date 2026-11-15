@@ -652,22 +652,21 @@ impl App {
                 self.warn(tr(self.es, "The appearance changed and your edit was not saved. Check the key and try again."));
             }
         }
-        if retry.is_some()
-            || !self.icon_library.owns_draft(&fresh.id)
-            || self.draft.action_ids != fresh.action_ids
-            || self.draft.published_image != fresh.published_image
-            || (fresh.state.is_none() && !view.appearance["visual_type"].is_null())
+        if retry.is_none()
+            && same_visual
+            && let Some(before) = &self.draft.source
         {
-            if retry.is_none() || !same_visual {
-                self.icon_library.reset();
-            }
-            self.draft = fresh;
-        } else if let Some(before) = &self.inspection {
-            // The recipe still owns this face, not every field of the old key.
-            // Rebase untouched fields before advancing the publication revision.
             fresh.retain_appearance_edits(before, &self.draft);
-            self.draft = fresh;
         }
+        if retry.is_none()
+            && (!self.icon_library.owns_draft(&fresh.id)
+                || self.draft.action_ids != fresh.action_ids
+                || self.draft.published_image != fresh.published_image
+                || (fresh.state.is_none() && !view.appearance["visual_type"].is_null()))
+        {
+            self.icon_library.reset();
+        }
+        self.draft = fresh;
         self.inspection = Some(view);
         self.inspect_needed = false;
     }

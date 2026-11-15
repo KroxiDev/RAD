@@ -54,7 +54,9 @@ impl App {
             Polled::Ready(outcome) => self.service_done(ctx, outcome),
             Polled::Failed { .. } | Polled::Closed { .. } => {
                 self.service_worker = None;
-                self.machine_pending = None;
+                if self.machine_pending.is_some() {
+                    self.machine_pending = Some(super::machine::Pending::Unresolved);
+                }
                 self.service.waiting = false;
                 self.service.failure = Some(Failure {
                     kind: FailureKind::CouldNotStart,

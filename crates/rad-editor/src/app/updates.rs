@@ -29,7 +29,11 @@ impl App {
                 .as_ref()
                 .is_some_and(|worker| worker.busy())
             || self.transfer_active
-            || self.machine_pending.is_some()
+            || self.machine_pending.is_some_and(|pending| {
+                pending != super::machine::Pending::Unresolved
+                    && (pending != super::machine::Pending::Reading
+                        || (self.connected && self.recovery.is_normal()))
+            })
             || self.pending_action.is_some()
             || self.restore_token.is_some()
     }

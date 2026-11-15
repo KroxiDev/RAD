@@ -79,6 +79,8 @@ enum Drag {
 }
 #[derive(Default)]
 struct Draft {
+    /// Baseline survives a temporarily incoherent/missing on-screen inspection.
+    source: Option<Inspection>,
     visual_type: Option<String>,
     state: Option<String>,
     state_initialized: bool,
@@ -152,8 +154,8 @@ impl Draft {
             .unwrap_or_default();
         self.state = Some(id);
     }
-    /// Rebase only local appearance edits after a rejected publication. Untouched
-    /// faces follow the new view; unrelated fields survive only when unchanged remotely.
+    /// Rebase local edits onto a newer view. Untouched fields follow the runtime;
+    /// edited fields stay local, including each native action's parameters.
     fn retain_appearance_edits(&mut self, before: &Inspection, edited: &Self) {
         let before = Self::load(before);
         let published_image = self.published_image.clone();
@@ -196,8 +198,13 @@ impl Draft {
         }
         self.published_image = published_image;
         fn retain<T: Clone + PartialEq>(fresh: &mut T, before: &T, edited: &T) {
-            if fresh == before {
+            if edited != before {
                 *fresh = edited.clone();
+            }
+        }
+        fn retain_values<T: Clone + PartialEq>(fresh: &mut [T], before: &[T], edited: &[T]) {
+            for ((fresh, before), edited) in fresh.iter_mut().zip(before).zip(edited) {
+                retain(fresh, before, edited);
             }
         }
         retain(&mut self.name, &before.name, &edited.name);
@@ -205,9 +212,18 @@ impl Draft {
         retain(&mut self.gesture, &before.gesture, &edited.gesture);
         if self.action_ids == before.action_ids {
             retain(&mut self.order, &before.order, &edited.order);
-            retain(&mut self.waits, &before.waits, &edited.waits);
-            retain(&mut self.entries, &before.entries, &edited.entries);
-            retain(
+            for ((fresh, before), edited) in
+                self.waits.iter_mut().zip(&before.waits).zip(&edited.waits)
+            {
+                // Save publishes a number, not the spacing/leading zeroes typed in the field.
+                // Adopt that confirmation while retaining any different or unfinished edit.
+                let typed = edited.trim().parse::<u64>().ok();
+                if typed.is_none() || typed != fresh.parse::<u64>().ok() {
+                    retain(fresh, before, edited);
+                }
+            }
+            retain_values(&mut self.entries, &before.entries, &edited.entries);
+            retain_values(
                 &mut self.brightness_directions,
                 &before.brightness_directions,
                 &edited.brightness_directions,
@@ -216,6 +232,7 @@ impl Draft {
     }
     fn load(v: &Inspection) -> Self {
         Self {
+            source: Some(v.clone()),
             visual_type: v.appearance["visual_type"].as_str().map(str::to_owned),
             state: None,
             state_initialized: false,
@@ -387,8 +404,8 @@ pub struct App {
     /// What the runtime says this computer is set to do; absent until it has answered.
     machine: Option<crate::machine::Settings>,
     machine_due: bool,
-    /// A change waiting for systemd to enable or disable starting RAD with the session.
-    machine_pending: Option<crate::machine::Change>,
+    /// A machine change awaiting publication/reconciliation, or an explicit retry.
+    machine_pending: Option<machine::Pending>,
     recovery: crate::recovery::Mode,
     recovery_due: bool,
     recovery_reset_confirm: bool,
@@ -599,6 +616,7 @@ impl App {
     /// that never left is said not to have been applied. Replacement is bounded; once the
     /// limit is reached the bar offers Retry.
     fn worker_lost(&mut self, ctx: &egui::Context, in_flight: bool, unsent: bool) {
+        self.machine_request_failed();
         ctx.request_repaint();
         self.connected = false;
         self.icon_library.reset();

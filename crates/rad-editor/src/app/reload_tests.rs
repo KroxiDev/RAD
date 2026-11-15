@@ -7,7 +7,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-fn event(result: Result<Reply, crate::session::Error>) -> Event {
+pub(super) fn event(result: Result<Reply, crate::session::Error>) -> Event {
     Event {
         paste: false,
         plugin_apply: false,
@@ -119,6 +119,231 @@ fn a_change_to_the_selected_key_replaces_its_panel_without_blanking_it() {
         );
         revision_of(&board.folder) == "2" && revision_of(&inspection.button) == "2"
     });
+}
+
+#[test]
+fn inspector_refresh_preserves_unsaved_fields_and_adopts_untouched_fields() {
+    let actions = vec![
+        json!({"id":"a3","fields":{"type":"wait","parameters":{"milliseconds":100}}}),
+        json!({"id":"a4","fields":{"type":"wait","parameters":{"milliseconds":200}}}),
+    ];
+    let mut app = app();
+    app.board = Some(board(1));
+    app.control.select(Some("b2".into()));
+    app.adopt_inspection(inspection(1, actions.clone()));
+    app.draft.name = "Draft name".into();
+    app.draft.text = "Draft text".into();
+    app.draft.waits[0] = "250".into();
+
+    let mut fresh = inspection(2, actions);
+    fresh.button["fields"]["name"] = json!("Remote name");
+    fresh.button["fields"]["gesture"] = json!("hold");
+    fresh.actions[1]["fields"]["parameters"]["milliseconds"] = json!(350);
+    let (saved, received) = std::sync::mpsc::channel();
+    app.worker = Worker::spawn(move |job| {
+        if let Job::Request(request @ Request::Edit { .. }) = job {
+            saved.send(request.arguments()).unwrap();
+            return event(Ok(Reply::Theme));
+        }
+        event(Ok(Reply::Refresh(Refresh {
+            status: Value::Null,
+            board: Some(board(2)),
+            inspection: Some(fresh.clone()),
+        })))
+    });
+    app.worker.submit(Job::Theme).unwrap();
+    pump_until(&mut app, &egui::Context::default(), |app| {
+        app.inspection
+            .as_ref()
+            .is_some_and(|v| revision_of(&v.button) == "2")
+    });
+    assert_eq!(app.draft.name, "Draft name");
+    assert_eq!(app.draft.text, "Draft text");
+    assert_eq!(app.draft.waits, ["250", "350"]);
+    assert_eq!(app.draft.gesture, "hold");
+    assert!(app.unsaved());
+    app.save();
+    let mut saved = None;
+    pump_until(&mut app, &egui::Context::default(), |_| {
+        saved = received.try_recv().ok();
+        saved.is_some()
+    });
+    let saved = saved.unwrap();
+    let changes = saved["changes"].as_array().unwrap();
+    for (id, field, value) in [
+        ("b2", "name", json!("Draft name")),
+        ("b2", "gesture", json!("hold")),
+        ("a3", "milliseconds", json!(250)),
+        ("a4", "milliseconds", json!(350)),
+    ] {
+        assert!(changes.iter().any(|change| change["id"] == id
+            && change["field"] == field
+            && change["value"] == value));
+    }
+}
+
+#[test]
+fn saving_a_formatted_wait_adopts_its_published_number_without_losing_later_edits() {
+    for (typed, after_send) in [
+        (" 250", None),
+        ("250 ", None),
+        ("0250", None),
+        ("+250", None),
+        ("0250", Some("300 ")),
+        ("0250", Some("invalid")),
+    ] {
+        let mut app = app();
+        app.board = Some(board(1));
+        app.control.select(Some("b2".into()));
+        let action = |milliseconds| json!({"id":"a3","fields":{"type":"wait","parameters":{"milliseconds":milliseconds}}});
+        app.adopt_inspection(inspection(1, vec![action(100)]));
+        app.draft.waits[0] = typed.into();
+        app.worker = Worker::spawn(move |job| {
+            event(Ok(match job {
+                Job::Request(request @ Request::Edit { .. }) => {
+                    assert!(
+                        request.arguments()["changes"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|change| change["id"] == "a3"
+                                && change["field"] == "milliseconds"
+                                && change["value"] == 250)
+                    );
+                    Reply::Response {
+                        operation: "edit".into(),
+                        response: rad_api::Response {
+                            v: 1,
+                            id: None,
+                            session_id: None,
+                            status: rad_api::Status::Applied,
+                            error: None,
+                            data: rad_api::ResponseData::Applied(rad_api::Applied {
+                                changed: true,
+                                revision: "2".into(),
+                            }),
+                        },
+                    }
+                }
+                Job::Refresh { .. } => Reply::Refresh(Refresh {
+                    status: Value::Null,
+                    board: Some(board(2)),
+                    inspection: Some(inspection(2, vec![action(250)])),
+                }),
+                _ => Reply::Theme,
+            }))
+        });
+        app.save();
+        if let Some(edited) = after_send {
+            app.draft.waits[0] = edited.into();
+        }
+        pump_until(&mut app, &egui::Context::default(), |app| {
+            app.inspection
+                .as_ref()
+                .is_some_and(|view| revision_of(&view.button) == "2")
+        });
+        assert_eq!(app.draft.waits[0], after_send.unwrap_or("250"));
+        assert_eq!(app.unsaved(), after_send.is_some());
+    }
+}
+
+#[test]
+fn an_incomplete_refresh_retains_the_draft_until_a_coherent_inspector_arrives() {
+    for library in [false, true] {
+        let mut app = app();
+        app.board = Some(board(1));
+        app.control.select(Some("b2".into()));
+        app.adopt_inspection(inspection(1, vec![]));
+        app.draft.name = "Draft name".into();
+        app.draft.text = "Draft text".into();
+        if library {
+            app.icon_library.begin("b2", None);
+        }
+        let mut first = true;
+        app.worker = Worker::spawn(move |_| {
+            event(Ok(if std::mem::take(&mut first) {
+                Reply::Refresh(Refresh {
+                    status: Value::Null,
+                    board: Some(board(2)),
+                    inspection: None,
+                })
+            } else {
+                Reply::Inspection(inspection(2, vec![]))
+            }))
+        });
+        app.worker.submit(Job::Theme).unwrap();
+        let ctx = egui::Context::default();
+        while app.worker.busy() {
+            let _ = app.pump_replies(&ctx);
+            std::thread::yield_now();
+        }
+        assert!(app.inspection.is_none());
+        app.worker.submit(Job::Inspect("b2".into())).unwrap();
+        while app.worker.busy() {
+            let _ = app.pump_replies(&ctx);
+            std::thread::yield_now();
+        }
+        assert_eq!(app.draft.name, "Draft name");
+        assert_eq!(app.draft.text, "Draft text");
+    }
+}
+
+#[test]
+fn save_followed_by_undo_before_refresh_does_not_revive_the_saved_draft() {
+    let mut app = app();
+    app.board = Some(board(1));
+    app.control.select(Some("b2".into()));
+    app.adopt_inspection(inspection(1, vec![]));
+    app.draft.name = "Saved name".into();
+    app.draft.text = "Saved text".into();
+    let (release, blocked) = std::sync::mpsc::channel();
+    app.worker = Worker::spawn(move |job| {
+        event(Ok(match job {
+            Job::Request(request @ (Request::Edit { .. } | Request::Undo {})) => {
+                if matches!(request, Request::Edit { .. }) {
+                    assert!(
+                        request.arguments()["changes"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|c| c["field"] == "name" && c["value"] == "Saved name")
+                    );
+                    blocked.recv().unwrap();
+                }
+                Reply::Response {
+                    operation: request.operation().as_str().into(),
+                    response: rad_api::Response {
+                        v: 1,
+                        id: None,
+                        session_id: None,
+                        status: rad_api::Status::Applied,
+                        data: rad_api::ResponseData::Applied(rad_api::Applied {
+                            changed: true,
+                            revision: "3".into(),
+                        }),
+                        error: None,
+                    },
+                }
+            }
+            Job::Refresh { .. } => Reply::Refresh(Refresh {
+                status: Value::Null,
+                board: Some(board(3)),
+                inspection: Some(inspection(3, vec![])),
+            }),
+            _ => Reply::Theme,
+        }))
+    });
+    app.save();
+    app.send(Request::Undo {});
+    release.send(()).unwrap();
+    pump_until(&mut app, &egui::Context::default(), |app| {
+        app.inspection
+            .as_ref()
+            .is_some_and(|v| revision_of(&v.button) == "3")
+    });
+    assert_eq!(app.draft.name, "Key");
+    assert_eq!(app.draft.text, "Key");
+    assert!(!app.unsaved());
 }
 
 #[test]

@@ -158,6 +158,11 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   demás; en el Stream Deck, todas a la vez y nunca marcadas como no disponibles
   mientras cargan. Al seleccionar una tecla, su panel aparece con un fundido corto
   y dice «Cargando…» solo si tarda más de 0,4 s.
+  Una actualización de otra parte de la configuración conserva el borrador de la
+  tecla seleccionada y actualiza sus campos intactos contra la nueva lectura.
+  Los campos editados localmente se conservan aunque también cambien fuera del
+  editor; los parámetros de cada acción se comparan por separado. Deshacer o
+  rehacer confirmado reemplaza el borrador con el resultado del historial.
 - **Borrar.** La papelera del panel o Supr borran la tecla seleccionada, o la
   carpeta a la que entra, sin confirmación; Ctrl+Z la recupera.
 - **Copiar y pegar teclas.** Ctrl+C copia la tecla seleccionada y Ctrl+V la pega
@@ -178,6 +183,10 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
 - **Progreso.** Las transferencias muestran una barra.
 - **Puesta en marcha.** El editor arranca RAD y ofrece «Iniciar RAD con el equipo»;
   el usuario nunca usa la terminal ([ADR 0012](adr/0012-servicio-gestionado-por-el-editor.md)).
+  Cambiar el autoinicio queda pendiente hasta confirmar la unidad y el ajuste del
+  runtime. Si falla alguno de los pasos, se relee el ajuste y se reconcilia la unidad,
+  sin repetir la modificación original. Si no se puede resolver, se ofrece
+  «Reintentar» en lugar de mostrar interruptores con un estado no confirmado.
 
 ## Teclas con dos estados observados
 
