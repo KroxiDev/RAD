@@ -1,4 +1,5 @@
 """Contratos críticos del artefacto distribuible, con paquetes sintéticos."""
+import contextlib
 import hashlib
 import io
 import json
@@ -9,6 +10,7 @@ import shutil
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 import importlib.util
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,6 +108,117 @@ class ReleaseContract(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("dirty", result.stderr.lower())
             self.assertNotIn("cargo build", result.stdout)
+
+    def plan_for_host(self, os_release):
+        read_text = Path.read_text
+
+        def fixture_read(path, *args, **kwargs):
+            if path == Path("/etc/os-release"):
+                return os_release
+            return read_text(path, *args, **kwargs)
+
+        def fixture_git(*args):
+            return {"status": "", "rev-parse": "1" * 40, "show": "1"}[args[0]]
+
+        output = io.StringIO()
+        with (mock.patch.object(Path, "read_text", fixture_read),
+              mock.patch.object(TOOL, "git", fixture_git),
+              mock.patch.object(TOOL.os, "geteuid", return_value=1000),
+              mock.patch.object(TOOL.platform, "machine", return_value="x86_64"),
+              contextlib.redirect_stdout(output)):
+            TOOL.build(plan=True)
+        return output.getvalue()
+
+    def test_build_identifies_supported_hosts_without_changing_update_compatibility(self):
+        for version in ("4.0.6", "4.5.0"):
+            with self.subTest(version=version):
+                output = self.plan_for_host(f'ID="omarchy"\nVERSION_ID="{version}"\n')
+                self.assertIn(f"build_base=omarchy-{version}", output)
+                self.assertIn("cargo build --offline --locked", output)
+        # Installed updaters compare this wire identity literally.
+        self.assertEqual(SOURCE["base"], "omarchy-4.0.6")
+        self.assertEqual(SOURCE["schema"], 1)
+
+    def test_build_rejects_unapproved_hosts(self):
+        for host in ('ID=arch\nVERSION_ID=4.5.0\n',
+                     'ID=omarchy\nVERSION_ID=4.5.1\n',
+                     'ID=omarchy\n'):
+            with self.subTest(host=host), self.assertRaisesRegex(ValueError, "build base"):
+                self.plan_for_host(host)
+
+    def test_build_persists_real_host_and_compatible_identity_in_both_environment_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            shutil.copytree(ROOT / "packaging", repo / "packaging")
+            for relative in ("LICENSE", "README.md", "README.es.md",
+                             "crates/rad-editor/assets/phosphor/LICENSE",
+                             "crates/rad-editor/assets/phosphor/SOURCE.json"):
+                destination = repo / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / relative, destination)
+            (repo / ".gitignore").write_text("target/\n")
+            git_env = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+                       "GIT_AUTHOR_NAME": "Synthetic", "GIT_AUTHOR_EMAIL": "synthetic@example.invalid",
+                       "GIT_COMMITTER_NAME": "Synthetic", "GIT_COMMITTER_EMAIL": "synthetic@example.invalid"}
+            for args in (("init", "--quiet"), ("add", "."), ("commit", "--quiet", "-m", "fixture")):
+                subprocess.run(["git", *args], cwd=repo, env=git_env, check=True)
+
+            read_text, run = Path.read_text, subprocess.run
+
+            def fixture_read(path, *args, **kwargs):
+                if path == Path("/etc/os-release"):
+                    return 'ID="omarchy"\nVERSION_ID="4.5.0"\n'
+                return read_text(path, *args, **kwargs)
+
+            def external_tools(args, **kwargs):
+                # Replace compilation and host/package management, retaining real file assembly.
+                command = Path(args[0]).name
+                if command == "cargo" and args[1] == "build":
+                    binaries = Path(kwargs["env"]["CARGO_TARGET_DIR"]) / "x86_64-unknown-linux-gnu/release"
+                    binaries.mkdir(parents=True)
+                    for name in ("rad-editor", "rad-runtime", "rad-launcher-helper", "rad-tray",
+                                 "rad-cli", "rad-update-coordinator", "rad-update-installer"):
+                        shutil.copyfile("/usr/bin/true", binaries / name)
+                    output = ""
+                elif command == "cargo" and args[1] == "metadata":
+                    output = '{"packages": []}'
+                elif command == "rustc":
+                    manifest = json.loads((repo / "packaging/notices/manifest.json").read_text())
+                    output = f"commit-hash: {manifest['groups']['rust-std']['revision']}\n"
+                elif command == "pacman":
+                    output = "glibc 2.42-1\n"
+                elif command == "makepkg":
+                    dist = Path(kwargs["env"]["PKGDEST"])
+                    package = synthetic_package(dist, startdir="/tmp/rad-recipe-fixture")
+                    bundle = Path(kwargs["cwd"]) / f"rad-{SOURCE['version']}-{SOURCE['pkgrel']}.tar.zst"
+                    with tempfile.TemporaryDirectory() as extracted, tarfile.open(package, "a") as archive:
+                        run(["/usr/bin/bsdtar", "-xf", str(bundle), "-C", extracted], check=True)
+                        archive.add(Path(extracted) / "rad/usr", arcname="usr")
+                    output = ""
+                else:
+                    return run(args, **kwargs)
+                return subprocess.CompletedProcess(args, 0, stdout=output, stderr="")
+
+            with (mock.patch.object(TOOL, "ROOT", repo),
+                  mock.patch.object(Path, "read_text", fixture_read),
+                  mock.patch.object(TOOL.subprocess, "run", external_tools),
+                  mock.patch.object(TOOL.os, "geteuid", return_value=1000),
+                  mock.patch.object(TOOL.platform, "machine", return_value="x86_64"),
+                  mock.patch.dict(os.environ, {"CARGO_TARGET_DIR": str(repo / "target"),
+                                               "CARGO_HOME": str(repo / "target/cargo-home")}),
+                  contextlib.redirect_stdout(io.StringIO())):
+                dist = TOOL.build()
+
+            embedded = "usr/share/doc/rust-action-deck/build-environment.txt"
+            recorded = (dist / "build-environment.txt").read_text()
+            self.assertEqual((dist / "rad" / embedded).read_text(), recorded)
+            with tarfile.open(dist / FILENAME) as package:
+                self.assertEqual(package.extractfile(embedded).read().decode(), recorded)
+            fields = dict(line.split("=", 1) for line in recorded.splitlines() if "=" in line)
+            self.assertEqual(fields.get("build_base"), "omarchy-4.5.0")
+            self.assertEqual(fields["base"], "omarchy-4.0.6")
+            self.assertEqual(fields["development"], "false")
+            self.assertEqual(json.loads((dist / "rad-update.json").read_text())["base"], "omarchy-4.0.6")
 
     def test_embedded_fonts_preserve_their_individual_notices(self):
         with tempfile.TemporaryDirectory() as directory:
