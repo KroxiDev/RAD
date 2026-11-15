@@ -34,8 +34,10 @@ reales. Pendiente de cierre:
 - Validar en una sesión Omarchy aislada lo que el uso normal no cubre: cancelación,
   fallos antes y después de la transacción, desinstalación y reinstalación con
   datos sintéticos. Los dobles no certifican esa integración.
-- Congelar y validar un snapshot de construcción Omarchy 4.0.6; el número de
-  distribución no congela sus bibliotecas rolling.
+- Congelar y validar un snapshot de construcción Omarchy 4.5.0; el número de
+  distribución no congela sus bibliotecas rolling. La compatibilidad de la
+  metadata se conserva según
+  [ADR 0023](adr/0023-identidad-de-actualizacion-y-entorno-de-construccion.md).
 
 No introducir CI, AUR, canales beta, actualización de plugins o rollback
 automático por inferencia.

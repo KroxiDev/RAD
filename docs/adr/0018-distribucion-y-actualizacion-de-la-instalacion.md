@@ -9,6 +9,10 @@ congela sus dependencias rolling ni certifica por sí sola un artefacto. La fuen
 `packaging/release.json` genera versión del producto, revisión de paquete, tag y
 metadata; no versiona contratos de datos o plugins. No se publica desde el build.
 
+[ADR 0023](0023-identidad-de-actualizacion-y-entorno-de-construccion.md) amplía los
+entornos de construcción y separa su identidad real de la compatibilidad del
+protocolo de actualización.
+
 ## Dueños y contrato
 
 Un subsistema independiente, `rad-update`, es dueño de consultar y actualizar la

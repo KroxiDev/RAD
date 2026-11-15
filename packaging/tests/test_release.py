@@ -1,4 +1,5 @@
 """Contratos críticos del artefacto distribuible, con paquetes sintéticos."""
+import contextlib
 import hashlib
 import io
 import json
@@ -9,6 +10,7 @@ import shutil
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 import importlib.util
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,6 +108,43 @@ class ReleaseContract(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("dirty", result.stderr.lower())
             self.assertNotIn("cargo build", result.stdout)
+
+    def plan_for_host(self, os_release):
+        read_text = Path.read_text
+
+        def fixture_read(path, *args, **kwargs):
+            if path == Path("/etc/os-release"):
+                return os_release
+            return read_text(path, *args, **kwargs)
+
+        def fixture_git(*args):
+            return {"status": "", "rev-parse": "1" * 40, "show": "1"}[args[0]]
+
+        output = io.StringIO()
+        with (mock.patch.object(Path, "read_text", fixture_read),
+              mock.patch.object(TOOL, "git", fixture_git),
+              mock.patch.object(TOOL.os, "geteuid", return_value=1000),
+              mock.patch.object(TOOL.platform, "machine", return_value="x86_64"),
+              contextlib.redirect_stdout(output)):
+            TOOL.build(plan=True)
+        return output.getvalue()
+
+    def test_build_identifies_supported_hosts_without_changing_update_compatibility(self):
+        for version in ("4.0.6", "4.5.0"):
+            with self.subTest(version=version):
+                output = self.plan_for_host(f'ID="omarchy"\nVERSION_ID="{version}"\n')
+                self.assertIn(f"build_base=omarchy-{version}", output)
+                self.assertIn("cargo build --offline --locked", output)
+        # Installed updaters compare this wire identity literally.
+        self.assertEqual(SOURCE["base"], "omarchy-4.0.6")
+        self.assertEqual(SOURCE["schema"], 1)
+
+    def test_build_rejects_unapproved_hosts(self):
+        for host in ('ID=arch\nVERSION_ID=4.5.0\n',
+                     'ID=omarchy\nVERSION_ID=4.5.1\n',
+                     'ID=omarchy\n'):
+            with self.subTest(host=host), self.assertRaisesRegex(ValueError, "build base"):
+                self.plan_for_host(host)
 
     def test_embedded_fonts_preserve_their_individual_notices(self):
         with tempfile.TemporaryDirectory() as directory:
