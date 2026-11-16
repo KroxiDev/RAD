@@ -15,6 +15,9 @@ la única autoridad y no incorpora escritorio, GIO ni GPU.
 - Un cliente separado, `rad-tray`, publica StatusNotifierItem y DBusMenu en el bus
   D-Bus de sesión con GIO. Se registra cuando aparece el watcher, también si llega
   tarde o se reinicia. Sin watcher, no muestra nada y el runtime sigue funcionando.
+  Se registra con el nombre propio `io.github.KroxiDev.RAD.Tray`, reclamado antes
+  de anunciarse. Así mantiene su identidad entre conexiones y evita que un host
+  confunda prefijos de los nombres numéricos que asigna D-Bus.
   El escritorio decide dónde ubicarlo: RAD no modifica Waybar ni su grupo de iconos.
 - El editor instala la unidad auxiliar si el binario hermano está presente, junto
   a la del runtime y con el mismo criterio de ADR 0012: solo reescribe lo que
