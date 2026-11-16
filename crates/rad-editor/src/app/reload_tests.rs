@@ -454,6 +454,92 @@ fn queued_saves_retain_later_edits_when_either_result_is_refused_or_unknown() {
 }
 
 #[test]
+fn a_save_of_unknown_outcome_keeps_fields_set_back_and_fields_left_as_sent() {
+    // Whether or not the runtime applied it, no edit disappears and untouched fields follow.
+    for applied in [true, false] {
+        let mut app = app();
+        app.board = Some(board(1));
+        app.control.select(Some("b2".into()));
+        let action = |milliseconds| json!({"id":"a3","fields":{"type":"wait","parameters":{"milliseconds":milliseconds}}});
+        app.adopt_inspection(inspection(1, vec![action(100)]));
+        app.worker = worker(move |job| {
+            event(match job {
+                Job::Request(Request::Edit { .. }) => Err(crate::session::Error {
+                    code: "io_error".into(),
+                    cause: None,
+                    source_change: None,
+                    unknown: true,
+                }),
+                Job::Refresh { .. } => {
+                    let mut view = inspection(2, vec![action(if applied { 250 } else { 100 })]);
+                    if applied {
+                        view.button["fields"]["name"] = json!("Sent name");
+                    }
+                    // Another client's change, so the view is new either way.
+                    view.button["fields"]["gesture"] = json!("hold");
+                    Ok(Reply::Refresh(Refresh {
+                        status: Value::Null,
+                        board: Some(board(2)),
+                        inspection: Some(view),
+                    }))
+                }
+                _ => Ok(Reply::Theme),
+            })
+        });
+        app.draft.waits[0] = "250".into();
+        app.draft.name = "Sent name".into();
+        app.save();
+        app.draft.waits[0] = "100".into();
+        pump_until(&mut app, &egui::Context::default(), |app| {
+            app.inspection
+                .as_ref()
+                .is_some_and(|view| revision_of(&view.button) == "2")
+        });
+        assert_eq!(app.draft.waits[0], "100", "applied: {applied}");
+        assert_eq!(app.draft.name, "Sent name", "applied: {applied}");
+        assert_eq!(app.draft.gesture, "hold", "applied: {applied}");
+        assert!(app.unsaved(), "applied: {applied}");
+    }
+}
+
+#[test]
+fn a_save_lost_with_its_worker_keeps_a_field_set_back() {
+    let mut app = app();
+    app.board = Some(board(1));
+    app.control.select(Some("b2".into()));
+    app.adopt_inspection(inspection(1, vec![]));
+    // The Save landed before its worker died; the replacement reads it back.
+    app.worker_respawn = crate::worker::Respawner::new(|| {
+        worker(|job| {
+            event(Ok(match job {
+                Job::Connect => Reply::Connected,
+                Job::Refresh { .. } => {
+                    let mut view = inspection(2, vec![]);
+                    view.button["fields"]["name"] = json!("Sent name");
+                    Reply::Refresh(Refresh {
+                        status: Value::Null,
+                        board: Some(board(2)),
+                        inspection: Some(view),
+                    })
+                }
+                _ => Reply::Theme,
+            }))
+        })
+    });
+    app.worker = Worker::spawn(|_job: Job| -> Event { panic!("synthetic worker death") });
+    app.draft.name = "Sent name".into();
+    app.save();
+    app.draft.name = "Key".into();
+    pump_until(&mut app, &egui::Context::default(), |app| {
+        app.inspection
+            .as_ref()
+            .is_some_and(|view| revision_of(&view.button) == "2")
+    });
+    assert_eq!(app.draft.name, "Key");
+    assert!(app.unsaved());
+}
+
+#[test]
 fn an_incomplete_refresh_retains_the_draft_until_a_coherent_inspector_arrives() {
     for library in [false, true] {
         let mut app = app();

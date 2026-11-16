@@ -22,10 +22,17 @@ impl App {
                 if let Some((selection, draft)) = self.saves.remove(&ticket)
                     && selection == self.selection
                     && draft.id == self.draft.id
-                    && matches!(&*result, Ok(Reply::Response { response, .. })
-                        if response.status == rad_api::Status::Applied)
                 {
-                    self.saved_draft = Some((selection, draft));
+                    match &*result {
+                        Ok(Reply::Response { response, .. })
+                            if response.status == rad_api::Status::Applied =>
+                        {
+                            self.saved_draft = Some((selection, draft));
+                            self.unknown_saves.clear();
+                        }
+                        Err(error) if error.unknown => self.unknown_saves.push((selection, draft)),
+                        _ => {}
+                    }
                 }
                 event.result = *result;
             }
@@ -468,6 +475,7 @@ impl App {
                                 // An explicit history change replaces the local draft on reread.
                                 self.draft.source = None;
                                 self.saved_draft = None;
+                                self.unknown_saves.clear();
                                 self.appearance_retry = None;
                                 self.icon_library.reset();
                             }

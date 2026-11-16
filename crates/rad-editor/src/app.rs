@@ -343,6 +343,9 @@ pub struct App {
     saves: std::collections::BTreeMap<u64, (u64, Draft)>,
     /// Confirmed values sent by Save, separate from the published inspection.
     saved_draft: Option<(u64, Draft)>,
+    /// Values sent by Saves of unknown outcome since the last confirmed one: the runtime
+    /// may hold any of them or the earlier baseline.
+    unknown_saves: Vec<(u64, Draft)>,
     icon_library: icon_library::Library,
     selected_slot: Option<usize>,
     message: String,
@@ -498,6 +501,7 @@ impl App {
             save_ticket: 0,
             saves: Default::default(),
             saved_draft: None,
+            unknown_saves: Vec::new(),
             icon_library: Default::default(),
             selected_slot: None,
             message: String::new(),
@@ -630,7 +634,9 @@ impl App {
     /// that never left is said not to have been applied. Replacement is bounded; once the
     /// limit is reached the bar offers Retry.
     fn worker_lost(&mut self, ctx: &egui::Context, in_flight: bool, unsent: bool) {
-        self.saves.clear();
+        // A Save left without an answer may or may not have landed.
+        self.unknown_saves
+            .extend(std::mem::take(&mut self.saves).into_values());
         self.machine_request_failed();
         ctx.request_repaint();
         self.connected = false;

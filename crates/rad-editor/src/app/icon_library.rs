@@ -631,6 +631,24 @@ impl App {
             .saved_draft
             .take()
             .filter(|(selection, draft)| *selection == self.selection && draft.id == fresh.id);
+        let unknown: Vec<_> = std::mem::take(&mut self.unknown_saves)
+            .into_iter()
+            .filter(|(selection, draft)| *selection == self.selection && draft.id == fresh.id)
+            .map(|(_, draft)| draft)
+            .collect();
+        // A field stays local when it differs from any value the runtime may now hold.
+        let rebase = |fresh: &mut super::Draft,
+                      published: &crate::session::Inspection,
+                      edited: &super::Draft| {
+            let before = saved
+                .as_ref()
+                .map(|(_, draft)| draft.clone())
+                .unwrap_or_else(|| super::Draft::load(published));
+            fresh.retain_appearance_edits(&before, edited);
+            for sent in &unknown {
+                fresh.retain_appearance_edits(sent, edited);
+            }
+        };
         let same_visual = fresh.id == self.draft.id && fresh.visual_type == self.draft.visual_type;
         if !same_visual {
             self.discard_imports();
@@ -647,11 +665,7 @@ impl App {
         let retry = self.appearance_retry.take();
         if let Some(before) = &retry {
             if same_visual {
-                let before = saved
-                    .as_ref()
-                    .map(|(_, draft)| draft.clone())
-                    .unwrap_or_else(|| super::Draft::load(before));
-                fresh.retain_appearance_edits(&before, &self.draft);
+                rebase(&mut fresh, before, &self.draft);
                 self.warn(tr(
                     self.es,
                     "The key changed. Your appearance changes are still here. Save again.",
@@ -664,11 +678,7 @@ impl App {
             && same_visual
             && let Some(before) = &self.draft.source
         {
-            let before = saved
-                .as_ref()
-                .map(|(_, draft)| draft.clone())
-                .unwrap_or_else(|| super::Draft::load(before));
-            fresh.retain_appearance_edits(&before, &self.draft);
+            rebase(&mut fresh, before, &self.draft);
         }
         if retry.is_none()
             && (!self.icon_library.owns_draft(&fresh.id)
