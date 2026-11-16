@@ -223,14 +223,18 @@ fn private_tray_registers_late_reappears_opens_once_and_requests_clean_stop() {
         .registrations
         .recv_timeout(Duration::from_secs(3))
         .unwrap();
-    assert!(!registered.is_empty());
+    assert_eq!(registered, TRAY, "the tray advertises its stable bus name");
     drop(watcher);
     until(|| !bus.has_name(WATCHER));
     let watcher = Watcher::new(bus.address.clone());
-    watcher
-        .registrations
-        .recv_timeout(Duration::from_secs(3))
-        .unwrap();
+    assert_eq!(
+        watcher
+            .registrations
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap(),
+        registered,
+        "a replacement watcher receives the same tray identity"
+    );
     for _ in 0..2 {
         bus.call(
             "/StatusNotifierItem",
