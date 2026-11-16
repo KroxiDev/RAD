@@ -235,7 +235,11 @@ mod tests {
             if let crate::service::Job::SetAutostart(value) = job {
                 enabled.store(value, Ordering::SeqCst);
             }
-            crate::service::Outcome { job, failure: None }
+            crate::service::Outcome {
+                job,
+                failure: None,
+                warning: None,
+            }
         }));
         app
     }
@@ -358,7 +362,11 @@ mod tests {
             let record = calls.clone();
             app.service_worker = Some(Worker::spawn(move |job| {
                 record.fetch_add(1, Ordering::SeqCst);
-                crate::service::Outcome { job, failure: None }
+                crate::service::Outcome {
+                    job,
+                    failure: None,
+                    warning: None,
+                }
             }));
             let mutations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let sent = mutations.clone();
@@ -505,6 +513,7 @@ mod tests {
                 kind: crate::service::FailureKind::CouldNotStart,
                 details: "synthetic failure".into(),
             }),
+            warning: None,
         }));
         app.reconcile_machine();
         settle(&mut app);
@@ -567,7 +576,11 @@ mod tests {
             if let crate::service::Job::SetAutostart(value) = job {
                 enabled.store(value, Ordering::SeqCst);
             }
-            crate::service::Outcome { job, failure: None }
+            crate::service::Outcome {
+                job,
+                failure: None,
+                warning: None,
+            }
         }));
         settle(&mut app);
         assert!(app.machine_pending.is_none());

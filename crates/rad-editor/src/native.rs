@@ -52,6 +52,11 @@ pub enum Job {
     /// A folder one press away from the one on show.
     FolderBoard(String),
     Request(Request),
+    /// A key Save whose captured draft must be matched to this exact result.
+    Save {
+        ticket: u64,
+        request: Request,
+    },
     SaveIcon {
         state: Option<String>,
         button: String,
@@ -83,6 +88,10 @@ pub enum Job {
     },
 }
 pub enum Reply {
+    Saved {
+        ticket: u64,
+        result: Box<Result<Reply, Error>>,
+    },
     /// Correlate failed machine reads/writes so an autostart change can be reconciled.
     MachineFailed(Error),
     PluginApplied(Response),
@@ -387,6 +396,10 @@ pub fn start_with_clock(
     let mut visual_epoch = String::new();
     let mut visual_revisions = std::collections::BTreeMap::new();
     Worker::spawn(move |job| {
+        let (save_ticket, job) = match job {
+            Job::Save { ticket, request } => (Some(ticket), Job::Request(request)),
+            job => (None, job),
+        };
         let machine = matches!(
             &job,
             Job::Request(Request::SetMachineSettings { .. } | Request::MachineSettings {})
@@ -660,6 +673,13 @@ pub fn start_with_clock(
                 Ok(Reply::RecoveryRequired)
             }
             other => other,
+        };
+        let result = match save_ticket {
+            Some(ticket) => Ok(Reply::Saved {
+                ticket,
+                result: Box::new(result),
+            }),
+            None => result,
         };
         Event {
             paste,

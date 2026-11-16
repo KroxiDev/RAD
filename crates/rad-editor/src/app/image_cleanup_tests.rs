@@ -296,7 +296,7 @@ fn terminal_cleanup_closes_only_its_socket_invalidates_prepared_images_and_recon
         }
         // A subsequent explicit Save cannot reference any lease of the closed socket.
         let (saved, edits) = std::sync::mpsc::channel();
-        app.worker = Worker::spawn(move |job| {
+        app.worker = super::reload_tests::worker(move |job| {
             if let Job::Request(request @ Request::Edit { .. }) = job {
                 saved.send(serde_json::to_value(request).unwrap()).unwrap();
             }

@@ -198,7 +198,13 @@ impl App {
                 }
             }
         } else {
-            self.send(request);
+            let ticket = self.save_ticket;
+            self.save_ticket = self.save_ticket.wrapping_add(1);
+            if self.command(Job::Save { ticket, request }) {
+                let mut draft = self.draft.clone();
+                draft.states = draft.state_faces();
+                self.saves.insert(ticket, (self.selection, draft));
+            }
         }
     }
     fn key_editor(&mut self, ui: &mut egui::Ui, look: &Look, id: &str) {
@@ -1094,7 +1100,7 @@ mod brightness_tests {
         app.draft.brightness_directions[0] = rad_api::BrightnessDirection::Decrease;
         assert!(app.unsaved());
         let (sent, received) = std::sync::mpsc::channel();
-        app.worker = crate::worker::Worker::spawn(move |job| {
+        app.worker = super::super::reload_tests::worker(move |job| {
             if let Job::Request(request) = job {
                 sent.send(request.arguments()).unwrap();
             }

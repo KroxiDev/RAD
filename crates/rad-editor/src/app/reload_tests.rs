@@ -23,6 +23,23 @@ pub(super) fn event(result: Result<Reply, crate::session::Error>) -> Event {
         result,
     }
 }
+/// Preserve the production Save envelope while fixtures answer ordinary requests.
+pub(super) fn worker(mut run: impl FnMut(Job) -> Event + Send + 'static) -> Worker<Job, Event> {
+    Worker::spawn(move |job| {
+        let (ticket, job) = match job {
+            Job::Save { ticket, request } => (Some(ticket), Job::Request(request)),
+            job => (None, job),
+        };
+        let mut event = run(job);
+        if let Some(ticket) = ticket {
+            event.result = Ok(Reply::Saved {
+                ticket,
+                result: Box::new(event.result),
+            });
+        }
+        event
+    })
+}
 fn board(revision: u64) -> Board {
     let revision = revision.to_string();
     let mut slots = vec![Value::Null; 32];
@@ -52,7 +69,7 @@ fn app() -> App {
 }
 /// A runtime at `revision` that answers reads, as the real worker would.
 fn runtime(revision: Arc<AtomicU64>) -> Worker<Job, Event> {
-    Worker::spawn(move |job: Job| {
+    worker(move |job: Job| {
         let now = revision.load(Ordering::SeqCst);
         event(Ok(match job {
             Job::Refresh {
@@ -140,7 +157,7 @@ fn inspector_refresh_preserves_unsaved_fields_and_adopts_untouched_fields() {
     fresh.button["fields"]["gesture"] = json!("hold");
     fresh.actions[1]["fields"]["parameters"]["milliseconds"] = json!(350);
     let (saved, received) = std::sync::mpsc::channel();
-    app.worker = Worker::spawn(move |job| {
+    app.worker = worker(move |job| {
         if let Job::Request(request @ Request::Edit { .. }) = job {
             saved.send(request.arguments()).unwrap();
             return event(Ok(Reply::Theme));
@@ -212,7 +229,7 @@ fn action_list_changes_preserve_edited_parameters_by_identity() {
         let count = fresh.len();
         app.adopt_inspection(inspection(2, fresh));
         let (sent, received) = std::sync::mpsc::channel();
-        app.worker = Worker::spawn(move |job| {
+        app.worker = worker(move |job| {
             sent.send(job).unwrap();
             event(Ok(Reply::Theme))
         });
@@ -258,6 +275,7 @@ fn saving_a_formatted_wait_adopts_its_published_number_without_losing_later_edit
         ("+250", None),
         ("0250", Some("300 ")),
         ("0250", Some("invalid")),
+        ("250", Some("100")),
     ] {
         let mut app = app();
         app.board = Some(board(1));
@@ -265,7 +283,9 @@ fn saving_a_formatted_wait_adopts_its_published_number_without_losing_later_edit
         let action = |milliseconds| json!({"id":"a3","fields":{"type":"wait","parameters":{"milliseconds":milliseconds}}});
         app.adopt_inspection(inspection(1, vec![action(100)]));
         app.draft.waits[0] = typed.into();
-        app.worker = Worker::spawn(move |job| {
+        app.draft.name = "Saved name".into();
+        app.draft.text = "Saved text".into();
+        app.worker = worker(move |job| {
             event(Ok(match job {
                 Job::Request(request @ Request::Edit { .. }) => {
                     assert!(
@@ -292,17 +312,24 @@ fn saving_a_formatted_wait_adopts_its_published_number_without_losing_later_edit
                         },
                     }
                 }
-                Job::Refresh { .. } => Reply::Refresh(Refresh {
-                    status: Value::Null,
-                    board: Some(board(2)),
-                    inspection: Some(inspection(2, vec![action(250)])),
-                }),
+                Job::Refresh { .. } => {
+                    let mut view = inspection(2, vec![action(250)]);
+                    view.button["fields"]["name"] = json!("Saved name");
+                    view.appearance["text"] = json!("Saved text");
+                    Reply::Refresh(Refresh {
+                        status: Value::Null,
+                        board: Some(board(2)),
+                        inspection: Some(view),
+                    })
+                }
                 _ => Reply::Theme,
             }))
         });
         app.save();
         if let Some(edited) = after_send {
             app.draft.waits[0] = edited.into();
+            app.draft.name = "Key".into();
+            app.draft.text = "Key".into();
         }
         pump_until(&mut app, &egui::Context::default(), |app| {
             app.inspection
@@ -310,8 +337,206 @@ fn saving_a_formatted_wait_adopts_its_published_number_without_losing_later_edit
                 .is_some_and(|view| revision_of(&view.button) == "2")
         });
         assert_eq!(app.draft.waits[0], after_send.unwrap_or("250"));
+        assert_eq!(
+            app.draft.name,
+            if after_send.is_some() {
+                "Key"
+            } else {
+                "Saved name"
+            }
+        );
+        assert_eq!(
+            app.draft.text,
+            if after_send.is_some() {
+                "Key"
+            } else {
+                "Saved text"
+            }
+        );
         assert_eq!(app.unsaved(), after_send.is_some());
     }
+}
+
+#[test]
+fn queued_saves_retain_later_edits_when_either_result_is_refused_or_unknown() {
+    for failure in ["first", "second", "unknown", "none", "cursor_expired"] {
+        let mut app = app();
+        app.board = Some(board(1));
+        app.control.select(Some("b2".into()));
+        let action = |milliseconds| json!({"id":"a3","fields":{"type":"wait","parameters":{"milliseconds":milliseconds}}});
+        let view = move |revision, milliseconds| {
+            let mut view = inspection(revision, vec![action(milliseconds)]);
+            if failure == "cursor_expired" {
+                view.appearance["visual_type"] = json!("org.rad.audio#microphone");
+                view.appearance["states"] = json!({"off":{"text":"Off"}});
+            }
+            view
+        };
+        app.adopt_inspection(view(1, 100));
+        if failure == "cursor_expired" {
+            app.draft.select_state("off".into());
+        }
+        let (release, wait) = std::sync::mpsc::channel();
+        let mut saved = 100;
+        let mut requests = 0;
+        app.worker = worker(move |job| {
+            event(match job {
+                Job::Request(request @ Request::Edit { .. }) => {
+                    requests += 1;
+                    if requests == 1 {
+                        wait.recv().unwrap();
+                    }
+                    let refused = (failure == "first" && requests == 1)
+                        || (matches!(failure, "second" | "cursor_expired") && requests == 2);
+                    if !refused {
+                        saved = request.arguments()["changes"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|change| change["field"] == "milliseconds")
+                            .unwrap()["value"]
+                            .as_u64()
+                            .unwrap();
+                    }
+                    if refused || (failure == "unknown" && requests == 2) {
+                        Err(crate::session::Error {
+                            code: if failure == "unknown" {
+                                "io_error"
+                            } else if failure == "cursor_expired" {
+                                "cursor_expired"
+                            } else {
+                                "permission_denied"
+                            }
+                            .into(),
+                            cause: None,
+                            source_change: None,
+                            unknown: failure == "unknown",
+                        })
+                    } else {
+                        Ok(Reply::Response {
+                            operation: "edit".into(),
+                            response: rad_api::Response {
+                                v: 1,
+                                id: None,
+                                session_id: None,
+                                status: rad_api::Status::Applied,
+                                error: None,
+                                data: rad_api::ResponseData::Applied(rad_api::Applied {
+                                    changed: true,
+                                    revision: (requests + 1).to_string(),
+                                }),
+                            },
+                        })
+                    }
+                }
+                Job::Refresh { .. } => Ok(Reply::Refresh(Refresh {
+                    status: Value::Null,
+                    board: Some(board(3)),
+                    inspection: Some(view(3, saved)),
+                })),
+                _ => Ok(Reply::Theme),
+            })
+        });
+        app.draft.waits[0] = "250".into();
+        app.save();
+        app.draft.waits[0] = "300".into();
+        app.save();
+        app.draft.waits[0] = "100".into();
+        release.send(()).unwrap();
+        pump_until(&mut app, &egui::Context::default(), |app| {
+            app.inspection
+                .as_ref()
+                .is_some_and(|view| revision_of(&view.button) == "3")
+        });
+        assert_eq!(app.draft.waits[0], "100", "{failure}");
+        assert!(app.unsaved(), "{failure}");
+    }
+}
+
+#[test]
+fn a_save_of_unknown_outcome_keeps_fields_set_back_and_fields_left_as_sent() {
+    // Whether or not the runtime applied it, no edit disappears and untouched fields follow.
+    for applied in [true, false] {
+        let mut app = app();
+        app.board = Some(board(1));
+        app.control.select(Some("b2".into()));
+        let action = |milliseconds| json!({"id":"a3","fields":{"type":"wait","parameters":{"milliseconds":milliseconds}}});
+        app.adopt_inspection(inspection(1, vec![action(100)]));
+        app.worker = worker(move |job| {
+            event(match job {
+                Job::Request(Request::Edit { .. }) => Err(crate::session::Error {
+                    code: "io_error".into(),
+                    cause: None,
+                    source_change: None,
+                    unknown: true,
+                }),
+                Job::Refresh { .. } => {
+                    let mut view = inspection(2, vec![action(if applied { 250 } else { 100 })]);
+                    if applied {
+                        view.button["fields"]["name"] = json!("Sent name");
+                    }
+                    // Another client's change, so the view is new either way.
+                    view.button["fields"]["gesture"] = json!("hold");
+                    Ok(Reply::Refresh(Refresh {
+                        status: Value::Null,
+                        board: Some(board(2)),
+                        inspection: Some(view),
+                    }))
+                }
+                _ => Ok(Reply::Theme),
+            })
+        });
+        app.draft.waits[0] = "250".into();
+        app.draft.name = "Sent name".into();
+        app.save();
+        app.draft.waits[0] = "100".into();
+        pump_until(&mut app, &egui::Context::default(), |app| {
+            app.inspection
+                .as_ref()
+                .is_some_and(|view| revision_of(&view.button) == "2")
+        });
+        assert_eq!(app.draft.waits[0], "100", "applied: {applied}");
+        assert_eq!(app.draft.name, "Sent name", "applied: {applied}");
+        assert_eq!(app.draft.gesture, "hold", "applied: {applied}");
+        assert!(app.unsaved(), "applied: {applied}");
+    }
+}
+
+#[test]
+fn a_save_lost_with_its_worker_keeps_a_field_set_back() {
+    let mut app = app();
+    app.board = Some(board(1));
+    app.control.select(Some("b2".into()));
+    app.adopt_inspection(inspection(1, vec![]));
+    // The Save landed before its worker died; the replacement reads it back.
+    app.worker_respawn = crate::worker::Respawner::new(|| {
+        worker(|job| {
+            event(Ok(match job {
+                Job::Connect => Reply::Connected,
+                Job::Refresh { .. } => {
+                    let mut view = inspection(2, vec![]);
+                    view.button["fields"]["name"] = json!("Sent name");
+                    Reply::Refresh(Refresh {
+                        status: Value::Null,
+                        board: Some(board(2)),
+                        inspection: Some(view),
+                    })
+                }
+                _ => Reply::Theme,
+            }))
+        })
+    });
+    app.worker = Worker::spawn(|_job: Job| -> Event { panic!("synthetic worker death") });
+    app.draft.name = "Sent name".into();
+    app.save();
+    app.draft.name = "Key".into();
+    pump_until(&mut app, &egui::Context::default(), |app| {
+        app.inspection
+            .as_ref()
+            .is_some_and(|view| revision_of(&view.button) == "2")
+    });
+    assert_eq!(app.draft.name, "Key");
+    assert!(app.unsaved());
 }
 
 #[test]
@@ -327,7 +552,7 @@ fn an_incomplete_refresh_retains_the_draft_until_a_coherent_inspector_arrives() 
             app.icon_library.begin("b2", None);
         }
         let mut first = true;
-        app.worker = Worker::spawn(move |_| {
+        app.worker = worker(move |_| {
             event(Ok(if std::mem::take(&mut first) {
                 Reply::Refresh(Refresh {
                     status: Value::Null,
@@ -364,7 +589,7 @@ fn save_followed_by_undo_before_refresh_does_not_revive_the_saved_draft() {
     app.draft.name = "Saved name".into();
     app.draft.text = "Saved text".into();
     let (release, blocked) = std::sync::mpsc::channel();
-    app.worker = Worker::spawn(move |job| {
+    app.worker = worker(move |job| {
         event(Ok(match job {
             Job::Request(request @ (Request::Edit { .. } | Request::Undo {})) => {
                 if matches!(request, Request::Edit { .. }) {
@@ -418,7 +643,7 @@ fn delete_removes_the_selected_key_or_the_folder_it_enters_without_asking() {
     let deleted = Arc::new(Mutex::new(Vec::new()));
     let record = deleted.clone();
     let mut app = app();
-    app.worker = Worker::spawn(move |job: Job| {
+    app.worker = worker(move |job: Job| {
         if let Job::Request(Request::Delete { id, .. }) = job {
             record.lock().unwrap().push(id);
         }
@@ -479,7 +704,7 @@ fn manual_inspection_after_removing_a_linked_action_saves_the_visible_base_face(
         "visual_type":"org.rad.audio#microphone","states":{"muted":{"text":"Quiet","image":null}}});
         let (sent, received) = std::sync::mpsc::channel();
         let mut next = Some(linked);
-        app.worker = Worker::spawn(move |job| {
+        app.worker = worker(move |job| {
             event(Ok(match job {
                 Job::Inspect(_) => {
                     if let Some(view) = next.take() {
@@ -623,7 +848,7 @@ fn appearance_conflict_rereads_without_replaying_and_retains_only_the_same_visua
         app.draft.image = "my-image".into();
         let (sent, received) = std::sync::mpsc::channel();
         let mut first = true;
-        app.worker = Worker::spawn(move |job| {
+        app.worker = worker(move |job| {
             if let Job::Request(request) = job {
                 sent.send(request.arguments()).unwrap();
                 if std::mem::take(&mut first) {
@@ -691,7 +916,7 @@ fn abandoning_imported_faces_drops_known_tokens_before_scheduling_more_reads() {
             ("t2".into(), "second".into()),
         ];
         let (sent, received) = std::sync::mpsc::channel();
-        app.worker = Worker::spawn(move |job| {
+        app.worker = worker(move |job| {
             sent.send(job).unwrap();
             event(Ok(Reply::Theme))
         });
@@ -735,7 +960,7 @@ fn conflict_refresh_and_followup_inspection_do_not_erase_the_rebased_face() {
     fresh.appearance["states"]["muted"]["image"] = json!("remote-image");
     let seen = Arc::new(Mutex::new(Vec::new()));
     let record = seen.clone();
-    app.worker = Worker::spawn(move |job| {
+    app.worker = worker(move |job| {
         event(match job {
             Job::Request(Request::Edit { .. }) => {
                 record.lock().unwrap().push("edit");
@@ -818,7 +1043,7 @@ fn deleted_key_and_changed_folder_abandon_imports_and_do_not_claim_late_success(
             gone.folder["id"] = json!("f9");
         }
         let mut first = Some(gone);
-        app.worker = Worker::spawn(move |_| {
+        app.worker = worker(move |_| {
             event(Ok(if let Some(board) = first.take() {
                 Reply::Refresh(Refresh {
                     status: Value::Null,
@@ -875,7 +1100,7 @@ fn text_style_save_keeps_hidden_text_and_sends_only_changed_base_fields_or_compl
         band: false,
     };
     let (sender, receiver) = std::sync::mpsc::channel();
-    app.worker = Worker::spawn(move |job| {
+    app.worker = worker(move |job| {
         if let Job::Request(request) = job {
             sender.send(request.arguments()).unwrap();
         }
@@ -904,7 +1129,7 @@ fn text_style_save_keeps_hidden_text_and_sends_only_changed_base_fields_or_compl
     app.draft.select_state("off".into());
     app.draft.style.size = 8;
     let (sender, receiver) = std::sync::mpsc::channel();
-    app.worker = Worker::spawn(move |job| {
+    app.worker = worker(move |job| {
         if let Job::Request(request) = job {
             sender.send(request.arguments()).unwrap();
         }
