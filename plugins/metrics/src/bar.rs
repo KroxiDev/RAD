@@ -49,7 +49,10 @@ pub(crate) fn png_hex(percent: u32) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{polling::Sample, presentation::Presentation};
+    use crate::{
+        polling::Sample,
+        presentation::{Presentation, Source},
+    };
     use png::{BitDepth, ColorType, Decoder};
     use std::io::Cursor;
 
@@ -58,10 +61,10 @@ mod tests {
             "schema_version": 1, "values": {"style": "bar"}
         }))
         .unwrap();
-        let content = Presentation::parse(0, &parameters)
+        let content = Presentation::parse(Source::Cpu, &parameters)
             .unwrap()
             .content(
-                0,
+                Source::Cpu,
                 &Sample {
                     cpu: Some(percent),
                     ..Default::default()

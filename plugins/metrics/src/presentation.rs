@@ -1,6 +1,39 @@
 use crate::{polling::Sample, readings::Memory};
 use rad_plugin_sdk::{Parameters, VisualContent};
 
+/// The metric a visual shows, declared in the order of `Demand::sources`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Source {
+    Cpu,
+    Ram,
+    Gpu,
+    Vram,
+}
+
+impl Source {
+    pub(crate) const ALL: [Self; 4] = [Self::Cpu, Self::Ram, Self::Gpu, Self::Vram];
+
+    /// The source of a visual by its manifest id.
+    pub(crate) fn from_visual(id: &str) -> Option<Self> {
+        match id {
+            "cpu" => Some(Self::Cpu),
+            "ram" => Some(Self::Ram),
+            "gpu" => Some(Self::Gpu),
+            "vram" => Some(Self::Vram),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Cpu => "CPU",
+            Self::Ram => "RAM",
+            Self::Gpu => "GPU",
+            Self::Vram => "VRAM",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Style {
     #[default]
@@ -24,7 +57,7 @@ pub(crate) struct Presentation {
 }
 
 impl Presentation {
-    pub(crate) fn parse(source: usize, parameters: &Parameters) -> Option<Self> {
+    pub(crate) fn parse(source: Source, parameters: &Parameters) -> Option<Self> {
         if parameters.schema_version != 1 {
             return None;
         }
@@ -34,7 +67,7 @@ impl Presentation {
                 ("style", "text") | ("label", "shown") => {}
                 ("style", "bar") => presentation.style = Style::Bar,
                 ("label", "hidden") => presentation.hide_name = true,
-                ("value", choice) if matches!(source, 1 | 3) => {
+                ("value", choice) if matches!(source, Source::Ram | Source::Vram) => {
                     presentation.value = match choice {
                         "used_total" => MemoryValue::UsedTotal,
                         "used" => MemoryValue::Used,
@@ -48,22 +81,21 @@ impl Presentation {
         Some(presentation)
     }
 
-    pub(crate) fn content(&self, source: usize, sample: &Sample) -> Option<VisualContent> {
+    pub(crate) fn content(&self, source: Source, sample: &Sample) -> Option<VisualContent> {
         let utilization = |percent: Option<u32>| {
             let percent = percent.filter(|v| *v <= 100)?;
             Some((format!("{percent}%"), percent))
         };
-        let (name, (value, percent)) = match source {
-            0 => ("CPU", utilization(sample.cpu)?),
-            1 => ("RAM", self.memory_value(sample.ram?)?),
-            2 => ("GPU", utilization(sample.gpu)?),
-            3 => ("VRAM", self.memory_value(sample.vram?)?),
-            _ => return None,
+        let (value, percent) = match source {
+            Source::Cpu => utilization(sample.cpu)?,
+            Source::Ram => self.memory_value(sample.ram?)?,
+            Source::Gpu => utilization(sample.gpu)?,
+            Source::Vram => self.memory_value(sample.vram?)?,
         };
         let text = if self.hide_name {
             value
         } else {
-            format!("{name} {value}")
+            format!("{} {value}", source.name())
         };
         Some(VisualContent {
             text: Some(text),
@@ -125,7 +157,7 @@ mod tests {
         serde_json::from_value(json!({"schema_version":1, "values":values})).unwrap()
     }
 
-    fn text(source: usize, values: Value, sample: &Sample) -> Option<String> {
+    fn text(source: Source, values: Value, sample: &Sample) -> Option<String> {
         Presentation::parse(source, &parameters(values))?
             .content(source, sample)?
             .text
@@ -133,10 +165,12 @@ mod tests {
 
     #[test]
     fn defaults_fit_existing_keys_and_show_memory_capacity() {
-        for (source, expected) in ["CPU 25%", "RAM 8.0/16.0 GiB", "GPU 73%", "VRAM 2.0/8.0 GiB"]
-            .into_iter()
-            .enumerate()
-        {
+        for (source, expected) in Source::ALL.into_iter().zip([
+            "CPU 25%",
+            "RAM 8.0/16.0 GiB",
+            "GPU 73%",
+            "VRAM 2.0/8.0 GiB",
+        ]) {
             let content = Presentation::parse(source, &parameters(json!({})))
                 .unwrap()
                 .content(source, &fixture())
@@ -149,8 +183,8 @@ mod tests {
     #[test]
     fn value_and_name_can_be_chosen_independently() {
         for (source, name, variants) in [
-            (1, "RAM", ["8.0/16.0 GiB", "8.0 GiB", "50%"]),
-            (3, "VRAM", ["2.0/8.0 GiB", "2.0 GiB", "25%"]),
+            (Source::Ram, "RAM", ["8.0/16.0 GiB", "8.0 GiB", "50%"]),
+            (Source::Vram, "VRAM", ["2.0/8.0 GiB", "2.0 GiB", "25%"]),
         ] {
             for (value, expected) in ["used_total", "used", "percent"].into_iter().zip(variants) {
                 for (label, expected) in [
@@ -164,7 +198,7 @@ mod tests {
                 }
             }
         }
-        for (source, expected) in [(0, "25%"), (2, "73%")] {
+        for (source, expected) in [(Source::Cpu, "25%"), (Source::Gpu, "73%")] {
             assert_eq!(
                 text(source, json!({"style":"text","label":"hidden"}), &fixture()).as_deref(),
                 Some(expected)
@@ -186,7 +220,7 @@ mod tests {
                 total,
             });
             assert_eq!(
-                text(1, json!({"value":"percent"}), &sample).as_deref(),
+                text(Source::Ram, json!({"value":"percent"}), &sample).as_deref(),
                 Some(expected)
             );
         }
@@ -195,12 +229,12 @@ mod tests {
     #[test]
     fn invalid_parameters_and_incoherent_memory_produce_no_content() {
         for (source, values) in [
-            (1, json!({"extra": "x"})),
-            (3, json!({"style":"ring"})),
-            (1, json!({"label": false})),
-            (1, json!({"value":"unknown"})),
-            (0, json!({"value":"percent"})),
-            (2, json!({"value":"used"})),
+            (Source::Ram, json!({"extra": "x"})),
+            (Source::Vram, json!({"style":"ring"})),
+            (Source::Ram, json!({"label": false})),
+            (Source::Ram, json!({"value":"unknown"})),
+            (Source::Cpu, json!({"value":"percent"})),
+            (Source::Gpu, json!({"value":"used"})),
         ] {
             assert!(Presentation::parse(source, &parameters(values)).is_none());
         }
@@ -211,7 +245,7 @@ mod tests {
                 available,
                 total,
             });
-            assert!(text(1, json!({}), &sample).is_none());
+            assert!(text(Source::Ram, json!({}), &sample).is_none());
         }
     }
 }

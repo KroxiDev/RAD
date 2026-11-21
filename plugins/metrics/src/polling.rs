@@ -1,5 +1,8 @@
 //! One worker per plugin. The timer never executes driver code or joins that worker.
-use crate::{presentation::Presentation, readings::Memory};
+use crate::{
+    presentation::{Presentation, Source},
+    readings::Memory,
+};
 use rad_plugin_sdk::VisualState;
 use std::{
     sync::{
@@ -54,7 +57,7 @@ pub(crate) struct Observation<'a> {
     sample: &'a Sample,
 }
 impl Observation<'_> {
-    pub fn state(self, source: usize, presentation: &Presentation) -> VisualState {
+    pub fn state(self, source: Source, presentation: &Presentation) -> VisualState {
         match presentation.content(source, self.sample) {
             Some(content) if self.stale => VisualState::Stale { content },
             Some(content) => VisualState::Current { content },
@@ -137,7 +140,7 @@ impl Poller {
         let mut demand = self.demand;
         demand.set([active; 4]);
         let observation = self.tick_demand(now, demand);
-        std::array::from_fn(|source| {
+        Source::ALL.map(|source| {
             observation.map_or(VisualState::Unavailable, |sample| {
                 sample.state(source, &Presentation::default())
             })

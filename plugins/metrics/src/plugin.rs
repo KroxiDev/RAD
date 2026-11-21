@@ -1,6 +1,6 @@
 use crate::{
     polling::{Demand, Observation, Poller, Sample},
-    presentation::Presentation,
+    presentation::{Presentation, Source},
 };
 use rad_plugin_sdk::*;
 use std::{
@@ -21,10 +21,9 @@ pub fn config() -> Config {
     )
     .capabilities(vec!["labels".into(), "visual_freshness".into()])
 }
-const SOURCES: [&str; 4] = ["cpu", "ram", "gpu", "vram"];
 struct VisualSubscription {
     subscription: Subscription,
-    source: usize,
+    source: Source,
     presentation: Presentation,
     last: VisualState,
 }
@@ -57,7 +56,8 @@ struct Shared {
 }
 impl Shared {
     fn refresh_demand(&mut self) {
-        let sources = std::array::from_fn(|i| self.subscriptions.values().any(|s| s.source == i));
+        let sources =
+            Source::ALL.map(|source| self.subscriptions.values().any(|s| s.source == source));
         self.demand.set(sources);
     }
     fn publish(&mut self, now: Duration) {
@@ -125,10 +125,10 @@ impl Drop for MetricsPlugin {
 }
 impl Plugin for MetricsPlugin {
     fn subscribe(&self, s: Subscription) {
-        let Some(index) = SOURCES.iter().position(|source| *source == s.source()) else {
+        let Some(source) = Source::from_visual(s.source()) else {
             return s.update(VisualState::Unavailable);
         };
-        let Some(presentation) = Presentation::parse(index, s.parameters()) else {
+        let Some(presentation) = Presentation::parse(source, s.parameters()) else {
             return s.update(VisualState::Unavailable);
         };
         let mut shared = self.shared.0.lock().unwrap_or_else(PoisonError::into_inner);
@@ -138,12 +138,12 @@ impl Plugin for MetricsPlugin {
         }
         // Adding a source starts a new demand epoch, so only an existing source can share
         // a cached observation. The poller also checks for releases it has not seen yet.
-        let initial = if shared.demand.sources[index] {
+        let initial = if shared.demand.sources[source as usize] {
             shared
                 .poller
                 .observation(shared.origin.elapsed(), shared.demand)
                 .map_or(VisualState::Unavailable, |sample| {
-                    sample.state(index, &presentation)
+                    sample.state(source, &presentation)
                 })
         } else {
             VisualState::Unavailable
@@ -153,7 +153,7 @@ impl Plugin for MetricsPlugin {
             s.id(),
             VisualSubscription {
                 subscription: s,
-                source: index,
+                source,
                 presentation,
                 last: initial,
             },
