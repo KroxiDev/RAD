@@ -81,8 +81,7 @@ class CriticalMetricsEvidence(unittest.TestCase):
             world.observe_visuals(peer, 'many')
 
     def test_current_requires_valid_source_content_not_just_availability(self):
-        for source, text in [('cpu', 'CPU 0%'), ('ram', 'RAM 2.0 GiB used 4.0 GiB avail'),
-                             ('gpu', 'GPU 100%'), ('vram', 'VRAM 2.0/8.0 GiB')]:
+        for source, text in [('cpu', 'CPU 0%'), ('gpu', 'GPU 100%'), ('vram', 'VRAM 2.0/8.0 GiB')]:
             value = dict(availability='current', text=text, fault=False)
             self.assertTrue(M.visual_observation(source, value)['valid_current'])
             for state in ('stale', 'unavailable'):

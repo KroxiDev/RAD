@@ -5,7 +5,7 @@ existentes (test-support), lock offline. No dependencia nueva de producción.
 Nunca empaquetar/publicar como rad-plugin-metrics real.
 
 Mismo manifiesto oficial y MetricsPlugin::with_reader, sólo cambia el closure:
-- healthy: valores deterministas CPU25, RAM8/8GiB, GPU73, VRAM2/8GiB;
+- `healthy` produce `CPU 25%`, `RAM 8.0/16.0 GiB`, `GPU 73%` y `VRAM 2.0/8.0 GiB`.
 - missing: Sample::default, cuatro None;
 - block: el mismo reader espera un canal que permanece abierto, sin crear hilos
   ni lectores de reemplazo; no se toca un driver real.
