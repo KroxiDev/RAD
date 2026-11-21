@@ -17,7 +17,25 @@ impl App {
             Polled::Closed { unsent } => self.worker_lost(ctx, false, *unsent),
             Polled::Ready(_) | Polled::Pending => {}
         }
-        if let Polled::Ready(event) = polled {
+        if let Polled::Ready(mut event) = polled {
+            if let Ok(Reply::Saved { ticket, result }) = event.result {
+                if let Some((selection, draft)) = self.saves.remove(&ticket)
+                    && selection == self.selection
+                    && draft.id == self.draft.id
+                {
+                    match &*result {
+                        Ok(Reply::Response { response, .. })
+                            if response.status == rad_api::Status::Applied =>
+                        {
+                            self.saved_draft = Some((selection, draft));
+                            self.unknown_saves.clear();
+                        }
+                        Err(error) if error.unknown => self.unknown_saves.push((selection, draft)),
+                        _ => {}
+                    }
+                }
+                event.result = *result;
+            }
             let machine_failed = matches!(&event.result, Ok(Reply::MachineFailed(_)));
             self.finish_application_catalog(&event.result);
             // Some handlers finish this turn early; keep newly invalidated work runnable.
@@ -32,6 +50,7 @@ impl App {
             }
             self.connected = event.connected;
             match event.result {
+                Ok(Reply::Saved { .. }) => unreachable!("Save result unwrapped above"),
                 Ok(Reply::PluginApplied(r)) => {
                     self.plugins.form_pending = false;
                     if r.status == rad_client::response::Status::Applied {
@@ -455,6 +474,8 @@ impl App {
                             if matches!(operation.as_str(), "undo" | "redo") {
                                 // An explicit history change replaces the local draft on reread.
                                 self.draft.source = None;
+                                self.saved_draft = None;
+                                self.unknown_saves.clear();
                                 self.appearance_retry = None;
                                 self.icon_library.reset();
                             }

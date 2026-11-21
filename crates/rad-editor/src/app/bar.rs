@@ -67,6 +67,7 @@ impl App {
             ui.add_space(2.);
             self.service_bar(ui, look);
         }
+        self.service_warning_bar(ui, look);
         let attention = crate::status::plugin_attention_states(&self.status);
         if self.connected && !attention.is_empty() {
             ui.horizontal_wrapped(|ui| {

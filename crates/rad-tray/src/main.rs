@@ -90,13 +90,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         WATCHER,
         gio::BusNameWatcherFlags::NONE,
         |connection, _, owner| {
-            let service = connection.unique_name().expect("message-bus unique name");
+            // Advertise the name we own, preserving identity across connections and
+            // avoiding hosts that confuse prefixes of numeric connection names.
             connection.call(
                 Some(owner),
                 "/StatusNotifierWatcher",
                 WATCHER,
                 "RegisterStatusNotifierItem",
-                Some(&(service.as_str(),).to_variant()),
+                Some(&(NAME,).to_variant()),
                 None,
                 gio::DBusCallFlags::NONE,
                 2000,
