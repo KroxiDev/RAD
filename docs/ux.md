@@ -142,7 +142,10 @@ Referencia en español; el catálogo inglés usa sus equivalentes.
   cantidad ni paso configurables, y alcanzar un límite no genera otra escritura.
 - **Opciones de los plugins.** Cada opción se muestra con su nombre, nunca con
   su valor interno. Una opción obligatoria empieza en la primera, que el plugin
-  pone como recomendada; en OBS y Audio es «Alternar».
+  pone como recomendada; en OBS y Audio es «Alternar». Una opción fija opcional
+  se elige directamente en el menú, sin casilla «Fijar». Si falta el valor,
+  el menú muestra la primera opción. El plugin debe usarla como predeterminada
+  para que la selección visible coincida con su comportamiento.
 - **Gestos.** El editor ofrece pulsar, mantener o pulsación larga solo si la acción
   los admite.
 - **Pantallas.** Ajustes y los formularios ocupan la ventana o el panel de la tecla,
@@ -196,6 +199,10 @@ Manual si era el visual vinculado. Un visual externo ajeno se conserva. Los
 visuales vinculados no se ofrecen en paleta ni combo; Multimedia y Métricas siguen
 ofreciendo sus visuales independientes. Las teclas antiguas ganan el vínculo al
 guardar su acción, no mediante una migración automática.
+
+En «Configurar…», cada tecla de Métricas permite elegir el Estilo («Texto» o
+«Barra de uso») y mostrar u ocultar el Nombre. En RAM y VRAM, Valor ofrece
+«Actual y total», «Solo actual» y «Porcentaje».
 
 Cambiar el visual a otro plugin o tipo, o pasar a Manual, borra el texto y la
 imagen propios de cada estado; Ctrl+Z los recupera. Cambiar solo el dispositivo,

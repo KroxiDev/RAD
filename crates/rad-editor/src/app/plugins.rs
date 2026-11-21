@@ -1493,7 +1493,10 @@ pub(super) fn form_ui(
                     },
                 );
                 let mut present = form.fields[index].is_some();
-                if !field.required && ui.checkbox(&mut present, tr(es, "Set")).changed() {
+                if !field.required
+                    && !matches!(field.kind, FieldKind::Choice { .. })
+                    && ui.checkbox(&mut present, tr(es, "Set")).changed()
+                {
                     form.set(
                         index,
                         present.then(|| {
@@ -1505,7 +1508,7 @@ pub(super) fn form_ui(
                         }),
                     );
                 }
-                if let Some(mut value) = form.fields[index].clone() {
+                if let Some(mut value) = form.displayed_value(index).map(str::to_owned) {
                     let changed = match &field.kind {
                         FieldKind::Boolean => {
                             let mut v = value == "true";
@@ -1516,7 +1519,7 @@ pub(super) fn form_ui(
                             r.changed()
                         }
                         FieldKind::Choice { options } => {
-                            let old = value.clone();
+                            let mut changed = false;
                             let texts = form.texts.clone();
                             // The user reads each option's text; its value is what is stored.
                             let shown = match options.iter().find(|o| o.value == value) {
@@ -1529,14 +1532,19 @@ pub(super) fn form_ui(
                                 .selected_text(shown)
                                 .show_ui(ui, |ui| {
                                     for option in options {
-                                        ui.selectable_value(
-                                            &mut value,
-                                            option.value.clone(),
-                                            texts.get(language, &option.label),
-                                        );
+                                        if ui
+                                            .selectable_value(
+                                                &mut value,
+                                                option.value.clone(),
+                                                texts.get(language, &option.label),
+                                            )
+                                            .clicked()
+                                        {
+                                            changed = form.fields[index].as_ref() != Some(&value);
+                                        }
                                     }
                                 });
-                            old != value
+                            changed
                         }
                         FieldKind::Integer { min, max } => {
                             let r = ui.add(

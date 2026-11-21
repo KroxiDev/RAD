@@ -33,8 +33,8 @@ pub const OFFICIAL: [Official; 4] = [
     Official {
         id: "org.rad.metrics",
         name: "Metrics",
-        version: [0, 3, 0],
-        source: "https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.3.0",
+        version: [0, 4, 0],
+        source: "https://github.com/KroxiDev/rad-plugins/releases/tag/metrics-v0.4.0",
     },
 ];
 
