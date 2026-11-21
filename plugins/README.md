@@ -35,7 +35,7 @@ paquetes sigue disponible.
 | [`audio`](audio) | `rad-plugin-audio` | Micrófono y salida de audio mediante `pactl`. |
 | [`media`](media) | `rad-plugin-media` | Reproducción MPRIS y carátulas mediante el D-Bus de sesión. |
 | [`obs`](obs) | `rad-plugin-obs` | Acciones de OBS, opciones dinámicas y estado visual. |
-| [`metrics`](metrics) | `rad-plugin-metrics` | Estado visual de CPU/RAM y GPU/VRAM NVIDIA. |
+| [`metrics`](metrics) | `rad-plugin-metrics` | Estado visual de CPU/RAM y GPU/VRAM NVIDIA, como texto o barra de uso. |
 
 Los iconos PNG de estado de los plugins oficiales tienen un presupuesto máximo
 de **4 KiB por icono** (8192 caracteres hexadecimales). El manifest completo sigue

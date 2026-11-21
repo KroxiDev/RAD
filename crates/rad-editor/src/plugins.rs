@@ -77,6 +77,17 @@ impl FormDraft {
                 .and_then(|d| d.parameters(&self.definition))
                 .is_ok()
     }
+    pub(crate) fn displayed_value(&self, index: usize) -> Option<&str> {
+        self.fields[index].as_deref().or_else(|| {
+            let field = &self.definition.schema.fields[index];
+            match &field.kind {
+                FieldKind::Choice { options } if !field.required => {
+                    options.first().map(|option| option.value.as_str())
+                }
+                _ => None,
+            }
+        })
+    }
     pub fn set(&mut self, index: usize, value: Option<String>) {
         if let Some(field) = self.fields.get_mut(index) {
             if self.definition.schema.fields[index].required && value.is_none() {
@@ -796,6 +807,25 @@ pub fn accepts_action(actions: &[Value]) -> bool {
 #[cfg(test)]
 mod binding_tests {
     use super::*;
+    #[test]
+    fn absent_choice_displays_first_option_and_only_publishes_an_explicit_selection() {
+        let definition = serde_json::from_value(json!({
+            "id":"sample","label":"Sample","credential_slots":[],
+            "schema":{"version":1,"fields":[{"id":"style","label":"Style","required":false,
+                "kind":{"type":"choice","options":["text","bar"]}}]}
+        }))
+        .unwrap();
+        let mut form = FormDraft::load(definition, br#"{"schema_version":1,"values":{}}"#.to_vec());
+        assert_eq!(form.displayed_value(0), Some("text"));
+        assert_eq!(form.publish(), Ok(None));
+        form.set(0, Some("text".into()));
+        assert_eq!(
+            form.publish(),
+            Ok(Some(json!({"schema_version":1,"values":{"style":"text"}})))
+        );
+        form.set(0, Some("bar".into()));
+        assert_eq!(form.displayed_value(0), Some("bar"));
+    }
     #[test]
     fn restored_form_recovers_link_metadata_so_unchanged_action_can_be_saved() {
         let manifest = Document::new(include_bytes!("../../../plugins/audio/manifest.json"))

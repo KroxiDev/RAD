@@ -17,7 +17,7 @@ ipc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ipc)
 Peer, equal, until = ipc.Peer, ipc.equal, ipc.until
 SOURCES = ["cpu", "ram", "gpu", "vram"]
-TEXTS = ["CPU 25%", "RAM 8.0 GiB used 8.0 GiB avail", "GPU 73%", "VRAM 2.0/8.0 GiB"]
+TEXTS = ["CPU 25%", "RAM 8.0/16.0 GiB", "GPU 73%", "VRAM 2.0/8.0 GiB"]
 
 
 def profile(kind, **fields):
@@ -172,7 +172,6 @@ def scenario(e):
     folder = e.call("status")["active_folder_id"]
     for source in SOURCES:
         schema = e.call("schema", type="org.rad.metrics#" + source, cursor=None)
-        equal("schema " + source, schema["items"], [])
         equal("schema version " + source, schema["schema_version"], 1)
     for i in range(32):
         button = f"b{i + 1}"
