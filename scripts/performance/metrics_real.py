@@ -60,11 +60,8 @@ def visual_observation(source, value):
         if source in ('cpu', 'gpu'):
             match = re.fullmatch(source.upper()+r' ([0-9]{1,3})%', text)
             valid_text = bool(match and int(match[1]) <= 100)
-        elif source == 'ram':
-            match = re.fullmatch(r'RAM ([0-9]{1,11}\.[0-9]) GiB used ([0-9]{1,11}\.[0-9]) GiB avail', text)
-            valid_text = bool(match and float(match[1])+float(match[2]) > 0)
-        elif source == 'vram':
-            match = re.fullmatch(r'VRAM ([0-9]{1,11}\.[0-9])/([0-9]{1,11}\.[0-9]) GiB', text)
+        elif source in ('ram', 'vram'):
+            match = re.fullmatch(source.upper()+r' ([0-9]{1,11}\.[0-9])/([0-9]{1,11}\.[0-9]) GiB', text)
             valid_text = bool(match and 0 <= float(match[1]) <= float(match[2]) and float(match[2]) > 0)
     state = value.get('availability')
     if state not in ('current', 'stale', 'unavailable'):

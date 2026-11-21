@@ -24,11 +24,11 @@ fn every_text_an_official_plugin_shows_has_a_spanish_translation() {
         for field in manifest.settings.iter().flat_map(|s| &s.fields) {
             texts.push(&field.label);
         }
+        let spanish = &manifest.translations["es"];
         for text in texts {
-            // Names that read the same in Spanish, like "CPU total", need no entry.
-            let same = ["CPU total"].contains(&text);
+            // The metrics manifest uses "CPU total" in both languages without an entry.
             assert!(
-                same || manifest.translate("es", text) != text,
+                text == "CPU total" || spanish.contains_key(text),
                 "{name}: «{text}» has no Spanish translation"
             );
         }
