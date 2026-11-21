@@ -16,7 +16,9 @@ pub(crate) fn png_hex(percent: u32) -> Option<String> {
             let cx = x as f32 + 0.5;
             let cy = y as f32 + 0.5;
             // Distance to the centre segment of the 80 × 14 capsule, sampled at pixel centres.
-            let distance = (cx - cx.clamp(15.0, 81.0)).hypot(cy - 12.0);
+            // `sqrt` rather than `hypot`: the same pixels at this scale, without linking libm.
+            let (dx, dy) = (cx - cx.clamp(15.0, 81.0), cy - 12.0);
+            let distance = (dx * dx + dy * dy).sqrt();
             let coverage = (7.5 - distance).clamp(0.0, 1.0);
             let filled = (fill_end - x as f32).clamp(0.0, 1.0);
             let offset = (y * WIDTH + x) * 4;
