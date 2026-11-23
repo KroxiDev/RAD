@@ -1,4 +1,3 @@
-//! Build and deliver client responses while containing invalid adapter payloads.
 use super::{
     Effect, Error, EventCode, IncomingContext, Outcome, RequestKey, Response, RuntimeError, Server,
     Status, TransportError, Value, json,
@@ -16,7 +15,6 @@ impl Server {
             match self.transport.finish(key, &bytes) {
                 Ok(()) => return Ok(()),
                 Err(TransportError::InvalidResponse) => {}
-                // Already answered or gone: nothing is left to answer.
                 Err(TransportError::UnknownRequest) => {
                     self.events.record(EventCode::ResponseUnknownRequest, None);
                     return Ok(());
@@ -68,9 +66,6 @@ impl Server {
             Some(outcome),
         )
     }
-    /// What a plugin answered, as the client's response. Data that does not decode is that
-    /// plugin's failure and that request's error, never the runtime's: a change that was
-    /// already submitted stays "unknown".
     pub(super) fn plugin_response(
         &mut self,
         context: IncomingContext,

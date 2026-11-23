@@ -48,7 +48,6 @@ impl FormDraft {
         let mut form = Self::load(definition, original);
         for (field, value) in form.definition.schema.fields.iter().zip(&mut form.fields) {
             if field.required {
-                // A fixed choice starts on the option the plugin lists first.
                 *value = Some(match &field.kind {
                     FieldKind::Boolean => "false".into(),
                     FieldKind::Choice { options } => {
@@ -230,12 +229,10 @@ impl CatalogEntry {
             .unwrap_or_default()
     }
 
-    /// The name the user reads, in their language when the plugin translates it.
     pub fn shown(&self, language: crate::preferences::Language) -> &str {
         self.texts.get(language, &self.label)
     }
 }
-/// A plugin's own texts in other languages, from its manifest; shared by its catalog entries.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PluginTexts(Option<std::sync::Arc<rad_plugin_contract::Manifest>>);
 impl PluginTexts {
@@ -281,7 +278,6 @@ impl PluginTexts {
         })
     }
 
-    /// `text` as the plugin writes it for `language`, or `text` itself.
     pub fn get<'a>(&'a self, language: crate::preferences::Language, text: &'a str) -> &'a str {
         match &self.0 {
             Some(manifest) => manifest.translate(language.code(), text),

@@ -23,7 +23,7 @@ fn ranges_isolate_every_class_and_extreme_namespace_without_pruning() {
             let mut registry = IdentityRegistry::from_records(local, records.clone()).unwrap();
             records.reverse();
             let reversed = IdentityRegistry::from_records(local, records).unwrap();
-            assert_eq!(registry, reversed); // insertion order is not semantic state
+            assert_eq!(registry, reversed);
             let next = registry.allocate(kind).unwrap();
             assert_eq!(next, binding(kind, 18, local, 42));
             let before = registry.clone();

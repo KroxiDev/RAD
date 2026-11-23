@@ -166,14 +166,12 @@ pub struct StepResult {
     pub index: usize,
     pub status: StepStatus,
 }
-/// What a step does when its turn comes.
 #[derive(Debug, Clone)]
 enum Planned {
     Dispatch {
         operation: Operation,
         response_budget_ms: u64,
     },
-    /// Deliberate pause: nothing is dispatched and the engine ends it at its deadline.
     Wait(u64),
 }
 #[derive(Debug, Clone)]
@@ -458,7 +456,6 @@ impl State {
     }
 }
 impl Run {
-    /// Longest the step may stay in flight: its wait, or the response budget.
     fn budget(&self, i: usize) -> u64 {
         match self.plan[i] {
             Planned::Wait(milliseconds) => milliseconds,
@@ -467,12 +464,9 @@ impl Run {
             } => response_budget_ms,
         }
     }
-    /// Starts the next step. Only a dispatch yields an intent; a wait just holds the plan.
     fn start(&mut self, now: u64) -> Result<Option<DispatchIntent>, ExecutionError> {
         let i = self.next_index;
         let count = self.result.steps.len();
-        // Reserve a representable worst-case response+wait horizon before emitting, so
-        // that no later step of this plan can fail to be scheduled.
         let mut horizon = now;
         for position in i..count {
             horizon = horizon
@@ -504,7 +498,6 @@ impl Run {
             control: None,
         }))
     }
-    /// Lets the next step start now that nothing holds the plan back.
     fn resume(&mut self, now: u64) {
         if self.failure.is_none() && self.next_index < self.result.steps.len() {
             self.next_due = Some(now);
@@ -589,7 +582,6 @@ impl State {
         completion: Completion,
     ) -> Result<Vec<DispatchIntent>, ExecutionError> {
         if self.residuals.remove(&id) {
-            // The deadline already ended the step and nothing visible changes: only the credit is freed.
             return Ok(vec![]);
         }
         let run = self
@@ -602,7 +594,6 @@ impl State {
             .steps
             .iter()
             .position(|s| s.index == id.index && s.status == StepStatus::Dispatched)
-            // A wait was never dispatched to anyone: only its deadline ends it.
             .filter(|i| matches!(run.plan[*i], Planned::Dispatch { .. }))
             .ok_or(ExecutionError::UnknownDispatch)?;
         run.deadlines[i] = None;
@@ -613,7 +604,6 @@ impl State {
                 run.stop_pending(ExecutionStatus::Failed);
             }
             Completion::TimedOut => {
-                // The adapter keeps the residual: Engine holds no credit for it.
                 run.result.steps[i].status = StepStatus::TimedOut;
                 run.stop_pending(ExecutionStatus::TimedOut);
             }
@@ -626,7 +616,6 @@ impl State {
     fn pump(&mut self) -> Result<Vec<DispatchIntent>, ExecutionError> {
         let mut intents = vec![];
         for run in &mut self.runs {
-            // A wait of zero ends in the turn that starts it: repeat until nothing is due.
             loop {
                 let mut progressed = false;
                 for i in 0..run.result.steps.len() {
@@ -680,7 +669,6 @@ impl Run {
         self.failure.get_or_insert(cause);
         self.next_due = None;
         for (i, step) in self.result.steps.iter_mut().enumerate() {
-            // A wait in flight has no effect to collect, so it ends with the plan.
             let waiting_out =
                 step.status == StepStatus::Dispatched && matches!(self.plan[i], Planned::Wait(_));
             if step.status == StepStatus::Waiting || waiting_out {

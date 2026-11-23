@@ -1,4 +1,3 @@
-//! The `now_playing` visual: what the button shows, and that it follows the player on its own.
 mod support;
 use image::{Rgba, RgbaImage};
 use rad_plugin_media::Timing;
@@ -12,15 +11,12 @@ use support::*;
 
 const BRAVE: &str = "org.mpris.MediaPlayer2.brave.instance4242";
 const STRAWBERRY: &str = "org.mpris.MediaPlayer2.strawberry";
-/// The integration's latency budget for a source change, not an SDK heartbeat.
 const HEARTBEAT: Duration = Duration::from_millis(500);
 
 fn secs(n: u64) -> Duration {
     Duration::from_secs(n)
 }
 
-/// A solid-colour PNG in a fresh directory, named like the covers players leave about. The
-/// directory goes away with the value, so it is kept for as long as the player may read it.
 struct Art {
     dir: Scratch,
 }
@@ -45,7 +41,6 @@ impl Art {
     }
 }
 
-/// The centre pixel of the JPEG a visual carries.
 fn centre(visual: &Visual) -> [u8; 3] {
     let image = image::load_from_memory_with_format(
         &visual.jpeg().expect("a cover"),
@@ -77,7 +72,6 @@ fn a_cover_that_cannot_be_used_leaves_the_text() {
         "file:///nowhere/cover.png".to_owned(),
         format!("file://{}", not_a_picture.display()),
     ] {
-        // A good cover first, so that "no cover" has to be a change.
         player
             .command(&format!("art {}", good.url()))
             .command("status Paused");
@@ -108,7 +102,6 @@ fn changes_made_outside_reach_the_host_within_one_heartbeat() {
             .unwrap_or_else(|seen| panic!("never {state}: {seen:?}"));
         assert!(took <= HEARTBEAT, "{took:?}");
     }
-    // A new cover, and then no cover.
     let (first, second) = (Art::new([220, 20, 20, 255]), Art::new([20, 220, 20, 255]));
     host.discard_pending();
     player.command(&format!("art {}", first.url()));
@@ -145,11 +138,7 @@ fn a_cover_file_replaced_under_the_same_name_is_shown_again() {
         .wait_visual(subscription, |v| v.jpeg_hex.is_some(), secs(5))
         .unwrap();
     assert!(centre(&red)[0] > 150);
-    // Drain before changing the file: a pending startup observation can already
-    // publish the new image, which must not be discarded as if it were old state.
     host.discard_pending();
-    // Same URL, new picture (a different size, so that the file certainly differs); the player
-    // announces the track again.
     RgbaImage::from_pixel(300, 300, Rgba([20, 20, 220, 255]))
         .save(art.path())
         .unwrap();
@@ -170,7 +159,6 @@ fn a_player_that_starts_or_quits_is_followed() {
     let bus = PrivateBus::start();
     let mut host = Host::start(Some(bus.address()), quick());
     let subscription = host.subscribe("brave");
-    // Not running: unavailable, with no content.
     let (_, absent) = host.wait_visual(subscription, |_| true, secs(5)).unwrap();
     assert_eq!(absent.availability, "unavailable");
     assert_eq!((absent.text, absent.jpeg_hex), (None, None));
@@ -188,7 +176,6 @@ fn a_player_that_starts_or_quits_is_followed() {
     host.wait_state(subscription, "unavailable", None, HEARTBEAT)
         .unwrap();
 
-    // And it can come back.
     host.discard_pending();
     let _again = FakePlayer::start(&bus, BRAVE);
     host.wait_state(subscription, "current", Some("Stopped"), HEARTBEAT)
@@ -198,7 +185,6 @@ fn a_player_that_starts_or_quits_is_followed() {
 
 #[test]
 fn only_the_chosen_application_is_shown() {
-    // With another player running, a missing app is not replaced by it.
     let bus = PrivateBus::start();
     let mut strawberry = FakePlayer::start(&bus, STRAWBERRY);
     strawberry.command("status Playing").sync();
@@ -210,7 +196,6 @@ fn only_the_chosen_application_is_shown() {
     host.wait_state(brave, "unavailable", None, secs(5))
         .unwrap();
 
-    // The other way round too: a change in one never shows in the other.
     let mut brave_player = FakePlayer::start(&bus, BRAVE);
     brave_player.command("status Paused").sync();
     host.wait_state(brave, "current", Some("Paused"), HEARTBEAT)
@@ -230,7 +215,6 @@ fn only_the_chosen_application_is_shown() {
 
 #[test]
 fn with_several_instances_the_first_one_found_is_shown() {
-    // Two matching players: the first by name is the one shown.
     let bus = PrivateBus::start();
     let mut later = FakePlayer::start(&bus, "org.mpris.MediaPlayer2.brave.instance9");
     let mut first = FakePlayer::start(&bus, "org.mpris.MediaPlayer2.brave.instance10");
@@ -264,7 +248,6 @@ fn two_buttons_for_the_same_application_show_the_same_thing() {
         .unwrap();
     host.wait_state(two, "current", Some("Playing"), HEARTBEAT)
         .unwrap();
-    // Ending one leaves the other running.
     host.unsubscribe(one);
     host.discard_pending();
     player.command("status Paused");
@@ -281,8 +264,6 @@ fn between_observations_no_cached_state_is_blindly_renewed() {
     let subscription = host.subscribe("strawberry");
     host.wait_state(subscription, "current", Some("Stopped"), secs(5))
         .unwrap();
-    // Starting up looks twice (once when the button appears, once more when the listening is in
-    // place); let that finish, and count from there.
     std::thread::sleep(Duration::from_millis(400));
     let reads = player.reads_of("PlaybackStatus");
     host.discard_pending();
@@ -320,10 +301,9 @@ fn a_player_that_stops_answering_is_marked_stale_and_the_others_carry_on() {
 
     stuck.freeze();
     host.discard_pending();
-    fine.command("status Playing"); // any change makes every visual look again
+    fine.command("status Playing");
     host.wait_state(healthy, "current", Some("Playing"), HEARTBEAT)
         .expect("the healthy one is not held up");
-    // What was known stays, but it is no longer presented as current.
     host.wait_state(hung, "stale", Some("Playing"), secs(3))
         .unwrap();
 
@@ -337,7 +317,6 @@ fn a_player_that_stops_answering_is_marked_stale_and_the_others_carry_on() {
 
 #[test]
 fn a_player_that_froze_without_a_word_is_marked_stale_by_the_slow_check() {
-    // No signal ever reaches the plugin from a frozen player, and nothing else on the bus changes.
     let bus = PrivateBus::start();
     let mut player = FakePlayer::start(&bus, STRAWBERRY);
     player.command("status Playing").sync();
@@ -349,11 +328,9 @@ fn a_player_that_froze_without_a_word_is_marked_stale_by_the_slow_check() {
     let subscription = host.subscribe("strawberry");
     host.wait_state(subscription, "current", Some("Playing"), secs(5))
         .unwrap();
-    // Starting up looks twice (see below); freeze only once the player has been left alone.
     std::thread::sleep(Duration::from_millis(250));
 
     player.freeze();
-    // The check comes, the player does not answer it in time: what was known stays, as stale.
     let within = timing.recheck + timing.refresh_deadline + Duration::from_millis(1500);
     host.wait_state(subscription, "stale", Some("Playing"), within)
         .unwrap_or_else(|seen| panic!("never stale: {seen:?}"));
@@ -385,7 +362,6 @@ fn the_slow_check_leaves_a_healthy_player_as_it_is() {
     {
         assert!(visual.is("current", Some("Stopped")), "{visual:?}");
     }
-    // About eight checks fit; a few are enough to show that they happen.
     let checks = player.reads_of("PlaybackStatus") - reads;
     assert!((3..=12).contains(&checks), "{checks} checks in 1.2 s");
     host.finish().unwrap();
@@ -400,11 +376,8 @@ fn a_player_that_dies_while_it_is_being_read_is_unavailable_and_never_stale() {
     let subscription = host.subscribe("strawberry");
     host.wait_state(subscription, "current", Some("Playing"), secs(5))
         .unwrap();
-    // Starting up looks twice; let that finish.
     std::thread::sleep(Duration::from_millis(250));
 
-    // The next change makes the plugin read the player, and the player ends while it is asked.
-    // What the plugin shows for that read has to be that the player is gone, not that it is slow.
     player
         .command("die PlaybackStatus")
         .command("status Paused");
@@ -449,7 +422,6 @@ fn losing_the_bus_is_unavailable_and_a_bus_that_returns_is_followed_again() {
     host.wait_state(subscription, "current", Some("Stopped"), secs(5))
         .unwrap();
     host.discard_pending();
-    // The player is still there, as far as it knows: the bus is what is gone.
     bus.kill();
     host.wait_state(subscription, "unavailable", None, secs(3))
         .unwrap();
@@ -460,7 +432,6 @@ fn losing_the_bus_is_unavailable_and_a_bus_that_returns_is_followed_again() {
     player.command("status Playing").sync();
     host.wait_state(subscription, "current", Some("Playing"), secs(3))
         .unwrap();
-    // The signals work again on the new connection.
     host.discard_pending();
     player.command("status Paused");
     host.wait_state(subscription, "current", Some("Paused"), HEARTBEAT)

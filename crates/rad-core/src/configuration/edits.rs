@@ -66,7 +66,6 @@ impl Configuration {
                     position,
                     replace,
                 } => {
-                    // Snapshot the whole source before replacement can remove any of it.
                     let (folders, buttons) = duplicate_source(&data, *button)?;
                     let occupied = *data
                         .folders

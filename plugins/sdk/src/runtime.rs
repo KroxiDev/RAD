@@ -1,4 +1,3 @@
-//! Handshake and the dispatch loop.
 use crate::{
     ChoiceList, Envelope, Error, FailureCode, Message, OptionsScope, Outcome, Parameters, Reply,
     Subscription, SubscriptionId, Version, frame,
@@ -26,7 +25,6 @@ pub const MAX_SUBSCRIPTIONS: usize = 32;
 /// explicit `always_loaded`), not a setting negotiated through this configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Plugin id, as in the manifest.
     pub id: String,
     pub version: Version,
     /// Inclusive range of host APIs the plugin supports (`host_min..=host_max` of the manifest).
@@ -57,7 +55,6 @@ impl Config {
     }
 }
 
-/// An action the host asks the plugin to run.
 #[derive(Debug, Clone)]
 pub struct Invoke {
     pub credentials: Option<crate::Credentials>,
@@ -67,7 +64,6 @@ pub struct Invoke {
     pub parameters: Parameters,
 }
 
-/// A request for the current options of a dynamic choice field.
 #[derive(Debug, Clone)]
 pub struct OptionsQuery {
     pub settings: Option<Parameters>,
@@ -138,14 +134,12 @@ where
         subscriptions: Registry::new(MAX_SUBSCRIPTIONS),
     };
     let result = session.serve(&mut input);
-    // The host is gone, so every subscription is over.
     for subscription in session.subscriptions.drain() {
         guarded(|| session.plugin.unsubscribe(subscription.id()));
     }
     result
 }
 
-/// Serves the host over stdin and stdout.
 pub fn run_stdio<P: Plugin>(config: Config, plugin: P) -> Result<(), Error> {
     let output = crate::output::HostOutput::open(1).unwrap_or_else(|_| std::process::exit(74));
     run(config, plugin, std::io::stdin(), output)
@@ -196,7 +190,6 @@ impl<P: Plugin> Session<P> {
                     ) =>
                 {
                     self.credentials.release(revision)?;
-                    // A failed cleanup cannot acknowledge external resources released.
                     catch_unwind(AssertUnwindSafe(|| {
                         self.plugin.credentials_released(revision)
                     }))
@@ -340,7 +333,6 @@ impl<P: Plugin> Session<P> {
     }
 }
 
-/// A panic in a handler fails that request (its `Reply` answers while unwinding) and nothing else.
 fn guarded(handler: impl FnOnce()) {
     let _ = catch_unwind(AssertUnwindSafe(handler));
 }
@@ -358,7 +350,6 @@ fn next_envelope(input: &mut impl Read) -> Result<Option<Envelope>, Error> {
     Ok(Some(envelope))
 }
 
-/// Answers the host's hello. `Ok(None)` if the host left before saying hello.
 fn handshake(
     config: &Config,
     input: &mut impl Read,

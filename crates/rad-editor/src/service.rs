@@ -1,5 +1,3 @@
-//! The runtime as a systemd user service that the editor installs and starts (ADR 0012).
-//! Every call to systemd goes through [`Systemctl`], so nothing here needs a real manager.
 use std::{
     ffi::OsString,
     fs::{File, OpenOptions},
@@ -31,7 +29,6 @@ pub struct Answer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unavailable(pub String);
 
-/// The only door to systemd.
 pub trait Systemctl: Send + 'static {
     /// Runs `systemctl --user <args>`.
     fn run(&self, args: &[&str]) -> Result<Answer, Unavailable>;
@@ -304,7 +301,6 @@ impl<S: Systemctl> Service<S> {
             .run(args)
             .map_err(|Unavailable(why)| Failure::no_systemd(&why))
     }
-    /// A call that must exit 0.
     fn call_ok(&self, args: &[&str]) -> Result<Answer, Failure> {
         let answer = self.call(args)?;
         if answer.code == Some(0) {
@@ -332,7 +328,6 @@ impl<S: Systemctl> Service<S> {
             }))
     }
 
-    /// Installs the runtime and available tray units if missing or changed, then reloads once.
     fn install_units(&self) -> Result<(), Failure> {
         let runtime = sibling_runtime(&self.editor).ok_or_else(|| {
             Failure::could_not_start(format!(
@@ -344,7 +339,6 @@ impl<S: Systemctl> Service<S> {
             UNIT,
             render_unit(TEMPLATE, &runtime).map_err(Failure::could_not_start)?,
         )];
-        // A partial build without the optional tray must not prevent the authority starting.
         if let Some(tray) = self
             .editor
             .parent()
@@ -374,10 +368,6 @@ impl<S: Systemctl> Service<S> {
     }
 
     fn migrate_autostart(&self) -> Result<(), Failure> {
-        // Updating [Install] does not move existing enablement links. Preserve an
-        // enabled user's choice while moving the old early autostart to the
-        // graphical session. Reenable removes the old link first, so keep durable
-        // intent until the new link is confirmed, including across a restart.
         if self.record_autostart_migration()? {
             self.call_ok(&["reenable", UNIT])?;
             if !self.autostart_migration_complete() {
@@ -394,7 +384,6 @@ impl<S: Systemctl> Service<S> {
         Ok(())
     }
 
-    /// Keep the old enabled choice before any command can partially remove its links.
     fn record_autostart_migration(&self) -> Result<bool, Failure> {
         let migration = self.unit_dir.join(".rad-runtime-autostart-migration");
         if self
@@ -434,7 +423,6 @@ impl<S: Systemctl> Service<S> {
         .map_err(|e| Failure::could_not_start(format!("could not finish autostart migration: {e}")))
     }
 
-    /// Installs if needed and starts the unit, with or without autostart.
     pub fn start(&self) -> Result<Option<AutostartWarning>, Failure> {
         let warning = self.install()?;
         self.start_unit()?;
@@ -443,7 +431,6 @@ impl<S: Systemctl> Service<S> {
     /// The user asked again: forgets the failure, then starts once.
     pub fn retry(&self) -> Result<Option<AutostartWarning>, Failure> {
         let warning = self.install()?;
-        // A unit that never failed has nothing to reset, so only a missing systemd matters.
         self.call(&["reset-failed", UNIT])?;
         self.start_unit()?;
         Ok(warning)
@@ -452,7 +439,6 @@ impl<S: Systemctl> Service<S> {
         let answer = self.call(&["start", UNIT])?;
         let state = self.state();
         if answer.code == Some(0) {
-            // Not answering yet is fine; a unit that already failed (75 is not restarted) is not.
             return match state {
                 UnitState::Failed { .. } => {
                     Err(explain(state).expect("a failed unit has a reason"))
@@ -468,12 +454,10 @@ impl<S: Systemctl> Service<S> {
         );
         Err(failure)
     }
-    /// Only enables or disables the unit (installing it first if missing); never starts it.
     pub fn set_autostart(&self, enabled: bool) -> Result<Option<AutostartWarning>, Failure> {
         let mut warning = if enabled {
             self.install()?
         } else {
-            // An explicit opt-out supersedes migration; do not reenable first.
             self.install_units()?;
             self.record_autostart_migration()?;
             None
@@ -538,16 +522,11 @@ fn explain(state: UnitState) -> Option<Failure> {
     }
 }
 
-/// Work the editor asks of its service worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Job {
-    /// Install if needed and start.
     Start,
-    /// Reset a failed unit and start again.
     Retry,
-    /// Say why RAD does not answer.
     Inspect,
-    /// Enable or disable starting RAD with the user's session; never starts it.
     SetAutostart(bool),
 }
 #[derive(Debug, PartialEq, Eq)]

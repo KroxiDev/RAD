@@ -1,4 +1,3 @@
-//! Monotonic actor time and deadlines, preserving input and event ordering.
 use super::{AdmissionError, Authority, Effect, Phase, Rejection};
 
 impl Authority {

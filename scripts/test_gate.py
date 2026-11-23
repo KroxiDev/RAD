@@ -37,7 +37,6 @@ if '--no-run' in args:
             'target':{'name':name,'kind':['test']}}))
     print(json.dumps({'reason':'build-finished','success':True}))
 ''')
-        # Estos comandos son validadores sin efectos en el checkout sintético.
         self.write_executable(self.bin / "rustfmt", "#!/bin/sh\nexit 0\n")
         for name in ("root", "plugins", "official_audio_media", "official_obs", "official_metrics"):
             self.write_executable(self.bin / name, '''#!/usr/bin/env python3
@@ -71,10 +70,10 @@ for name in sys.argv[2:]:
         (self.root / "packaging/tests").mkdir(parents=True)
         trivial_test = "import unittest\nclass Check(unittest.TestCase):\n    def test_fixture(self): pass\n"
         (self.root / "packaging/tests/test_fixture.py").write_text(trivial_test)
-        # El gate prueba su orquestación real; el checkout hijo no se prueba a sí mismo.
-        (self.root / "scripts/test_gate.py").write_text(trivial_test)
-        (self.root / "scripts/test_cache_mtimes.py").write_text(trivial_test)
+        for test_module in (self.root / "scripts").glob("test_*.py"):
+            test_module.write_text(trivial_test)
         self.env = os.environ | {
+            "RAD_COMMENT_BASE": "HEAD",
             "TEST_ROOT": str(self.root),
             "PATH": str(self.bin) + ":" + os.environ["PATH"],
             "PYTHONDONTWRITEBYTECODE": "1",

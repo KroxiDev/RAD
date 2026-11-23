@@ -38,3 +38,20 @@ las versiones de los plugins oficiales; declaran qué versión del contrato desc
 y se actualizan en la misma entrega que la publica. La parte verificable (tipos y
 vectores) sigue con el código en este repo. Plataforma: Linux x86_64 nativo por
 ahora; el campo `targets` deja la puerta abierta.
+
+En un esquema, un campo sólo puede depender de campos anteriores para que las dependencias
+sean acíclicas. Los valores de una lista dinámica pueden seguir guardados mientras su fuente
+está ausente. Se comprueba su representación y la de las dependencias sin exigir que la lista
+esté disponible. Las consultas tienen créditos propios, y un resultado tardío consume su
+crédito sin convertirse en una respuesta de acción. Para una variante etiquetada sin campos se
+usa en Serde una estructura vacía: una variante unitaria aceptaría miembros adicionales.
+
+El inventario de paquetes prerelease lee los metadatos con su esquema de origen y verifica su
+forma para evitar aceptar arrays posicionales como objetos. Reutiliza después la validación de
+manifest y ELF sobre la representación derivada. El binario y los bytes originales se
+conservan. Este puente permite consultar lo instalado sin autorizar la ejecución de un
+protocolo antiguo.
+
+Antes de seleccionar un paquete nuevo o volver al anterior, Authority contrasta el candidato
+con toda la configuración publicada. Al arrancar registra la selección que ya estaba hecha y
+deja la incompatibilidad en los botones afectados para que los demás sigan disponibles.

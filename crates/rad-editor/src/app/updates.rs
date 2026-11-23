@@ -1,8 +1,6 @@
-//! Manual update flow; no global notification path.
 use super::{App, look::Look};
 use eframe::egui;
 impl App {
-    /// Explicit reopen from the coordinator, never a network check.
     pub fn open_update_result(&mut self) {
         self.open_settings(crate::screens::Section::Updates);
         self.update_reopen_ack = true;

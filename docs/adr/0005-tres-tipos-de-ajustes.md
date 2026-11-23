@@ -20,3 +20,8 @@ campo declarase su alcance: complica a autores y editor sin un caso que lo pida.
 
 **Consecuencias:** el formato v2 reserva el lugar de los ajustes de plugins aunque
 el contrato que los usa llegue después. Cada ajuste nuevo declara su tipo.
+
+En el vault, una creación de clave ya publicada cuyo sync no se pudo confirmar conserva el
+resultado incierto. Generar otra clave podría dejar ilegibles los slots. Borrar un slot
+comprueba el archivo que se va a retirar: como la operación reduce la cuota, un hermano
+corrupto no debe impedirla. Al reemplazar un slot sí hay que poder contabilizar el resto.

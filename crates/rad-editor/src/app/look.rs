@@ -1,4 +1,3 @@
-//! Window look derived from the three palette colours; key images never depend on it.
 use crate::theme::Palette;
 use eframe::egui::{self, Color32, CornerRadius, Stroke};
 
@@ -14,9 +13,7 @@ pub(super) struct Look {
     pub hover: Color32,
     pub pressed: Color32,
     pub key: Color32,
-    /// The body of the deck the keys sit in: darker than the window, like the hardware.
     pub bezel: Color32,
-    /// A key with nothing on it.
     pub empty_key: Color32,
     pub line: Color32,
     pub text: Color32,
@@ -28,7 +25,6 @@ pub(super) struct Look {
     pub warn: Color32,
 }
 
-/// `amount` of `towards` blended into `base`, per channel.
 fn mix(base: [u8; 3], towards: [u8; 3], amount: f32) -> Color32 {
     let channel = |i: usize| {
         (f32::from(base[i]) + (f32::from(towards[i]) - f32::from(base[i])) * amount).round() as u8
@@ -120,7 +116,6 @@ impl Look {
     pub fn panel(&self, fill: Color32, margin: i8) -> egui::Frame {
         egui::Frame::new().fill(fill).inner_margin(margin)
     }
-    /// Single-line text field with room to breathe; `hint` shows while it is empty.
     pub fn field<'a>(&self, text: &'a mut String, hint: &str) -> egui::TextEdit<'a> {
         egui::TextEdit::singleline(text)
             .hint_text(hint.to_owned())
@@ -140,7 +135,6 @@ impl Look {
     pub fn dangerous<'a>(&self, text: &str) -> egui::Button<'a> {
         egui::Button::new(egui::RichText::new(text).color(Color32::WHITE)).fill(self.danger)
     }
-    /// A raised block that groups one item, like an action of the selected key.
     pub fn card(&self) -> egui::Frame {
         egui::Frame::new()
             .fill(self.raised)
@@ -155,17 +149,11 @@ pub(super) enum Icon {
     Undo,
     Redo,
     Up,
-    /// A circular arrow: ask again.
     Refresh,
-    /// A magnifying glass: the field searches.
     Search,
-    /// Four small squares: an application.
     Apps,
-    /// A plug: an action a plugin brings.
     Plug,
-    /// Two columns of dots: the row can be dragged.
     Grip,
-    /// A thin cross: take this away.
     Close,
     Moon,
     Sun,
@@ -185,7 +173,6 @@ pub(super) fn paint_icon(painter: &egui::Painter, center: egui::Pos2, icon: Icon
             painter.line(vec![at(-5., 2.5), at(0., -2.5), at(5., 2.5)], stroke);
         }
         Icon::Refresh => {
-            // An arc around the centre with a gap on the right, and a head where it ends.
             let on_circle = |degrees: f32| {
                 let angle = degrees.to_radians();
                 (at(6. * angle.cos(), 6. * angle.sin()), angle)
@@ -210,7 +197,6 @@ pub(super) fn paint_icon(painter: &egui::Painter, center: egui::Pos2, icon: Icon
             );
         }
         Icon::Undo | Icon::Redo => {
-            // Hooked arrow: head on the upper shaft, which turns back under itself.
             let side = if matches!(icon, Icon::Undo) { 1. } else { -1. };
             let at = |x: f32, y: f32| at(x * side, y);
             let mut hook = vec![at(-6.5, -2.5), at(2., -2.5)];
@@ -273,7 +259,6 @@ pub(super) fn paint_icon(painter: &egui::Painter, center: egui::Pos2, icon: Icon
     }
 }
 
-/// Crescent made from horizontal strips between two circles; no font or bitmap asset.
 pub(super) fn paint_moon(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
     let mut mesh = egui::Mesh::default();
     let steps = 48;
@@ -301,7 +286,6 @@ pub(super) fn paint_moon(painter: &egui::Painter, center: egui::Pos2, radius: f3
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// A sun drawn in code, shared by the native action row and its key preview.
 pub(super) fn paint_sun(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
     let stroke = Stroke::new(radius * 0.16, color);
     painter.circle_stroke(center, radius * 0.43, stroke);
@@ -360,12 +344,10 @@ pub(super) fn icon_button_with_id(
     response.on_hover_text(hint)
 }
 
-/// A button whose text ends in a down-pointing triangle: it opens more choices.
 pub(super) fn menu_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.button(format!("{text}  ⏷"))
 }
 
-/// Quiet, borderless button made of a single glyph, for actions that sit next to content.
 pub(super) fn glyph_button(
     ui: &mut egui::Ui,
     look: &Look,
@@ -380,7 +362,6 @@ pub(super) fn glyph_button(
     .on_hover_text(hint)
 }
 
-/// Coloured dot followed by a quiet label: a state, never a control.
 pub(super) fn state_pill(ui: &mut egui::Ui, look: &Look, dot: Color32, label: &str) {
     let font = egui::TextStyle::Body.resolve(ui.style());
     let galley = ui

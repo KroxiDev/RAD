@@ -112,3 +112,5 @@ no introduce red, temporizadores ni mensajes globales. Nunca elimina
 `operation.json`, diagnósticos finales, configuración, vault, plugins, backups o
 artefactos de compilación. Un fallo de mantenimiento no se confunde con éxito de
 una actualización ni autoriza matar procesos o borrar el lock de pacman.
+
+El ensamblado del paquete usa un directorio de staging neutro para evitar grabar rutas personales en BUILDINFO. Cargo compila en el disco del checkout, fuera de ese staging.

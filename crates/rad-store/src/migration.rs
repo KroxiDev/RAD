@@ -1,4 +1,3 @@
-//! The v1 source is preserved before any write-capable PRAGMA or migration.
 use crate::{Store, StoreError, database, digest, ledger};
 use rusqlite::{Connection, params};
 use std::{
@@ -47,7 +46,6 @@ fn preserve(path: &Path, suffix: &str) -> Result<(), StoreError> {
             Err(StoreError::Corrupt)
         };
     }
-    // Unique staging files are never mistaken for the published backup after a crash.
     let mut serial = 0u64;
     let (staging, mut output) = loop {
         let mut name = backup.as_os_str().to_owned();
@@ -74,7 +72,6 @@ fn preserve(path: &Path, suffix: &str) -> Result<(), StoreError> {
     output.sync_all().map_err(|_| StoreError::Io)?;
     #[cfg(test)]
     crate::fault_tests::checkpoint("migration-backup-staged");
-    // hard_link is atomic and never replaces an existing destination.
     match std::fs::hard_link(&staging, &backup) {
         Ok(()) => (),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && same_bytes(path, &backup)? => (),
@@ -83,7 +80,6 @@ fn preserve(path: &Path, suffix: &str) -> Result<(), StoreError> {
     File::open(parent)
         .and_then(|f| f.sync_all())
         .map_err(|_| StoreError::Io)?;
-    // The complete, synced backup now owns these bytes; this redundant link is disposable.
     std::fs::remove_file(&staging).map_err(|_| StoreError::Io)?;
     #[cfg(test)]
     crate::fault_tests::checkpoint("migration-backup-published");
@@ -91,7 +87,6 @@ fn preserve(path: &Path, suffix: &str) -> Result<(), StoreError> {
 }
 
 pub(crate) fn migrate(path: &Path, connection: &mut Connection) -> Result<(), StoreError> {
-    // Read transaction prevents a concurrent writer from changing the bytes being copied.
     let read = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
     let legacy = ledger::read_legacy(&read)?;
     crate::recovery::validate(&read)?;
@@ -100,8 +95,6 @@ pub(crate) fn migrate(path: &Path, connection: &mut Connection) -> Result<(), St
     database::configure(connection)?;
     let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)?;
     let work = (|| -> Result<(), StoreError> {
-        // Configuring connection pragmas requires leaving the read transaction.
-        // Refuse to migrate if another writer changed any byte in that gap.
         if !same_bytes(path, &backup_path(path, ".v1-backup"))?
             || ledger::read_legacy(&tx)? != legacy
         {
@@ -111,7 +104,6 @@ pub(crate) fn migrate(path: &Path, connection: &mut Connection) -> Result<(), St
             .prepare("SELECT id FROM revisions ORDER BY id")?
             .query_map([], |r| r.get(0))?
             .collect::<Result<_, _>>()?;
-        // A usable head is required; corrupt evidence is retained verbatim under hold.
         Store::read_head(&tx, &legacy)?;
         for id in ids {
             let loaded = match Store::read_revision(&tx, id, &legacy) {
@@ -155,7 +147,6 @@ pub(crate) fn migrate(path: &Path, connection: &mut Connection) -> Result<(), St
     Ok(())
 }
 
-/// Upgrade embedded documents while keeping the unchanged SQLite v2 envelope.
 pub(crate) fn migrate_documents(
     path: &Path,
     connection: &mut Connection,

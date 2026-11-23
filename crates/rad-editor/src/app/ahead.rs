@@ -1,6 +1,3 @@
-//! What the editor reads ahead while idle, all at the board's revision: the inspector of
-//! each key on the board, so selecting one shows it at once, and the folders one press away,
-//! so their pictures are read before they are needed.
 use super::string;
 use crate::{
     native::PictureRead,
@@ -10,7 +7,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
 pub(super) struct Ahead {
-    /// Revision of the board everything here was read at.
     revision: String,
     inspections: BTreeMap<String, Inspection>,
     folders: BTreeMap<String, Board>,
@@ -18,7 +14,6 @@ pub(super) struct Ahead {
     asked_folders: BTreeSet<String>,
 }
 impl Ahead {
-    /// A board arrived; what was read at another revision is let go.
     pub(super) fn follow(&mut self, board: &Board) {
         let revision = string(&board.folder["view_revision"]);
         if revision != self.revision {
@@ -28,7 +23,6 @@ impl Ahead {
             };
         }
     }
-    /// Plugins changed what an inspector says without a new revision: read them again.
     pub(super) fn forget_inspections(&mut self) {
         self.inspections.clear();
         self.asked_keys.clear();
@@ -49,7 +43,6 @@ impl Ahead {
             self.folders.insert(string(&folder.folder["id"]), folder);
         }
     }
-    /// The next key on the board whose inspector is not read yet, besides the selected one.
     pub(super) fn due_inspection(&self, board: &Board, selected: Option<&str>) -> Option<String> {
         board
             .buttons
@@ -61,11 +54,9 @@ impl Ahead {
                     && !self.asked_keys.contains(id)
             })
     }
-    /// This key's inspector is being read; if refused, it waits for another revision.
     pub(super) fn asked_inspection(&mut self, id: &str) {
         self.asked_keys.insert(id.to_owned());
     }
-    /// The next folder one press away that is not read yet.
     pub(super) fn due_folder(&self, board: &Board) -> Option<String> {
         self.nearby_folders(board)
             .into_iter()
@@ -74,7 +65,6 @@ impl Ahead {
     pub(super) fn asked_folder(&mut self, id: &str) {
         self.asked_folders.insert(id.to_owned());
     }
-    /// The parent folder, then those the keys enter, in the keys' order.
     fn nearby_folders(&self, board: &Board) -> Vec<String> {
         let entered = board.buttons.iter().filter_map(|key| {
             let inspection = self.inspections.get(key.entity["id"].as_str()?)?;
@@ -92,7 +82,6 @@ impl Ahead {
         }
         folders
     }
-    /// Pictures of the folders one press away that have been read.
     pub(super) fn nearby_pictures(&self, board: &Board) -> Vec<PictureRead> {
         self.nearby_folders(board)
             .iter()
@@ -101,7 +90,6 @@ impl Ahead {
             .collect()
     }
 }
-/// The pictures of a board's keys, in reading order.
 pub(super) fn board_pictures(board: &Board) -> Vec<PictureRead> {
     board
         .buttons

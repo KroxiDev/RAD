@@ -1,4 +1,3 @@
-//! Private fake-bus gate only: one connection must remain read-only after GetAll.
 use gio::{Cancellable, DBusCallFlags, DBusConnection, DBusConnectionFlags, DBusError};
 use glib::{Variant, VariantTy, prelude::ToVariant};
 use std::{
@@ -40,7 +39,6 @@ fn private_address(root: &Path) -> Option<String> {
             return None;
         }
     }
-    // Both sockets must be the ones the controller created in its new private gate.
     for name in ["bus", "filtered.sock"] {
         let metadata = fs::symlink_metadata(root.join(name)).ok()?;
         if !metadata.file_type().is_socket() || metadata.uid() != uid {
@@ -99,7 +97,6 @@ fn access_denied(result: Result<Variant, glib::Error>) -> bool {
 
 fn run(root: &Path) -> Option<serde_json::Value> {
     let address = private_address(root)?;
-    // This is the only connection constructed: every subsequent call reuses it.
     let connection = DBusConnection::for_address_sync(
         &address,
         DBusConnectionFlags::AUTHENTICATION_CLIENT | DBusConnectionFlags::MESSAGE_BUS_CONNECTION,

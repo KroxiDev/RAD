@@ -1,4 +1,3 @@
-//! Converts effective API views back into editable per-face styles.
 use rad_api::{StateFace, TextPosition, TextStyle};
 use serde_json::Value;
 

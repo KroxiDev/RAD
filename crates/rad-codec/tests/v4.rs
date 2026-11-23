@@ -49,7 +49,6 @@ fn legacy_sleep_roundtrips_current_and_is_rejected_under_every_version_before_v4
             Err(CodecError::InvalidDocument)
         );
     }
-    // Hold cannot be fabricated by a restored document, either.
     let mut data = decode_data(&bytes).unwrap();
     data.buttons[0].gesture = Gesture::Hold;
     assert_eq!(

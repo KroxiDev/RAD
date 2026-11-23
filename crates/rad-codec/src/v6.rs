@@ -1,4 +1,3 @@
-//! Closed v6 importer: the base position used to govern every state face.
 use crate::{CodecError, document, v6_document};
 pub(crate) fn import(bytes: &[u8]) -> Result<document::Document, CodecError> {
     let old: v6_document::Document =

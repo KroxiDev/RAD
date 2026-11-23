@@ -2,7 +2,6 @@ use rad_plugin_package::{Candidate, Error};
 
 #[test]
 fn rejects_truncated_header() {
-    // RADP header is exactly 20 bytes, independently of its payload lengths.
     let header = [
         b'R', b'A', b'D', b'P', 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1,
     ];
@@ -31,7 +30,6 @@ fn container(manifest: &[u8], executable: &[u8]) -> Vec<u8> {
 }
 
 fn native_package() -> Vec<u8> {
-    // Read a real linked ELF fixture, never launch it to validate the package.
     let executable = std::fs::read(std::env::current_exe().unwrap()).unwrap();
     container(MANIFEST, &executable)
 }
@@ -75,7 +73,6 @@ fn enforces_exact_header_and_bounded_payload_before_contract_parsing() {
         Candidate::parse(&extra, 1, TARGET),
         Err(Error::InvalidSize)
     ));
-    // Contract major 0 shares no supported version with this major-1 manifest.
     assert!(matches!(
         Candidate::parse(&valid, 0, TARGET),
         Err(Error::Contract(
@@ -98,7 +95,6 @@ fn rejects_non_native_or_malformed_elf_without_execution() {
         b"#!/bin/sh\nexit 0\n".to_vec(),
         native[..63].to_vec(),
     ];
-    // ELF64 LE current version, Linux/System V ABI, ET_EXEC/ET_DYN, x86-64.
     for (offset, value) in [
         (0, 0),
         (4, 1),
@@ -168,7 +164,6 @@ fn accepts_exact_size_limits_but_rejects_one_more_and_invalid_contracts() {
     assert_eq!(candidate.manifest_bytes(), manifest);
     assert_eq!(candidate.executable(), executable);
     assert_eq!(candidate.manifest().id, "fixture.package");
-    // Package total and declared lengths are independently bounded.
     bytes.push(0);
     assert!(matches!(
         Candidate::parse(&bytes, 1, TARGET),

@@ -47,8 +47,6 @@ fn sink_json(index: usize, dev: &Dev) -> Value {
     })
 }
 
-/// A source as the real listing shows it: monitors carry the monitored sink in `monitor_source`,
-/// plain sources an empty string.
 fn source_json(index: usize, name: &str, description: &str, mute: bool, monitored: &str) -> Value {
     json!({
         "index": index, "state": "SUSPENDED", "name": name, "description": description,
@@ -110,7 +108,6 @@ fn mutate(dir: &Path, kind: &str, target: &str, value: &str) {
         } else {
             target
         };
-        // Like the real server, a monitor source can be muted by name: it is the sink's mute.
         let monitored = name.strip_suffix(".monitor").filter(|_| kind == "source");
         let dev = match monitored {
             Some(sink) => state.sinks.iter_mut().find(|d| d.name == sink)?,
@@ -139,8 +136,6 @@ fn mutate(dir: &Path, kind: &str, target: &str, value: &str) {
 }
 
 fn subscribe(dir: &Path) -> ! {
-    // Only events after this point are reported, like the real command; the log line below is
-    // written afterwards so a test that has seen it knows the starting point is fixed.
     let mut seen = fs::metadata(file(dir, "events.log"))
         .map(|m| m.len())
         .unwrap_or(0);

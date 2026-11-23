@@ -1,4 +1,3 @@
-//! Technical facts the runtime reports about itself, worded for Advanced and «View details».
 use serde_json::Value;
 
 /// `YYYY-MM-DD HH:MM:SS` for a Unix time in milliseconds shifted by `offset_s` seconds.

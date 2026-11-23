@@ -250,3 +250,6 @@ Estas piezas parecen simplificables y no lo son:
 | [0021](adr/0021-estados-de-visuales-y-documento-v6.md) | Dos estados observados por visual, vínculo declarativo con acciones y documento v6 |
 | [0022](adr/0022-estilo-del-texto-y-documento-v7.md) | Estilo del texto independiente por cara, posición oculta y documento v7 |
 | [0023](adr/0023-identidad-de-actualizacion-y-entorno-de-construccion.md) | Identidad de actualización estable y entorno real de construcción declarado por separado |
+| [0024](adr/0024-lecturas-y-borradores-del-editor.md) | Coherencia de las lecturas y los borradores del editor |
+| [0025](adr/0025-observacion-en-los-plugins-oficiales.md) | Observación y recursos de los plugins oficiales |
+| [0026](adr/0026-aislamiento-y-evidencia-de-pruebas.md) | Aislamiento y evidencia de las pruebas |

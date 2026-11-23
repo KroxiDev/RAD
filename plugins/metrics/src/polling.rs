@@ -1,4 +1,3 @@
-//! One worker per plugin. The timer never executes driver code or joins that worker.
 use crate::{
     presentation::{Presentation, Source},
     readings::Memory,
@@ -16,7 +15,6 @@ use std::{
 pub const INTERVAL: Duration = Duration::from_secs(1);
 pub const MAX_AGE: Duration = Duration::from_millis(1500);
 
-/// Private resource demand, including releases coalesced before the worker wakes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Demand {
     pub sources: [bool; 4],
@@ -102,7 +100,6 @@ impl Poller {
         std::thread::Builder::new()
             .name("metrics-reader".into())
             .spawn(move || {
-                // Construction, reconciliation (including unload), and reads share this worker.
                 let Ok(mut request) = requests.recv() else {
                     return;
                 };
@@ -146,13 +143,11 @@ impl Poller {
             })
         })
     }
-    /// Monotonic time from one fixed origin, not wall-clock time.
     pub(crate) fn tick_demand(&mut self, now: Duration, demand: Demand) -> Option<Observation<'_>> {
         if demand != self.demand {
             self.sample = None;
             self.demand = demand;
         }
-        // Deadline is checked before receiving: a late result never regains freshness.
         if self
             .pending
             .is_some_and(|started| now.saturating_sub(started) >= MAX_AGE)
@@ -168,7 +163,6 @@ impl Poller {
                 self.sample = Some((started, sample));
             }
             let sample = demand.active() && now >= self.next;
-            // Even empty demand must reach a previously activated reader to release resources.
             let reconcile = self.delivered.is_some_and(|last| last != demand);
             if self.pending.is_none()
                 && (sample || reconcile)
@@ -195,7 +189,6 @@ impl Poller {
             sample,
         })
     }
-    /// No idle timer once release has been acknowledged. A blocked reader remains terminal.
     pub(crate) fn wake_after(&self, now: Duration) -> Option<Duration> {
         let running = !self.stopped.load(Ordering::Acquire);
         let mut wait = if running && self.pending.is_some() {

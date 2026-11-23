@@ -1,4 +1,3 @@
-//! Handshake and protocol discipline of the SDK loop.
 mod support;
 use rad_plugin_sdk::{
     ChoiceList, Error, Invoke, OptionsQuery, Outcome, Plugin, Reply, Subscription, SubscriptionId,
@@ -130,7 +129,6 @@ fn messages_only_a_plugin_may_send_are_violations_after_the_handshake() {
         host.send(2, message.clone());
         assert!(host.outcome().is_err(), "{message}");
     }
-    // A second hello and a request from another generation are violations too.
     let mut host = Host::start(config(1..=1), Inert);
     host.handshake(1);
     host.hello(1);

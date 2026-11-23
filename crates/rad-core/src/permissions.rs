@@ -1,7 +1,5 @@
 //! Pure automation permissions, not an OS security boundary.
-//! Permission administration and invocation admission belong to future adapters.
 
-/// A complete, valid Consulta/Modificar/Ejecutar set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Permissions {
     consult: bool,

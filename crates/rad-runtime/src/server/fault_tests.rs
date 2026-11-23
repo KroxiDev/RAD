@@ -901,8 +901,6 @@ fn retained_official_converter_does_not_hold_text_visual_core_or_server_and_reap
         let cover_button = button(&mut editor, 1, "Cover", "wait", json!({"milliseconds":0}));
         call(&mut editor, "edit", json!({"changes":[{"kind":"set","id":cover_button,"field":"visual","value":{"type":"org.rad.media#now_playing","parameters":{"schema_version":1,"values":{"player":"cover"}}}}]}));
         let mut entered = [0]; gate.read_exact(&mut entered).expect("the official converter must accept and retain real cover bytes"); assert_eq!(entered, [b'E']);
-        // A changed value proves progress of the unrelated official reader, not
-        // merely a cached visual renewed by the SDK heartbeat.
         text.command("status Paused");
         await_value(&mut editor, "plugin_visual", json!({"id":text_button}), |v| v["availability"] == "current" && v["text"] == "Paused");
         for _ in 0..3 {

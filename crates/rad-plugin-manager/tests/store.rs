@@ -44,7 +44,6 @@ fn update_rollback_reinstall_uninstall_retain_only_one_previous() {
         (Operation::Install, 1, None),
         (Operation::Update(id.clone()), 2, Some(1)),
         (Operation::Rollback(id.clone()), 1, Some(2)),
-        // Reinstalling the selected version repairs it; the real previous one survives.
         (Operation::Reinstall(id.clone()), 1, Some(2)),
     ] {
         let bytes = support::package(version);
@@ -116,7 +115,7 @@ fn corrupt_journal_never_authorizes_deleting_preexisting_slot() {
     let bytes = support::package(1);
     let _change = manager.prepare(Operation::Install, Some(&bytes)).unwrap();
     drop(manager);
-    let path = dir.0.join("journal.json"); // Build original canonical JSON, changing only the numeric slot.
+    let path = dir.0.join("journal.json");
     let original = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
     std::fs::write(&path, original.replace("\"new_slot\":1", "\"new_slot\":99")).unwrap();
     let foreign = dir.0.join("v0000000000000063");

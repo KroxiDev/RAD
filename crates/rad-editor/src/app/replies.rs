@@ -1,4 +1,3 @@
-//! Apply replies from the main worker without changing the order of UI effects.
 use super::{App, string, tr, visual_type};
 use crate::{
     native::{Job, Reply, TransferKind},
@@ -9,7 +8,6 @@ use serde_json::{Value, json};
 use std::{ops::ControlFlow, time::Instant};
 
 impl App {
-    /// A handler can end this pump turn before service, reads, or styling run.
     pub(super) fn pump_replies(&mut self, ctx: &egui::Context) -> ControlFlow<()> {
         let polled = self.worker.poll();
         match &polled {
@@ -38,13 +36,9 @@ impl App {
             }
             let machine_failed = matches!(&event.result, Ok(Reply::MachineFailed(_)));
             self.finish_application_catalog(&event.result);
-            // Some handlers finish this turn early; keep newly invalidated work runnable.
             ctx.request_repaint();
             self.palette = event.palette;
-            // One recovery attempt per lost RPC, including a definitely-unsent mutation.
-            // A failed Connect starts disconnected, so it cannot trigger a retry loop.
             let connection_lost = self.connected && !event.connected;
-            // Connecting says nothing of the worker's health; any other answer does.
             if matches!(&event.result, Ok(reply) if !matches!(reply, Reply::Connected)) {
                 self.worker_respawn.answered();
             }
@@ -55,7 +49,6 @@ impl App {
                     self.plugins.form_pending = false;
                     if r.status == rad_client::response::Status::Applied {
                         self.plugins.form = None;
-                        // A plugin's settings come back with what was just saved.
                         self.plugins.settings_asked = None;
                         self.force = true;
                         self.inspect_needed = self.selected().is_some();
@@ -92,14 +85,12 @@ impl App {
                 Ok(Reply::PluginVisuals { revision, visuals }) => {
                     self.accept_plugin_visuals(ctx, &revision, visuals);
                 }
-                // A read ahead that was refused is not asked again until the board changes.
                 Err(_) if event.background && event.connected => {}
                 Ok(Reply::MachineFailed(e)) if e.code == "recovery_required" => {
                     self.machine_request_failed();
                     self.enter_recovery();
                 }
                 Err(e) | Ok(Reply::MachineFailed(e)) => {
-                    // Other worker jobs may precede a queued machine change.
                     if machine_failed {
                         self.machine_request_failed();
                     }
@@ -202,7 +193,6 @@ impl App {
                     {
                         self.reread_appearance();
                     } else if e.code == "runtime_unavailable" {
-                        // The bar already says so, next to the way out.
                         self.say("");
                     } else {
                         self.warn(reason);
@@ -244,8 +234,6 @@ impl App {
                         {
                             self.settings = r.status["settings"].clone();
                         } else if let Some(settings) = r.status["settings"].as_object() {
-                            // A native action may publish brightness while Settings is open.
-                            // Follow untouched fields without discarding the user's drafts.
                             for (field, value) in settings {
                                 if self.settings.get(field) == self.status["settings"].get(field) {
                                     self.settings[field] = value.clone();
@@ -277,8 +265,6 @@ impl App {
                         self.pictures.changed();
                         if changed_revision || changed_folder {
                             self.board_since = Instant::now();
-                            // A face stays until its new one arrives, while its key still
-                            // shows the same visual.
                             let old = self.board.as_ref();
                             self.plugins.visuals.retain(|id, _| {
                                 old.is_some_and(|old| {
@@ -287,7 +273,6 @@ impl App {
                             });
                         }
                         self.ahead.follow(&board);
-                        // The selected key's inspector came with the board: both change at once.
                         let fresh = r.inspection.filter(|inspection| {
                             self.ahead.keep_inspection(&board, inspection);
                             crate::session::coherent(&board, inspection)
@@ -329,8 +314,6 @@ impl App {
                         return ControlFlow::Break(());
                     };
                     if !crate::session::coherent(board, &v) {
-                        // Newer than the board: the two are read again together, and the
-                        // pair on screen stays until then.
                         self.force = true;
                         return ControlFlow::Break(());
                     }
@@ -342,7 +325,6 @@ impl App {
                 Ok(Reply::InspectedAhead(v)) => {
                     if let Some(board) = &self.board {
                         self.ahead.keep_inspection(board, &v);
-                        // A key selected while it was being read takes it at once.
                         if self.inspection.is_none()
                             && crate::session::coherent(board, &v)
                             && v.button["id"].as_str() == self.control.selected()
@@ -353,7 +335,7 @@ impl App {
                     }
                 }
                 Ok(Reply::FolderBoard(folder)) => self.ahead.keep_folder(folder),
-                Ok(Reply::Response { operation, .. }) if operation == "launcher_catalog" => {} // Handled by finish_application_catalog.
+                Ok(Reply::Response { operation, .. }) if operation == "launcher_catalog" => {}
                 Ok(Reply::Response {
                     operation,
                     response: r,
@@ -435,8 +417,6 @@ impl App {
                         self.say(tr(self.es, "Preparing — not yet activated"));
                         return ControlFlow::Break(());
                     }
-                    // The worker decides against what the runtime now holds: the key takes
-                    // the icon only if that application is its top action and it has no image.
                     if operation == "add_action"
                         && let Some((button, application)) = self.icon_candidate.take()
                     {
@@ -472,7 +452,6 @@ impl App {
                         }
                         rad_client::response::Status::Applied => {
                             if matches!(operation.as_str(), "undo" | "redo") {
-                                // An explicit history change replaces the local draft on reread.
                                 self.draft.source = None;
                                 self.saved_draft = None;
                                 self.unknown_saves.clear();
@@ -495,7 +474,6 @@ impl App {
                         let Some(pixels) = pixels else {
                             continue;
                         };
-                        // One that arrives with its key on screen fades in.
                         let on_show = self.board.as_ref().is_some_and(|board| {
                             board
                                 .buttons

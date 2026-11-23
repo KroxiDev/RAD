@@ -1,5 +1,3 @@
-//! The audio plugin serving stdin/stdout like the real binary, but driving the fake `pactl` named
-//! by its first argument against the directory in `XDG_RUNTIME_DIR`. For process-level tests.
 use rad_plugin_audio::{AudioPlugin, Pactl, Timing, config};
 
 fn main() {

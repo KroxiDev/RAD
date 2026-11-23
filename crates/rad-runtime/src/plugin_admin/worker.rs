@@ -49,7 +49,6 @@ pub(super) fn run(
                 Reply::Aborted(result)
             }
             Job::Spawn { id, ticket } => {
-                // Linux ELF via retained executable descriptor; no arbitrary package path.
                 let file = m.executable(&id);
                 let mut command = match &file {
                     Ok(file) => Command::new(format!("/proc/self/fd/{}", file.as_raw_fd())),
@@ -79,7 +78,6 @@ fn prepare(
         .as_deref()
         .map(rad_plugin_manager::GithubSource::parse)
         .transpose()?;
-    // Only the identity of the confirmed origin matters; the Admin already vetted the request.
     let replaces = request
         .replaces_source
         .as_deref()
@@ -132,7 +130,6 @@ fn open_store(root: &std::path::Path) -> Result<Manager, Error> {
 fn sync_parent(parent: &std::fs::File, _root: &std::path::Path) -> Result<(), Error> {
     #[cfg(test)]
     {
-        // Private, thread-local fault only: never selected by product configuration.
         assert!(
             _root.join("index.json").is_file(),
             "parent sync occurs after initialization, before usable Boot"

@@ -4,7 +4,6 @@ use rad_plugin_metrics::readings::Cpu;
 fn aggregate_cpu_excludes_guest_and_detects_resets_and_idle() {
     let first = Cpu::parse("cpu 100 0 20 800 10 5 5 60 70 0\ncpu0 0").unwrap();
     let next = Cpu::parse("cpu 120 0 30 850 20 5 5 70 90 0\n").unwrap();
-    // 100 ticks total: idle+iowait 60; busy including steal 40.
     assert_eq!(next.percent_since(first), Some(40));
     assert_eq!(first.percent_since(next), None);
     assert_eq!(next.percent_since(next), None);

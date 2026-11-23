@@ -1,4 +1,3 @@
-//! Round-robin admission: a stream of invalidations cannot starve an image or transfer.
 #[derive(Default)]
 pub struct Schedule {
     next: usize,

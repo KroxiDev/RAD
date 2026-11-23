@@ -1,11 +1,9 @@
-//! Stable release selection; all external responses are bounded and validated.
 use crate::{Cancellation, Candidate, Error, ReleaseMetadata};
 
 /// Injected source for controlled contract tests; production uses only the fixed official HTTPS origin.
 pub trait Source {
     fn get(&mut self, url: &str, limit: usize, cancel: &Cancellation) -> Result<Vec<u8>, Error>;
 }
-/// Selects the highest eligible package, not the latest publication date.
 pub fn check_with(
     source: &mut impl Source,
     installed: &str,

@@ -162,7 +162,6 @@ enum Change {
     Gesture(ShortId, rad_core::configuration::Gesture),
     Name(ShortId, String),
     Visual(ShortId, VisualSource),
-    /// Text and image always; the text position only when the edit names it.
     Appearance {
         states: Option<std::collections::BTreeMap<String, rad_core::configuration::StateFace>>,
         id: ShortId,
@@ -204,7 +203,6 @@ fn convert_change(change: &rad_api::Change) -> Checked<Change> {
             } else {
                 8192
             };
-            // Account for the value, not the discriminator added by the typed edit.
             if serde_json::to_vec(
                 &serde_json::to_value(edit).map_err(|_| "invalid_request")?["value"],
             )
@@ -397,7 +395,6 @@ fn parameter_bytes(value: &rad_api::PluginParameters) -> Checked<Vec<u8>> {
     if bytes.len() > 16384 {
         return Err("invalid_request");
     }
-    // Manifest-specific validation is performed once by Authority before Persist.
     serde_json::from_slice::<rad_plugin_contract::Parameters>(&bytes)
         .map_err(|_| "invalid_request")?;
     Ok(bytes)

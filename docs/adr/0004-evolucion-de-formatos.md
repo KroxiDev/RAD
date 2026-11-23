@@ -30,3 +30,10 @@ nueva lleva al modo recuperación con «Actualiza RAD»
 **Consecuencias:** con una copia v1, un script que ya fallaba en el origen, por
 apuntar a un ID borrado por encima del máximo presente, podría acertar a un botón
 nuevo. Es un límite declarado de v1.
+
+El importador lee primero los bytes con el esquema cerrado de su versión. Convertirlos
+directamente en un mapa JSON perdería la evidencia de campos duplicados. Para la migración del
+Store v1, el respaldo sincronizado se publica con un enlace que no sobrescribe evidencia
+anterior. Al cambiar la configuración de SQLite entre transacciones se comprueba que los bytes
+originales y el registro siguen siendo los respaldados. [Migración de
+Store](../../crates/rad-store/src/migration.rs)

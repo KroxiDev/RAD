@@ -50,7 +50,6 @@ pub(crate) fn reconcile(connection: &mut Connection, pending: &Pending) -> Commi
         let barrier: i64 = tx.query_row("SELECT barrier FROM meta WHERE singleton=1", [], |r| {
             r.get(0)
         })?;
-        // A different stored value is mandatory: an identical UPDATE may perform no sync.
         let next = barrier.checked_add(1).ok_or(StoreError::Capacity)?;
         tx.execute("UPDATE meta SET barrier=?1 WHERE singleton=1", [next])?;
         Ok(applied)

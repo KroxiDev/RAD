@@ -107,7 +107,6 @@ class MetricsWorld(COMMON.World):
         self.executable_roles, self.hashes = {}, hashes
         self.observations = []
         root.mkdir(mode=0o700)
-        # Subprocess.run kills/reaps on timeout; defer cancellation until it returns.
         with DESKTOP.registered_spawn():
             result = subprocess.run(seed_command(root), env={'PATH':'/usr/bin:/bin'},
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log,
@@ -135,7 +134,6 @@ class MetricsWorld(COMMON.World):
         self.visual_count = count
         self.events.append(dict(event='transition', visuals=count, ns=time.monotonic_ns()-epoch,
             includes='typed client connect, edit and host readiness; not metric readiness'))
-        # CPU requires two samples; missing GPU is legitimate evidence, not a timeout.
         time.sleep(2)
 
     def executable_role(self, process):
@@ -173,7 +171,6 @@ class MetricsWorld(COMMON.World):
                 values.append(process)
             except FileNotFoundError:
                 continue
-        # Incomplete/session-escaped trees must not produce a passing budget.
         values = attribute_processes(values, roles, active=self.visual_count > 0)
         if sum(p['role'] == 'runtime' for p in values) != 1:
             raise ValueError('runtime missing from its own process tree')
@@ -199,8 +196,6 @@ class MetricsWorld(COMMON.World):
         self.events.append(dict(event='phase_begin', phase=phase, visuals=self.visual_count))
         epoch, tick, next_visual = time.monotonic(), 0, 0.
         with COMMON.Bridge(self) as peer:
-            # Record all configured visual bindings once; subsequent samples use
-            # one representative per shared source to avoid a polling-heavy load.
             initial = self.observe_visuals(peer, phase, all_visuals=True)
             self.events.append(dict(event='initial_visual_availability', **initial))
             while True:
@@ -240,7 +235,7 @@ def run_case(out, repetition, seconds, interval, hashes):
             world.__init__(out/f'm{repetition}', log, hashes)
             world.start_runtime()
             world.configure_buttons()
-            world.stop_runtime()  # Setup/editing history is outside the measured PID.
+            world.stop_runtime()
             world.start_runtime()
             time.sleep(1)
             world.window('installed', seconds, interval, raw)

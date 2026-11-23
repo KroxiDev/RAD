@@ -1,4 +1,3 @@
-//! Plugin presentation only; publication/activation belong to the runtime.
 use super::{
     App, Job,
     look::{Icon, Look, icon_button},
@@ -10,7 +9,6 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 use std::collections::BTreeMap;
-/// Width of the list of installed plugins; the chosen one takes the rest.
 const LIST_WIDTH: f32 = 280.;
 /// How long after the board changes a plugin face may be missing before it reads unavailable.
 const PENDING_FACE: std::time::Duration = std::time::Duration::from_secs(1);
@@ -31,7 +29,6 @@ pub(super) struct PluginUi {
     pub admin_pending: bool,
     pub form_pending: bool,
     pub form_loading: bool,
-    // Only one load is admitted until its result is consumed, even if invalidated.
     form_load_current: bool,
     pub settings_reload: Option<String>,
     pub log_selected: String,
@@ -46,7 +43,6 @@ pub(super) struct PluginUi {
     pub manifest_pending: Option<String>,
     pub manifest_invalidated: bool,
     manifest_request: Option<String>,
-    /// Last ticket given to a question about a list, so no answer is taken for another's.
     pub tickets: u64,
     source: String,
     trusted: bool,
@@ -55,21 +51,15 @@ pub(super) struct PluginUi {
     password_request: Option<(String, Vec<String>)>,
     update_request: bool,
     retry_request: Option<String>,
-    /// Remove, reinstall, roll back or install from a link: clicked, not yet sent.
     operation_request: Option<&'static str>,
-    /// The current release of an official plugin, clicked to install.
     official_install: Option<&'static str>,
-    /// The user agreed to the origin change on display.
     confirmed: bool,
-    /// The plugin whose settings were last asked for, so they are asked once per visit.
     pub settings_asked: Option<String>,
-    /// An update or reinstall waiting for the user to agree to a different origin.
     confirmation: Option<Confirmation>,
     /// The last operation sent to the administration, to repeat it once confirmed.
     submitted: Option<&'static str>,
     schedule: crate::schedule::Schedule,
 }
-/// An origin change the user is looking at, for the plugin and link it was raised for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Confirmation {
     operation: &'static str,
@@ -78,7 +68,6 @@ struct Confirmation {
     change: SourceChange,
 }
 impl PluginUi {
-    /// Invalidating a load does not release its credit until the result is consumed.
     pub fn clear_form(&mut self) {
         self.form = None;
         self.form_load_current = false;
@@ -101,8 +90,6 @@ impl PluginUi {
             .map(|entry| entry.texts.clone())
             .unwrap_or_default()
     }
-    /// The worker died with these requests unanswered. None is repeated: whatever depended on
-    /// an answer stops waiting for it, and the state is read again.
     pub fn abandon_pending(&mut self) {
         if self.form_pending
             && let Some((FormTarget::Settings(id), _)) = self.form.as_ref()
@@ -193,7 +180,6 @@ impl PluginUi {
             && self.status["locked"] != true
             && matches!(self.status["state"].as_str(), Some("idle" | "failed"))
     }
-    /// «Add plugin» instead of an installed one, with an empty link.
     fn add(&mut self) {
         self.confirmation = None;
         self.selected.clear();
@@ -218,8 +204,6 @@ impl PluginUi {
             .iter()
             .find(|v| v["id"] == self.selected)
     }
-    /// What the administration should receive for `operation`, or `None` when the user must
-    /// first agree to an update that comes from another origin than the registered one.
     fn next_admin_request(&mut self, operation: &'static str) -> Option<crate::Request> {
         if matches!(operation, "update" | "reinstall")
             && let Some(change) = SourceChange::between(
@@ -238,20 +222,16 @@ impl PluginUi {
         }
         Some(self.admin_request(operation, None))
     }
-    /// The origin change on display, while the plugin and link it was raised for are still
-    /// the ones selected and typed.
     fn pending_confirmation(&self) -> Option<&Confirmation> {
         self.confirmation
             .as_ref()
             .filter(|c| c.plugin == self.selected && c.source == self.source)
     }
-    /// The user agreed to the origin change on display: the request that carries it.
     fn confirm(&mut self) -> Option<crate::Request> {
         let confirmation = self.pending_confirmation()?.clone();
         self.confirmation = None;
         Some(self.admin_request(confirmation.operation, Some(&confirmation.change)))
     }
-    /// The runtime refused an update because the origin changed; ask about the two it names.
     pub(super) fn source_refused(&mut self, change: SourceChange) {
         if let Some(operation) = self.submitted {
             self.confirmation = Some(Confirmation {
@@ -383,7 +363,6 @@ fn update_source(item: &Value) -> Option<(String, bool)> {
         .flatten()
         .map(|source| (source, false))
 }
-/// An operation under way: how far its download is, or only that it is working.
 fn operation_progress(
     ui: &mut egui::Ui,
     status: &Value,
@@ -402,8 +381,6 @@ fn operation_progress(
     ui.add(bar);
     ui.add_space(6.);
 }
-/// Left column: «Add plugin», then every installed plugin with its state and version. The
-/// manager admits at most 32; the list scrolls, so none is out of reach.
 fn plugin_list(
     ui: &mut egui::Ui,
     plugins: &mut PluginUi,
@@ -448,8 +425,6 @@ fn plugin_list(
         });
     true
 }
-/// Top of the chosen plugin: its name, state and version, the action its state asks for,
-/// and the question when an update would come from another origin.
 fn plugin_summary(
     ui: &mut egui::Ui,
     plugins: &mut PluginUi,
@@ -531,7 +506,6 @@ fn plugin_summary(
         }
     });
 }
-/// Bottom of the chosen plugin: Remove, and its details with the rarely needed operations.
 fn plugin_more(
     ui: &mut egui::Ui,
     look: &Look,
@@ -589,7 +563,6 @@ fn plugin_more(
         });
     });
 }
-/// «Add plugin»: each official plugin with one button, or another one from its link.
 fn add_plugin(
     ui: &mut egui::Ui,
     look: &Look,
@@ -642,7 +615,6 @@ fn add_plugin(
         plugins.operation_request = Some("install");
     }
 }
-/// Installing an official plugin: its current release, trusted by the click itself.
 fn official_request(source: &str) -> crate::Request {
     crate::plugins::admin_request(
         rad_api::PluginOperation::Install,
@@ -652,7 +624,6 @@ fn official_request(source: &str) -> crate::Request {
         None,
     )
 }
-/// Conservative public-source projection; the runtime still validates the package and source.
 fn installation_source(origin: &str) -> Option<String> {
     if origin.len() > 1024 {
         return None;
@@ -689,8 +660,6 @@ fn installation_source(origin: &str) -> Option<String> {
     )
 }
 
-/// Shows eight published dependencies per frame, including an explicit tail navigator.
-/// Imported metadata is only a suggestion; preparing never submits an install or trusts it.
 fn dependency_list(
     ui: &mut egui::Ui,
     plugins: &mut PluginUi,
@@ -892,7 +861,6 @@ impl App {
         operation_progress(ui, &self.plugins.status, self.es);
         let idle = self.plugins.can_administer(self.connected);
         if let Some((id, slots)) = dependency_list(ui, &mut self.plugins, idle, self.es) {
-            // The password is typed next to the plugin that asks for it.
             self.plugins.select(&id);
             self.plugins.password_request = Some((id, slots));
         }
@@ -948,11 +916,9 @@ impl App {
         });
         self.plugin_intents();
     }
-    /// The chosen plugin: summary, password or settings, then Remove and details.
     fn plugin_detail(&mut self, ui: &mut egui::Ui, look: &Look, idle: bool) {
         plugin_summary(ui, &mut self.plugins, idle, self.es);
         let id = self.plugins.selected.clone();
-        // A plugin's settings belong to it: choosing another one closes them.
         let shown = match &self.plugins.form {
             Some((FormTarget::Settings(form), _)) => Some(form.clone()),
             _ => None,
@@ -982,13 +948,11 @@ impl App {
                 .selected_item()
                 .is_some_and(|item| item["has_settings"] == true)
         {
-            // Its settings are shown with it, asked for once per visit.
             self.plugins.settings_asked = Some(id.clone());
             self.open_plugin_form(&id, None, FormTarget::Settings(id.clone()));
         }
         plugin_more(ui, look, &mut self.plugins, idle, self.es);
     }
-    /// What the clicks of this frame asked for, sent once drawing is over.
     fn plugin_intents(&mut self) {
         if let Some(plugin_id) = self.plugins.manifest_request.take()
             && self.command(Job::Request(crate::Request::PluginManifest {
@@ -1035,12 +999,9 @@ impl App {
             self.plugins.admin_pending = true;
             self.plugins.trusted = false;
             self.plugins.submitted = Some(operation);
-            // Keep the selected origin visible; backend status confirms persisted consent.
         }
     }
 
-    /// What the list of actions calls the plugin type `type_key`; the key itself when the
-    /// plugin no longer offers it.
     pub(super) fn plugin_label(&self, type_key: &str) -> String {
         self.plugins
             .catalog
@@ -1055,8 +1016,6 @@ impl App {
             .and_then(|i| i.appearance["visual_type"].as_str())
             .map(str::to_owned)
     }
-    /// The appearance row has something to offer: a plugin that can draw keys, or one
-    /// already drawing this key.
     pub(super) fn appearance_visible(&self) -> bool {
         self.connected
             && !self.plugins.form_pending
@@ -1068,8 +1027,6 @@ impl App {
                     .iter()
                     .any(|entry| entry.visual && entry.ready))
     }
-    /// Who draws the key: Manual (its own text and image) or a plugin, chosen from one list;
-    /// a plugin's settings open next to it.
     pub(super) fn appearance_control(&mut self, ui: &mut egui::Ui, id: &str) {
         let current = self.current_visual();
         let manual = tr(self.es, "Manual");
@@ -1116,7 +1073,6 @@ impl App {
             self.open_plugin_form("", Some(id.into()), FormTarget::Visual(id.into()));
         }
     }
-    /// The open plugin form, drawn in place: its fields, Apply and the credentials it declares.
     pub(super) fn plugin_form_ui(&mut self, ui: &mut egui::Ui, look: &Look) {
         let Some((target, mut loaded)) = self.plugins.form.take() else {
             return;
@@ -1209,7 +1165,6 @@ impl App {
         if self.plugins.form_pending {
             ui.label(look.muted_text(tr(self.es, "Saving — awaiting durable confirmation")));
         }
-        // What was kept untouched only matters when the form cannot show it.
         if loaded.form.as_ref().is_none_or(|form| !form.compatible()) {
             egui::CollapsingHeader::new(tr(self.es, "Preserved configuration (read only)")).show(
                 ui,
@@ -1238,8 +1193,6 @@ impl App {
         }
         self.plugins.form = Some((target, loaded));
     }
-    /// A form of the selected key (an action's parameters, a new action or who draws the
-    /// key) is open in the key panel.
     pub(super) fn key_form_open(&self) -> bool {
         self.plugins
             .form
@@ -1253,7 +1206,6 @@ impl App {
             .is_some_and(|(_, loaded)| loaded.form.as_ref().is_some_and(|f| f.dirty))
             || self.credentials.editing()
     }
-    /// Back or Esc in the key panel: to the key, unless something unapplied makes it ask.
     pub(super) fn leave_key_form(&mut self) {
         if self.form_leave.request(self.key_form_unapplied()) {
             self.close_form();
@@ -1264,8 +1216,6 @@ impl App {
         self.credentials.clear();
         self.form_leave.reset();
     }
-    /// The key panel while a form of its key is open: Back, the form, and the question when
-    /// leaving would lose something.
     pub(super) fn key_form(&mut self, ui: &mut egui::Ui, look: &Look) {
         let title = self
             .plugins
@@ -1373,8 +1323,6 @@ impl App {
             return false;
         }
         let face = self.plugins.visuals.get(id);
-        // A face not read yet after the board changed shows plain for a moment, not as
-        // unavailable: it is usually a few milliseconds away.
         let settling = PENDING_FACE.saturating_sub(self.board_since.elapsed());
         if face.is_none() && !settling.is_zero() {
             ui.ctx().request_repaint_after(settling);
@@ -1467,7 +1415,6 @@ pub(super) fn form_ui(
 ) {
     use rad_plugin_contract::FieldKind;
     let language = es.into();
-    // Labels share one column so the controls line up.
     const LABEL: f32 = 120.;
     for (index, field) in form.definition.schema.fields.clone().iter().enumerate() {
         if form.settings && matches!(field.kind, FieldKind::DynamicChoice { .. }) {
@@ -1521,7 +1468,6 @@ pub(super) fn form_ui(
                         FieldKind::Choice { options } => {
                             let mut changed = false;
                             let texts = form.texts.clone();
-                            // The user reads each option's text; its value is what is stored.
                             let shown = match options.iter().find(|o| o.value == value) {
                                 _ if value.is_empty() => tr(es, "Choose…"),
                                 Some(option) => texts.get(language, &option.label),

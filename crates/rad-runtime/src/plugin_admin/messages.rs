@@ -119,7 +119,6 @@ impl Admin {
             Reply::Spawned(prepared) => {
                 let mut prepared = Some(*prepared);
                 if host.attach(&mut prepared, now).is_err() {
-                    // A rejected token may own a live process. Never discard it.
                     self.locked = true;
                     self.state = AdminState::Uncertain;
                     self.retained = prepared;

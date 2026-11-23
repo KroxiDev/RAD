@@ -1,4 +1,3 @@
-//! Dispatch of invoke/options to the plugin, deferred replies and the concurrency caps.
 mod support;
 use rad_plugin_sdk::{
     ChoiceList, ChoiceOption, FailureCode, Invoke, OptionsQuery, OptionsScope, Outcome, Plugin,
@@ -15,7 +14,6 @@ use std::{
 };
 use support::*;
 
-/// Hands every request and its reply handle to the test, which completes them when it wants.
 struct Handoff {
     invokes: Sender<(Invoke, Reply<Outcome>)>,
     queries: Sender<(OptionsQuery, Reply<ChoiceList>)>,
@@ -80,7 +78,6 @@ fn an_invoke_reaches_the_plugin_and_is_answered_later_from_another_thread() {
     assert_eq!(call.parameters.schema_version, 1);
     assert_eq!(call.parameters.values["n"], 2);
 
-    // While the invoke is pending the loop keeps serving: an options query is answered first.
     query(&mut host, 3);
     let (asked, options_reply) = probe.queries.recv_timeout(wait()).unwrap();
     assert_eq!(
@@ -94,7 +91,6 @@ fn an_invoke_reaches_the_plugin_and_is_answered_later_from_another_thread() {
     let choices = host.recv();
     assert_eq!(correlation(&choices), (GENERATION, 3));
 
-    // The invoke is completed from a different thread, long after it was dispatched.
     std::thread::spawn(move || reply.send(Outcome::Success))
         .join()
         .unwrap();
@@ -205,7 +201,6 @@ fn a_choice_list_the_host_would_reject_is_replaced_by_unavailable() {
     host.finish().unwrap();
 }
 
-/// Valid by the option rules, but JSON escaping makes the frame larger than 64 KiB.
 #[test]
 fn a_choice_list_too_big_for_one_frame_is_answered_unavailable_not_lost() {
     let (plugin, probe) = handoff();
@@ -252,7 +247,6 @@ fn the_seventeenth_concurrent_action_is_busy_and_is_never_queued() {
         "a rejected action must not reach the plugin"
     );
 
-    // Answering one frees exactly one slot, and the refused action was not remembered.
     held.pop().unwrap().send(Outcome::Success);
     assert_eq!(correlation(&host.recv()), (GENERATION, 17));
     invoke(&mut host, 19);
@@ -286,7 +280,6 @@ fn option_queries_have_their_own_cap_and_are_answered_unavailable_beyond_it() {
         json!({"availability":"unavailable"})
     );
     assert!(probe.queries.try_recv().is_err());
-    // Actions are unaffected by pending queries.
     invoke(&mut host, 7);
     probe
         .invokes
@@ -305,7 +298,6 @@ fn a_reply_dropped_without_an_answer_still_answers_and_frees_its_slot() {
     let mut host = Host::start(config(1..=1), plugin);
     host.handshake(1);
     for round in 0..20u64 {
-        // 20 rounds exceed the cap of 16, so a leaked slot would turn into `busy`.
         invoke(&mut host, 2 + round);
         drop(probe.invokes.recv_timeout(wait()).unwrap().1);
         let result = host.recv();
@@ -364,7 +356,6 @@ fn a_panicking_handler_fails_its_own_request_and_the_loop_keeps_serving() {
     host.finish().unwrap();
 }
 
-/// Four threads answer at once with lists of ~30 KB; every frame must arrive intact.
 #[test]
 fn frames_written_from_several_threads_never_interleave() {
     let (plugin, probe) = handoff();
@@ -499,7 +490,6 @@ fn hold_credits_remain_bounded_after_start_replies() {
     assert!(probe.invokes.try_recv().is_err());
     hold(&mut host, 35, "hold_end");
     let end = probe.invokes.recv_timeout(wait()).unwrap();
-    // End in flight still owns its reserved credit.
     hold(&mut host, 36, "hold_start");
     assert_eq!(host.recv()["message"]["outcome"]["code"], "busy");
     end.1.send(Outcome::Success);

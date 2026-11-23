@@ -1,4 +1,3 @@
-//! Metadata is the A schema, never a parallel parameter model.
 use super::*;
 use rad_plugin_contract::{ChoiceList, Definition, Field, FieldKind, OptionsScope, Parameters};
 use std::hash::{Hash, Hasher};
@@ -22,7 +21,6 @@ impl std::fmt::Debug for PluginAdmin {
 #[derive(PartialEq)]
 pub struct PluginOptions {
     pub plugin: String,
-    /// Stable selected-package identity, not a process generation. Runtime resolves it at dispatch.
     pub generation: u64,
     pub scope: OptionsScope,
     pub definition: String,
@@ -37,11 +35,12 @@ impl std::fmt::Debug for PluginOptions {
 }
 #[derive(Clone, PartialEq, Eq)]
 pub enum OptionsSubject {
-    /// A draft that has no entity yet.
     Type,
     /// A saved entity, with the value its configuration holds for the field, if the current
     /// schema can read one.
-    Entity { saved: Option<String> },
+    Entity {
+        saved: Option<String>,
+    },
 }
 impl std::fmt::Debug for OptionsSubject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -130,7 +129,6 @@ pub(super) fn admin(c: IncomingContext, request: &rad_api::Request) -> Checked<P
         }
         None
     };
-    // Only a change of an installed plugin has a registered origin to replace.
     if replaces_source.is_some()
         && !matches!(
             operation,
@@ -183,13 +181,11 @@ pub(super) fn schema(
     result["credential_slots"] = json!(d.credential_slots);
     Ok(result)
 }
-/// A definition of a published plugin, as the Authority knows it.
 struct Published<'a> {
     plugin: &'a str,
     definition: &'a Definition,
     visual: bool,
     generation: u64,
-    /// False once the plugin failed: it is still published, but cannot be asked.
     ready: bool,
 }
 fn published<'a>(
@@ -303,11 +299,8 @@ pub(super) fn configuration(
     Ok(result)
 }
 
-/// What an `options` request for a saved entity turns into.
 pub(super) enum Listing {
-    /// Fixed choices of the schema, already paged.
     Fixed(Value),
-    /// A dynamic field: the runtime must ask the plugin.
     Dynamic(Box<PluginOptions>),
 }
 pub(super) fn options(
@@ -361,10 +354,6 @@ pub(super) fn options(
         _ => Err("invalid_request"),
     }
 }
-/// A draft that has no entity yet: only dynamic fields, only from the request's context.
-/// Options are live state of the outside system (devices, players, scenes), not manifest
-/// metadata like `schema`: automation may list them by type only while the global Consulta
-/// is on. Without it, it can still ask entity by entity where the user allowed it.
 pub(super) fn type_options(
     a: &Authority,
     origin: Origin,
@@ -400,14 +389,10 @@ fn field<'a>(definition: &'a Definition, name: &str) -> Checked<&'a Field> {
         .find(|f| f.id == name)
         .ok_or("invalid_request")
 }
-/// A saved configuration the current schema can interpret; anything else contributes nothing.
 fn readable(definition: &Definition, bytes: &[u8]) -> Option<Parameters> {
     let parameters: Parameters = serde_json::from_value(rad_wire::parse_json(bytes).ok()?).ok()?;
     (parameters.schema_version == definition.schema.version).then_some(parameters)
 }
-/// The query for a dynamic field. Its context is the saved values of the dependencies that
-/// the current schema still accepts, overridden by the request's draft, which must be valid
-/// as given. The list always fits one response, so there is no second page to ask for.
 fn dynamic(
     published: &Published,
     field: &Field,

@@ -45,7 +45,6 @@ fn main() {
         .join("../..")
         .canonicalize()
         .unwrap();
-    // Measurements and scripts/dev-run.sh seed fresh roots only inside these folders.
     let target = repo.join("target").canonicalize().unwrap();
     assert!(root.is_absolute() && root.canonicalize().unwrap() == root);
     assert!(["performance", "dev-run"].iter().any(|folder| {

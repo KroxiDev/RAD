@@ -1,4 +1,3 @@
-//! Reading counters of an unreadable database and replacing it without erasing it.
 use rad_core::{
     configuration::{ActionKind, Candidate, Configuration, DesktopEntry, Edit, Origin},
     identity::{IdentityCounters, IdentityRegistry},
@@ -18,7 +17,6 @@ impl Fixture {
     fn new() -> Self {
         Self::named("plain")
     }
-    /// `name` is a directory component, so tests can exercise awkward paths.
     fn named(name: &str) -> Self {
         let root = std::env::temp_dir().join(format!(
             "rad-damaged-{}-{}-{}",
@@ -66,7 +64,6 @@ fn apply(base: &Candidate, edits: &[Edit]) -> Candidate {
 fn launcher() -> ActionKind {
     ActionKind::Launcher(DesktopEntry::new("app.desktop".into()).unwrap())
 }
-/// A store with folders, buttons and actions assigned over several commits.
 fn populated(path: &Path) -> IdentityCounters {
     let base = initial();
     let mut store = Store::create(path, &base).unwrap();

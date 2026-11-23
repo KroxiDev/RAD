@@ -14,7 +14,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// The editor window's default size, in points.
 const SIZE: Vec2 = egui::vec2(1180., 780.);
 
 #[test]
@@ -23,7 +22,6 @@ fn editor() {
     let runtime = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR"));
     let out = PathBuf::from(std::env::var_os("RAD_CAPTURE_DIR").expect("RAD_CAPTURE_DIR"));
     let keys = seed(&runtime);
-    // Without the omarchy theme or systemd: what a new installation shows.
     let mut app = App::with_preferences_path(runtime.clone(), runtime.join("no-theme"), None);
     let mut camera = Camera::default();
 
@@ -46,7 +44,6 @@ fn editor() {
     camera.save(&mut app, &out.join("settings.png"));
 }
 
-/// A few keys through the public API, so the board is not empty: (position, id) of each.
 fn seed(runtime: &Path) -> Vec<(usize, String)> {
     let mut editor =
         rad_client::connection::Client::connect(runtime, rad_client::connection::Endpoint::Editor)
@@ -95,7 +92,6 @@ fn call(editor: &mut rad_client::connection::Client, operation: &str, arguments:
     panic!("{operation}: the runtime stayed busy")
 }
 
-/// Runs editor frames headlessly and keeps the textures they upload.
 struct Camera {
     ctx: egui::Context,
     frame: eframe::Frame,
@@ -133,7 +129,6 @@ impl Camera {
         output
     }
 
-    /// Frames until `ready` holds and the replies it waited for are drawn.
     fn settle(&mut self, app: &mut App, ready: impl Fn(&App) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while !ready(app) || app.worker.busy() {

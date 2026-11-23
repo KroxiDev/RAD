@@ -1,9 +1,3 @@
-//! Running `pactl`, the command line client of PulseAudio and of PipeWire's PulseAudio server.
-//!
-//! The plugin starts with a nearly empty environment (no `PATH`), so the program is looked up in
-//! fixed places and every child gets an environment of its own: only `XDG_RUNTIME_DIR`, which is
-//! how `pactl` finds the server's socket. Children read nothing, say nothing on stderr, have
-//! bounded output and a deadline, and are killed if the plugin dies.
 use std::{
     ffi::OsString,
     fmt, io,
@@ -13,20 +7,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Fixed places `pactl` is looked for.
 const SEARCH_PATHS: [&str; 3] = ["/usr/bin/pactl", "/bin/pactl", "/usr/local/bin/pactl"];
-/// Most output kept from one command; a device listing is a few tens of KiB.
 const MAX_OUTPUT: usize = 2 * 1024 * 1024;
 
 #[derive(Debug)]
 pub(crate) enum RunError {
-    /// `pactl` could not be started at all.
     Spawn(io::Error),
-    /// The deadline passed; the child was killed.
     TimedOut,
-    /// `pactl` ran and failed. With the server away this is its "connection refused".
     Failed,
-    /// More output than [`MAX_OUTPUT`]; the child was killed.
     TooMuchOutput,
     Io(io::Error),
 }
@@ -42,7 +30,6 @@ impl fmt::Display for RunError {
     }
 }
 
-/// A way to run `pactl` against one sound server.
 #[derive(Debug, Clone)]
 pub struct Pactl {
     program: PathBuf,
@@ -86,7 +73,6 @@ impl Pactl {
                 if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
                     return Err(io::Error::last_os_error());
                 }
-                // The parent may have died before the signal was armed.
                 if libc::getppid() as u32 != parent {
                     return Err(io::Error::from_raw_os_error(libc::ESRCH));
                 }
@@ -96,8 +82,6 @@ impl Pactl {
         command
     }
 
-    /// Runs `pactl args...` to completion and returns its output. Succeeds only if it exits with
-    /// status 0 before `deadline`.
     pub(crate) fn run(&self, args: &[&str], deadline: Instant) -> Result<Vec<u8>, RunError> {
         let mut child = self.command().args(args).spawn().map_err(RunError::Spawn)?;
         let mut stdout = child.stdout.take().expect("stdout is piped");
@@ -109,8 +93,6 @@ impl Pactl {
         result
     }
 
-    /// Starts `pactl subscribe`, whose stdout reports server events line by line. The caller
-    /// kills and waits for the child.
     pub(crate) fn subscribe(&self) -> io::Result<(Child, ChildStdout)> {
         let mut child = self.command().arg("subscribe").spawn()?;
         let stdout = child.stdout.take().expect("stdout is piped");
@@ -130,7 +112,6 @@ fn collect(
         if !readable(stdout, deadline).map_err(RunError::Io)? {
             return Err(RunError::TimedOut);
         }
-        // Readable (or hung up), so this read does not block.
         match stdout.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => output.extend_from_slice(&chunk[..n]),
@@ -141,7 +122,6 @@ fn collect(
             return Err(RunError::TooMuchOutput);
         }
     }
-    // Output closed: the process is exiting, but it still has to be reaped within the deadline.
     loop {
         match child.try_wait().map_err(RunError::Io)? {
             Some(status) if status.success() => return Ok(output),
@@ -152,7 +132,6 @@ fn collect(
     }
 }
 
-/// Waits until `stdout` has data or is closed. `false` if `deadline` came first.
 fn readable(stdout: &ChildStdout, deadline: Instant) -> io::Result<bool> {
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
@@ -181,8 +160,6 @@ fn readable(stdout: &ChildStdout, deadline: Instant) -> io::Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    //! `Pactl::run` called from the test's own thread, which outlives the child: the explicit kill
-    //! is what ends a hung child here, not the death-signal safety net.
     use super::*;
     use std::fs;
 

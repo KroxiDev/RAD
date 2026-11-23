@@ -183,7 +183,6 @@ fn private_tray_registers_late_reappears_opens_once_and_requests_clean_stop() {
     std::fs::copy(env!("CARGO_BIN_EXE_rad-tray"), dir.join("rad-tray")).unwrap();
     let log = dir.join("calls");
     std::fs::write(&log, "").unwrap();
-    // The launcher stays alive until its editor exits, exactly like systemd-run --scope.
     executable(
         &dir.join("systemd-run"),
         "#!/bin/sh\nprintf 'launch\\n' >> \"$RAD_FIXTURE_LOG\"\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$@\"\n",
@@ -259,7 +258,6 @@ fn private_tray_registers_late_reappears_opens_once_and_requests_clean_stop() {
             .unwrap()
             .contains("editor-activate")
     });
-    // A second executable invocation also activates the existing owner rather than running another.
     let status = Command::new(dir.join("rad-editor"))
         .env("DBUS_SESSION_BUS_ADDRESS", &bus.address)
         .env("RAD_FIXTURE_LOG", &log)
@@ -296,7 +294,6 @@ fn private_tray_registers_late_reappears_opens_once_and_requests_clean_stop() {
             .unwrap()
             .contains("systemctl --user stop rad-runtime.service")
     });
-    // Quitting closes the open editor before stopping RAD.
     let calls = std::fs::read_to_string(&log).unwrap();
     let quit = calls
         .find("editor-quit")
@@ -305,7 +302,6 @@ fn private_tray_registers_late_reappears_opens_once_and_requests_clean_stop() {
         quit < calls.find("systemctl --user stop").unwrap(),
         "{calls}"
     );
-    // Simulate the unit's stop signal without touching the user's systemd.
     Command::new("kill")
         .args(["-TERM", &tray.0.id().to_string()])
         .status()

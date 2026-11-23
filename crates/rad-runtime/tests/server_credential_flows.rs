@@ -1,5 +1,3 @@
-// Dynamic options and JPEG visuals through the real runtime, the real IPC and a real plugin
-// process (`org.rad.test.options`, synthetic: no apps, audio, hardware, network or files).
 use rad_client::connection::{Client, Endpoint};
 use rad_launcher::Launcher;
 use rad_runtime::server::Server;
@@ -30,7 +28,6 @@ fn binaries() -> PathBuf {
         .to_path_buf()
 }
 
-/// The plugin store the runtime opens at start, with the test plugin already selected.
 fn seed(store: &Path) {
     let plugins = store.join("plugins");
     let reinstall = plugins.exists();
@@ -81,7 +78,6 @@ fn seed(store: &Path) {
     ));
 }
 
-/// Tells the serving loop that the scenario is over, and wakes it with a connection.
 struct Announce(std::sync::Arc<std::sync::atomic::AtomicBool>, PathBuf);
 impl Drop for Announce {
     fn drop(&mut self) {
@@ -90,14 +86,10 @@ impl Drop for Announce {
     }
 }
 
-/// What the serving loop last saw as unanswered client requests (the worlds take turns).
 static OPEN_REQUESTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// One launcher helper may live per process, so runtimes of different tests take turns.
 static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Runs `scenario` on a client thread against a private runtime that owns the test plugin,
-/// serving the runtime on this thread until the scenario ends.
 fn world(name: &str, scenario: impl FnOnce(PathBuf) + Send + 'static) {
     let root = Directory(
         std::env::temp_dir().join(format!("rad-cred-flow-{}-{name}", std::process::id())),
@@ -143,7 +135,6 @@ fn serve(root: &Path, name: &str, scenario: impl FnOnce(PathBuf) + Send + 'stati
             );
         command
     };
-    // The previous runtime's helper is reaped by the time its server stopped; allow a beat.
     let end = Instant::now() + Duration::from_secs(5);
     let launcher = loop {
         match Launcher::spawn(helper()) {
@@ -308,9 +299,6 @@ fn await_visual(editor: &mut Client, predicate: impl Fn(&Value) -> bool) -> Valu
     }
 }
 
-// Requests keep arriving while the plugin becomes Ready and completes: none is lost and
-// nothing waits for traffic that never comes.
-
 #[test]
 fn leaving_while_waiting_for_credentials_ack_releases_the_transport_credit() {
     world("leaving", |runtime| {
@@ -408,7 +396,7 @@ fn credentials_survive_runtime_restart_and_key_loss_requires_reentry_not_reinsta
     assert_eq!(&original_key[..8], b"RADK\0\0\0\x01");
     assert_private_files(&root.0.join("store"), &original_key[8..]);
 
-    seed(&root.0.join("store")); // Reinstall the same private package while runtime is stopped.
+    seed(&root.0.join("store"));
     serve(&root.0, "second", |runtime| {
         let mut editor = connect(&runtime, Endpoint::Editor);
         ready(&mut editor);
@@ -423,7 +411,7 @@ fn credentials_survive_runtime_restart_and_key_loss_requires_reentry_not_reinsta
         assert_eq!(authenticate(&mut editor)["state"], "succeeded");
     });
     assert_eq!(std::fs::read(&key_path).unwrap(), original_key);
-    std::fs::remove_file(&key_path).unwrap(); // Own isolated fixture key only.
+    std::fs::remove_file(&key_path).unwrap();
     serve(&root.0, "third", |runtime| {
         let mut editor = connect(&runtime, Endpoint::Editor);
         ready(&mut editor);

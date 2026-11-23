@@ -1,5 +1,3 @@
-//! A worker thread that dies must neither leave the editor busy nor repeat its job.
-
 use super::*;
 use crate::worker::Respawner;
 use std::sync::{Arc, Mutex};
@@ -27,7 +25,6 @@ fn app() -> App {
     app.es = crate::preferences::Language::En;
     app
 }
-/// A worker whose thread dies on its first job, as a panic inside `run` does.
 fn dying() -> Worker<Job, Event> {
     Worker::spawn(|_job: Job| -> Event { panic!("synthetic worker death") })
 }

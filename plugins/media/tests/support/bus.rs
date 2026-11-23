@@ -1,4 +1,3 @@
-//! A private D-Bus daemon: the stand-in for the session bus.
 use super::{Scratch, scratch_dir};
 use std::{
     fs,
@@ -20,13 +19,9 @@ pub struct PrivateBus {
     child: Child,
     address: String,
     dir: Scratch,
-    /// The socket the daemon listens on, when its address is meant to survive a restart.
     fixed: Option<PathBuf>,
 }
 
-/// A session-type bus listening on `listen`. No `standard_session_servicedirs`, so nothing of the
-/// machine can be started by activation; only the services in `services`, if given. Every client
-/// may do anything.
 fn configuration(listen: &str, services: Option<&Path>) -> String {
     let services = services
         .map(|dir| format!("<servicedir>{}</servicedir>", dir.display()))
@@ -97,21 +92,18 @@ impl PrivateBus {
         }
     }
 
-    /// A bus whose address stays the same when it is killed and `restart`ed.
     pub fn start_at_fixed_address() -> Self {
         let dir = scratch_dir("rm", true);
         let socket = dir.join("bus");
         let (child, _) = spawn_daemon(&dir, &format!("unix:path={}", socket.display()));
         Self {
             child,
-            // Without the daemon's `guid`, which changes with every start.
             address: format!("unix:path={}", socket.display()),
             dir,
             fixed: Some(socket),
         }
     }
 
-    /// Starts the daemon again on the same address, after `kill`.
     pub fn restart(&mut self) {
         let socket = self.fixed.clone().expect("a bus with a fixed address");
         let _ = fs::remove_file(&socket);
@@ -119,8 +111,6 @@ impl PrivateBus {
         self.child = child;
     }
 
-    /// A bus on which each of `names` can be started by activation. Starting one runs nothing
-    /// but `touch` on a marker file, so whether it was started shows in [`Self::started`].
     pub fn start_activatable(names: &[&str]) -> Self {
         let dir = scratch_dir("rm", true);
         let (services, markers) = (dir.join("services"), dir.join("markers"));
@@ -152,13 +142,10 @@ impl PrivateBus {
         }
     }
 
-    /// Whether the service `name` of [`Self::start_activatable`] was started. A service that
-    /// was just asked for may need a moment to leave its mark.
     pub fn started(&self, name: &str) -> bool {
         self.dir.join("markers").join(name).exists()
     }
 
-    /// Asks the bus to start the service `name`, as any client that does not forbid it would.
     pub fn activate(&self, name: &str) {
         use gio::prelude::*;
         let connection = gio::DBusConnection::for_address_sync(
@@ -169,8 +156,6 @@ impl PrivateBus {
             None::<&gio::Cancellable>,
         )
         .expect("connect to the private bus");
-        // The service is a `touch` that never takes the name, so the bus does not answer (or
-        // answers with an error); what counts is that it ran the service, so no waiting for it.
         let _ = connection.call_sync(
             Some("org.freedesktop.DBus"),
             "/org/freedesktop/DBus",
@@ -184,7 +169,6 @@ impl PrivateBus {
         );
     }
 
-    /// Connected clients, excluding this short-lived observer and the daemon.
     pub fn client_count(&self) -> usize {
         let connection = gio::DBusConnection::for_address_sync(
             self.address(),
@@ -217,13 +201,10 @@ impl PrivateBus {
         &self.address
     }
 
-    /// The directory a bus with a fixed address has its socket `bus` in: what a user's
-    /// `XDG_RUNTIME_DIR` is for the standard session bus.
     pub fn runtime_dir(&self) -> &Path {
         &self.dir
     }
 
-    /// Kills the daemon, as if the bus went away.
     pub fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -236,8 +217,6 @@ impl Drop for PrivateBus {
     }
 }
 
-/// A bus that is there and never says a word: it accepts connections and keeps them open, so a
-/// client that connects waits for an authentication that never comes.
 pub struct MuteBus {
     path: PathBuf,
     _dir: Scratch,
@@ -257,7 +236,6 @@ impl MuteBus {
         );
         let (stopping, counting) = (Arc::clone(&stop), Arc::clone(&accepted));
         let acceptor = std::thread::spawn(move || {
-            // Kept open until the bus is dropped: the clients are left waiting.
             let mut held = Vec::new();
             while let Ok((client, _)) = listener.accept() {
                 if stopping.load(Ordering::Acquire) {
@@ -280,7 +258,6 @@ impl MuteBus {
         format!("unix:path={}", self.path.display())
     }
 
-    /// How many connections were made to it so far.
     pub fn connections(&self) -> usize {
         self.accepted.load(Ordering::Acquire)
     }
@@ -289,7 +266,6 @@ impl MuteBus {
 impl Drop for MuteBus {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        // Wakes the acceptor, which is blocked in `accept`.
         let _ = UnixStream::connect(&self.path);
         if let Some(acceptor) = self.acceptor.take() {
             let _ = acceptor.join();

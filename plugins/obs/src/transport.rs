@@ -1,4 +1,3 @@
-//! Nonblocking loopback-only WebSocket; all peer errors become closed codes.
 use rad_plugin_sdk::FailureCode;
 use std::{
     io,
@@ -104,7 +103,6 @@ impl Transport {
         };
         Ok(())
     }
-    /// Readiness only: the worker keeps exclusive ownership of all socket I/O.
     pub fn readiness(&self) -> Option<libc::pollfd> {
         let (fd, events) = match &self.state {
             State::Tcp(stream) => (stream.as_raw_fd(), libc::POLLOUT),
@@ -127,7 +125,7 @@ impl Transport {
         };
         match socket.send(Message::Text(text.into())) {
             Ok(()) => Ok(()),
-            Err(e) if blocked(&e) => Ok(()), // tungstenite already queued this frame; never resend it.
+            Err(e) if blocked(&e) => Ok(()),
             Err(_) => Err(FailureCode::Unavailable),
         }
     }

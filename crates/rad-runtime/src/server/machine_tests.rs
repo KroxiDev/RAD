@@ -1,6 +1,3 @@
-//! «Usar el Stream Deck con RAD» (ADR 0006) as a setting of the machine: loaded at start,
-//! changed through the client API, and applied to the deck without restarting the runtime.
-
 use super::*;
 use rad_api::DeckState;
 use rad_deck::{DeckError, Desired, Event};
@@ -15,12 +12,10 @@ use std::{
     time::Instant,
 };
 
-/// What a fake deck did and what the test wants it to do next.
 #[derive(Default)]
 struct PortState {
     events: VecDeque<Event>,
     shutdowns: usize,
-    /// The deck reports being stopped only when the test says so.
     stopped: bool,
     dropped: bool,
 }
@@ -45,7 +40,6 @@ impl Drop for Port {
     }
 }
 
-/// How the runtime is told to open a deck: counts attempts, keeps every port it handed out.
 #[derive(Clone, Default)]
 struct Factory {
     attempts: Arc<AtomicUsize>,
@@ -90,8 +84,6 @@ impl Machine {
     }
 }
 
-/// A runtime whose data directory already holds `machine.json` with these bytes, if any,
-/// with a deck factory registered the way the binary does.
 fn machine(name: &str, session: u128, file: Option<&[u8]>) -> Machine {
     let root = super::contained_tests::Directory(
         std::env::temp_dir().join(format!("rad-machine-{}-{name}", std::process::id())),
@@ -115,7 +107,6 @@ fn machine(name: &str, session: u128, file: Option<&[u8]>) -> Machine {
 }
 const ON: &[u8] = br#"{"version":1,"use_stream_deck":true,"start_with_session":false}"#;
 
-/// A client connection driven in the same thread as the server.
 struct Client(UnixStream, u64);
 impl Client {
     fn connect(machine: &mut Machine, socket: &str) -> Self {
@@ -188,8 +179,6 @@ fn a_change_that_cannot_be_stored_is_not_applied_anywhere() {
     assert_eq!(machine.server.deck_state(), DeckState::Disabled);
 }
 
-/// The Tools folder of the `server_deck` scenario: pressing key 2 enters it, and inside it
-/// key 0 goes back.
 fn with_tools_folder(machine: &mut Machine, editor: &mut Client) {
     let created = editor.ask(
         machine,
@@ -235,21 +224,17 @@ fn turning_the_setting_off_stops_the_deck_in_order_and_lets_authority_know() {
     );
     assert_eq!(answer["data"], settings(false, false));
     assert_eq!(first.lock().unwrap().shutdowns, 1);
-    // Until the deck says it stopped it is still there, and still asked once only.
     turns(&mut machine, 4);
     assert_ne!(machine.server.deck_state(), DeckState::Disabled);
     assert!(!first.lock().unwrap().dropped);
     assert_eq!(first.lock().unwrap().shutdowns, 1);
 
-    // It stops without saying anything: the port is let go and the disconnect still happens.
     first.lock().unwrap().stopped = true;
     turns(&mut machine, 2);
     assert_eq!(machine.server.deck_state(), DeckState::Disabled);
     assert!(first.lock().unwrap().dropped);
     assert!(machine.server.deck.is_none());
 
-    // A first report with several keys down is what a deck sends when it connects with them
-    // held; Authority ignores it only if it was told the previous input was gone.
     editor.ask(
         &mut machine,
         "set_machine_settings",
@@ -288,7 +273,6 @@ fn turning_it_back_on_while_the_deck_is_stopping_waits_for_it_to_finish() {
         json!({"use_stream_deck":true}),
     );
     turns(&mut machine, 4);
-    // Only one deck may be alive: the new one waits for the old one to end.
     assert_eq!(machine.factory.attempts(), 1);
     assert!(!first.lock().unwrap().dropped);
 

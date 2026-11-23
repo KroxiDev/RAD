@@ -1,5 +1,3 @@
-// Passive fault-profile support, included only by cfg(test) modules.
-// This file is not a product module and has no external dependencies.
 use std::{
     fs::{self, File, OpenOptions},
     io::Write,

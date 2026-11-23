@@ -1,5 +1,4 @@
 use super::ConfigurationError;
-/// Supported deck geometry. Additional device models require an explicit implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Grid;
 impl Grid {

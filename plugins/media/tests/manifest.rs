@@ -1,4 +1,3 @@
-//! `manifest.json` is what the host reads before it starts the plugin; the code must agree with it.
 mod support;
 use rad_plugin_media::config;
 use serde_json::{Value, json};
@@ -72,8 +71,6 @@ fn the_action_and_the_visual_have_the_documented_fields() {
 
 #[test]
 fn the_operations_the_manifest_offers_are_the_ones_the_plugin_accepts() {
-    // Each declared operation runs against a fake player, and the dynamic field is answered for
-    // exactly the declared definitions.
     let bus = PrivateBus::start();
     let mut player = FakePlayer::start(&bus, "org.mpris.MediaPlayer2.strawberry");
     let mut host = Host::start(Some(bus.address()), quick());

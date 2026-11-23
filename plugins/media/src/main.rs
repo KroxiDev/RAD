@@ -1,4 +1,3 @@
-//! The plugin executable: serves the host over stdin and stdout until the host closes them.
 use rad_plugin_media::{MediaPlugin, Timing, config, session_bus_address};
 use std::{path::PathBuf, process::ExitCode};
 
@@ -14,7 +13,6 @@ fn main() -> ExitCode {
     match rad_plugin_sdk::run_stdio(config(), plugin) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            // The host does not publish stderr; this only helps someone running the plugin by hand.
             eprintln!("rad-plugin-media: {error}");
             ExitCode::FAILURE
         }

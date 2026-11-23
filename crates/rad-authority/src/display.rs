@@ -1,4 +1,3 @@
-//! Deck display, sleep transitions, and persistent native brightness operations.
 use super::{
     Authority, Completion, Edit, Effect, NativeBrightness, Origin, Pending, PublicationTarget,
 };
@@ -37,7 +36,6 @@ impl Authority {
         }
         vec![]
     }
-    /// Manual actions and the idle deadline share the exact same input/display transition.
     pub(super) fn enter_sleep(&mut self) -> Vec<Effect> {
         self.sleep_deadline = None;
         self.asleep = true;
@@ -78,7 +76,6 @@ impl Authority {
             )
             .expect("queued brightness dispatch")
         };
-        // A job that expired while waiting for another publication must never write.
         if job.deadline <= self.now {
             return fail(self);
         }
@@ -93,8 +90,6 @@ impl Authority {
             return fail(self);
         }
         settings.brightness_percent = next;
-        // The admitted native operation owns precisely this fixed brightness edit;
-        // it does not grant any client a general settings-modification capability.
         let Ok(candidate) = self.published.configuration().prepare_edit(
             self.published.registry(),
             Origin::Editor,

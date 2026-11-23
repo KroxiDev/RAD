@@ -14,12 +14,9 @@ pub struct Target<'a> {
     pub entity: Option<&'a str>,
 }
 
-/// Where one dynamic field's list stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListState {
-    /// Not asked yet, or the context changed since: a question is due.
     Due,
-    /// The question with this ticket is in flight.
     Asking(u64),
     Answered(ChoiceList),
     Failed(Failure),
@@ -50,7 +47,6 @@ impl Failure {
     }
 }
 
-/// A question to put to the runtime, tagged so only its own answer is accepted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Query {
     pub ticket: u64,

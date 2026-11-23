@@ -1,4 +1,3 @@
-//! Start reserves its matching End before reaching user code. Identical Starts pair FIFO.
 use crate::{
     Credentials, Error, Parameters,
     reply::{Permit, Slots},

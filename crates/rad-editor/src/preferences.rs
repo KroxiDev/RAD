@@ -1,4 +1,3 @@
-//! Editor-owned preferences, never part of the deck document or backups.
 use std::{
     fs,
     io::{self, Read, Write},
@@ -70,8 +69,6 @@ impl Preferences {
         write_private(path, &bytes)
     }
 }
-/// Replaces `path` with `bytes`, readable only by this user: temporary file, sync,
-/// atomic rename and sync of the directory. A failed attempt leaves `path` untouched.
 pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     let parent = path

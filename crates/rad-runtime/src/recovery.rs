@@ -1,13 +1,3 @@
-//! Recovery mode (ADR 0011): the runtime that cannot open the configuration keeps the
-//! instance lock and the sockets, takes neither the deck nor plugins, and serves only
-//! `hello`, `recovery` and `recovery_reset`, plus the upload of a copy and its
-//! confirmation. The Editor never writes the configuration: «Empezar de nuevo» and
-//! «Restaurar una copia» are done here, and the same process then becomes a [`Server`].
-//!
-//! The damaged file is never opened for writing from this mode; `peek_counters` reads it
-//! once, `immutable`. Uploading and verifying a copy is blocking work, so it runs on a
-//! [`StorageWorker`] that has transfers but no Store, one operation at a time: the next
-//! request waits in the transport's queue until the worker answers.
 use crate::{
     bootstrap::{self, Bootstrap, Diagnosis, ReplaceFailed, RestoreRefused},
     events::{ConnectionFailures, Events},
@@ -33,23 +23,18 @@ use std::{
     time::Duration,
 };
 
-/// The one operation the worker is running, and what to do with its result.
 struct Flight {
     job: JobId,
     key: RequestKey,
     stage: Stage,
 }
 enum Stage {
-    /// The output is the answer.
     Reply,
-    /// `restore_commit`: the copy is verified; next the new base is built from it.
     Verify {
         connection: u64,
         transfer_id: String,
     },
-    /// The new base is being put in place of the damaged one.
     Replace,
-    /// The copy is let go, then the request is refused with this code.
     Refuse(rad_api::ErrorCode),
 }
 
@@ -63,7 +48,6 @@ pub struct Recovery {
     connection_failures: ConnectionFailures,
     shutting_down: bool,
     restarted: Option<Bootstrap>,
-    /// Started with the first upload; nothing is created in the data folder before.
     worker: Option<StorageWorker>,
     flight: Option<Flight>,
 }
@@ -169,7 +153,6 @@ impl Recovery {
         }
         Ok(())
     }
-    /// A restart is done; [`Recovery::into_server`] continues in the same process.
     pub fn reset_done(&self) -> bool {
         self.restarted.is_some()
     }
@@ -272,7 +255,6 @@ impl Recovery {
             _ => refuse(Code::RecoveryRequired, mutation),
         }))
     }
-    /// Gives the operation to the worker, which is started with the first one.
     fn start_transfer(
         &mut self,
         key: RequestKey,
@@ -364,7 +346,6 @@ impl Recovery {
             Err(_) => Ok(Some(self.refusal(key.id(), Code::ResourceExhausted, true))),
         }
     }
-    /// What the worker finished, if it did: the answer, or the next step of a restoration.
     fn poll_flight(&mut self) -> Result<(), RuntimeError> {
         use rad_api::ErrorCode as Code;
         let Some(worker) = self.worker.as_mut() else {
@@ -385,7 +366,6 @@ impl Recovery {
                 Err(ReplaceError::NotApplied(_)) => {
                     Some(self.refusal(id, Code::StorageError, true))
                 }
-                // The new base is in place or may be: the next start opens what is there.
                 Err(ReplaceError::AfterExchange) => return Err(RuntimeError::Storage),
             },
             (_, ResultValue::Transfer(Err(error))) => Some(self.failure(id, error)),
@@ -436,7 +416,6 @@ impl Recovery {
             ..self.reply(id, Status::Error, rad_api::ResponseData::None)
         }
     }
-    /// The new base holds the copy: open it, and go on as the Server.
     fn restored(&mut self, id: u64) -> Result<Response, RuntimeError> {
         let now = monotonic_ms().map_err(|_| RuntimeError::Clock)?;
         let boot = bootstrap::open_replaced(&self.data, self.session, now)
@@ -460,11 +439,9 @@ impl Recovery {
             Err(ReplaceFailed::NotApplied) => {
                 Ok(self.refusal(id, rad_api::ErrorCode::StorageError, true))
             }
-            // The new base may be in place: the next start opens whatever is there.
             Err(ReplaceFailed::Unfinished) => Err(RuntimeError::Storage),
         }
     }
-    /// The way out of recovery is done: the answer carries the new configuration's revision.
     fn become_normal(&mut self, id: u64, boot: Bootstrap) -> Result<Response, RuntimeError> {
         let revision = boot
             .authority
@@ -507,7 +484,6 @@ impl Recovery {
         let bytes = serde_json::to_vec(&response).map_err(|_| RuntimeError::Protocol)?;
         match self.transport.finish(key, &bytes) {
             Ok(()) => Ok(()),
-            // Answered or gone already: nothing is left to answer.
             Err(TransportError::UnknownRequest) => {
                 self.events.record(EventCode::ResponseUnknownRequest, None);
                 Ok(())

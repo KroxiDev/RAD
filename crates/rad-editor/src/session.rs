@@ -1,4 +1,3 @@
-//! Socket projection adapter. No Configuration or identity allocation lives here.
 use crate::Request;
 use rad_client::{
     connection::{Client, Failure},
@@ -132,10 +131,8 @@ pub struct Board {
 pub struct Refresh {
     pub status: Value,
     pub board: Option<Board>,
-    /// The selected key's inspector, read with a board of a newer revision.
     pub inspection: Option<Inspection>,
 }
-/// The key selected in the editor, and the revision its inspector on screen was read at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selected {
     pub id: String,
@@ -145,9 +142,6 @@ impl<P: Port> Session<P> {
     pub fn refresh(&mut self, force: bool) -> Result<Refresh, Error> {
         self.refresh_views(force || self.revision.is_none(), true, None)
     }
-    /// Notices invalidate independent views; a board-only update never fetches the overview.
-    /// A board of another revision brings the selected key's inspector with it, so the two
-    /// change on screen together instead of the inspector going blank in between.
     pub fn refresh_views(
         &mut self,
         board: bool,
@@ -170,7 +164,6 @@ impl<P: Port> Session<P> {
             {
                 match self.inspect(&selected.id) {
                     Ok(inspection) => Some(inspection),
-                    // Refused or already newer: it is read again on its own.
                     Err(_) if self.is_open() => None,
                     Err(error) => return Err(error),
                 }
@@ -332,7 +325,6 @@ impl<P: Port> Session<P> {
     }
 }
 
-/// Separate composed responses may be shown together only at the same revision.
 pub fn coherent(board: &Board, inspection: &Inspection) -> bool {
     board.folder["view_revision"]
         .as_str()

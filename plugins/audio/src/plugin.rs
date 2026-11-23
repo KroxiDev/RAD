@@ -1,4 +1,3 @@
-//! The plugin proper: the SDK's `Plugin` on top of actions, options and visual watching.
 use crate::{
     Pactl, Timing, actions,
     devices::{Kind, options_for},
@@ -11,7 +10,6 @@ use rad_plugin_sdk::{
 };
 use std::{sync::Arc, time::Instant};
 
-/// Identity of the plugin, as in `manifest.json`.
 pub fn config() -> Config {
     Config::new(
         "org.rad.audio",
@@ -35,7 +33,6 @@ pub struct AudioPlugin {
 }
 
 struct Shared {
-    /// `None` when `pactl` is not installed: everything reports unavailable.
     pactl: Option<Pactl>,
     timing: Timing,
     watch: Arc<Watch>,
@@ -54,8 +51,6 @@ impl AudioPlugin {
     }
 }
 
-/// Runs `job` on its own thread. If the thread cannot start, the job is dropped, which answers
-/// whatever reply it holds with its failure.
 fn spawn(job: impl FnOnce() + Send + 'static) {
     let _ = std::thread::Builder::new()
         .name("audio-job".into())

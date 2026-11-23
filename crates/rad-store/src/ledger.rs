@@ -90,7 +90,6 @@ fn array<const N: usize>(v: Vec<u8>) -> Result<[u8; N], StoreError> {
     v.try_into().map_err(|_| StoreError::Corrupt)
 }
 
-/// Sorted merge: validates existing bindings and returns only genuinely new rows.
 pub(crate) fn additions(
     known: &[Binding],
     proposed: &[Binding],
@@ -141,8 +140,6 @@ pub(crate) fn active(data: &rad_core::configuration::ConfigurationData) -> Vec<B
     bindings
 }
 
-/// Retired candidate rows unknown to Store have no retained revision and must not
-/// resurrect after GC. Allocation high-water marks are persisted independently.
 pub(crate) fn committed_bindings(
     old: &IdentityRegistry,
     candidate: &rad_core::configuration::Candidate,

@@ -1,4 +1,3 @@
-//! User-session owner of a single requested installation update. No deck-data access.
 use crate::{Error, InstallOutcome, Prepared, gate};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -126,8 +125,6 @@ pub fn handoff(prepared: &Prepared) -> Result<(), Error> {
             Ok(Some(answer)) if answer.nonce == nonce => {
                 let _ = std::fs::remove_file(&ack);
                 return if answer.ready {
-                    // Publication is the local consent commit point. No coordinator
-                    // may infer consent from an editor that later closes normally.
                     publish_grant(
                         &gate.directory().join("grant.json"),
                         &nonce,
@@ -149,8 +146,6 @@ pub fn handoff(prepared: &Prepared) -> Result<(), Error> {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
-/// Only read by the Updates screen after a user-requested operation, not globally.
-/// An interrupted record is a failure, never success and never an automatic retry.
 pub fn operation_result() -> Result<Option<OperationResult>, Error> {
     let state = state_directory()?;
     let session = gate::session_gate().ok();
@@ -255,14 +250,12 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<(), Error> {
         write_ack(&ack, &nonce, true, "authorized")?;
         wait_for_grant(&grant, &nonce, editor_pid, Duration::from_secs(10))
     });
-    // Dropping a pre-commit helper closes stdin, aborting its prepared transaction.
     let editor_closed = control.editor_closed;
     drop(control);
     record.phase = Phase::Finished;
     record.result = Some(transaction_result(result));
     save_record(&state, &record)?;
     if !editor_closed {
-        // An auth refusal leaves the current window and runtime intact.
         write_ack(
             &ack,
             &nonce,
@@ -832,7 +825,6 @@ fn stop_session() -> Result<(), Error> {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    // BindsTo normally stops the tray. Request only its main process if it remains.
     if !quiet(&unit("rad-tray.service")?) {
         terminate_main("rad-tray.service")?;
     }
@@ -966,7 +958,6 @@ impl InstallerProcess {
         }
     }
     fn commit(&mut self) -> Result<InstallOutcome, Error> {
-        // From this point every error is waited for, never cancelled by killing pacman.
         self.committed = true;
         let sent = self
             .input
@@ -992,8 +983,6 @@ impl Drop for InstallerProcess {
     fn drop(&mut self) {
         self.input.take();
         if !self.finished {
-            // EOF cancels pre-commit preparation. After commit, wait indefinitely:
-            // killing pkexec/pacman is not a transaction cancellation mechanism.
             if !self.committed {
                 let _ = self.child.kill();
             }
@@ -1039,7 +1028,6 @@ pub trait SessionControl {
     fn commit(&mut self) -> Result<crate::InstallOutcome, Error>;
     fn installed_version(&mut self) -> Result<String, Error>;
 }
-/// Authentication must succeed before ACK; every old process must close before commit.
 pub fn transact(
     control: &mut impl SessionControl,
     prepared: &Prepared,
@@ -1073,13 +1061,8 @@ pub fn collect_ipc_in(
     liveness: &(impl crate::cleanup::Liveness + ?Sized),
 ) -> Result<usize, Error> {
     use crate::cleanup::ProcessState;
-    // This entrypoint never creates directories or scans an implicit temporary root.
     let anchor = open_ipc_directory(directory, uid)?;
-    // A numeric PID is only meaningful in the creator's PID namespace. Unknown
-    // or foreign namespace identities never reach the process-liveness probe.
     let namespace = crate::cleanup::pid_namespace()?;
-    // The proc-fd link is our own live directory descriptor, not an entry supplied
-    // by a user or a candidate. Enumeration and unlinkat stay on this pinned inode.
     let entries = std::fs::read_dir(format!("/proc/self/fd/{}", anchor.as_raw_fd()))?;
     let mut removed = 0;
     for entry in entries.take(256) {
@@ -1263,7 +1246,6 @@ mod recovery_tests {
                     details: noisy,
                 }))),
             };
-            // This is exactly the durable write before run releases the update gate.
             save_record(&root, &record).unwrap();
             let reopened = std::cell::Cell::new(false);
             reopen_record(

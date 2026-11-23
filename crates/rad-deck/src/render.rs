@@ -1,7 +1,6 @@
 use crate::{DeckError, KeyVisual, TextPlacement};
 
 const SIDE: u32 = 96;
-/// Reference height for native pictures beside the default 13 px text.
 const PICTURE: u32 = 62;
 
 pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
@@ -12,7 +11,6 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
     let mut canvas = image::RgbImage::from_pixel(SIDE, SIDE, background);
     let text_band = (32.0 * f32::from(key.text_size) / 13.0).ceil() as u32;
     let picture_height = SIDE - text_band - 2;
-    // Rows the picture may use: all of them unless the text is placed beside it.
     let (top, height) = match (key.text.is_empty(), key.text_placement) {
         (false, TextPlacement::BelowPicture) => (0, picture_height),
         (false, TextPlacement::AbovePicture) => (SIDE - picture_height, picture_height),
@@ -39,7 +37,6 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
             );
         }
     }
-    // The generic launcher picture needs room of its own: centred text leaves it none.
     let centred_text = !key.text.is_empty() && key.text_placement == TextPlacement::Middle;
     let generic = key.image.is_none() && key.generic_launcher && !centred_text;
     let moon = key.image.is_none() && key.sleep_icon;
@@ -108,7 +105,6 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
             key.image.is_some() || generic || moon || sun,
         );
     }
-    // An amber pause marks last-known content. Unavailable takes precedence.
     if key.stale && !key.unavailable {
         for y in 4..16 {
             for x in [80, 81, 82, 87, 88, 89] {
@@ -126,8 +122,6 @@ pub fn rgb(key: &KeyVisual) -> Result<image::RgbImage, DeckError> {
     }
     Ok(image::imageops::rotate180(&canvas))
 }
-/// Paints up to two centred rows. Where they lie over a picture, the rows behind them are
-/// dimmed first, out to the edge of the key, so the text stays readable.
 fn text(canvas: &mut image::RgbImage, key: &KeyVisual, over_picture: bool) {
     use epaint::{
         Color32, FontId,
@@ -151,7 +145,6 @@ fn text(canvas: &mut image::RgbImage, key: &KeyVisual, over_picture: bool) {
     let text_band = (32.0 * f32::from(key.text_size) / 13.0).ceil();
     let block = galley.size().y.min(text_band);
     let side = SIDE as f32;
-    // Where the block starts, and the rows dimmed behind it when it lies over a picture.
     let (origin, band) = match key.text_placement {
         TextPlacement::Top => (2.0, Some(0.0..block + 5.0)),
         TextPlacement::Middle => {

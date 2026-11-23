@@ -1,4 +1,3 @@
-//! Parsers accept only bounded snapshots supplied by the reader.
 #[derive(Clone, Copy, Debug)]
 pub struct Cpu([u64; 8]);
 impl Cpu {

@@ -1,14 +1,10 @@
-//! Visual subscriptions: which devices are watched, what each shows, and the monitor that keeps
-//! it current.
 use crate::{Pactl, Selector, Snapshot, Timing, devices::Kind, monitor::Monitor, server::Failure};
 use rad_plugin_sdk::{Subscription, SubscriptionId, VisualContent, VisualState};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 enum Cache {
-    /// No picture yet.
     Loading,
     Ready(Snapshot),
-    /// The server cannot be reached.
     Down,
 }
 
@@ -20,16 +16,12 @@ struct Entry {
 
 struct State {
     entries: Vec<Entry>,
-    /// What the monitor last saw; meaningless while no monitor runs.
     cache: Cache,
-    /// Whether the monitor is wanted: there is at least one entry.
     watching: bool,
-    /// The epoch the monitor was last started in. A picture from an earlier one is dropped.
     epoch: u64,
 }
 
 impl State {
-    /// Publishes a newly observed picture; the SDK renews unchanged states without payload.
     fn show(&mut self) {
         for entry in &mut self.entries {
             let Some(state) = visual_state(entry.kind, &entry.selector, &self.cache) else {
@@ -61,9 +53,7 @@ fn visual_state(kind: Kind, selector: &Selector, cache: &Cache) -> Option<Visual
     }
 }
 
-/// The visual subscriptions of one plugin, and the monitor that is wanted only while there are any.
 pub(crate) struct Watch {
-    /// `None` when `pactl` is not installed.
     monitor: Option<Monitor>,
     state: Mutex<State>,
 }
@@ -96,7 +86,6 @@ impl Watch {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Takes the monitor's latest picture, unless it began before the monitor was last started.
     fn apply(&self, epoch: u64, picture: Result<Snapshot, Failure>) {
         let mut state = self.lock();
         if !state.watching || state.epoch != epoch {
@@ -106,8 +95,6 @@ impl Watch {
         state.show();
     }
 
-    /// Starts showing `subscription`; the first one starts the monitor. A subscription that
-    /// cannot work is shown unavailable and not tracked.
     pub(crate) fn add(&self, subscription: Subscription) {
         let (Some(kind), Some(selector), Some(monitor)) = (
             Kind::from_definition(subscription.source()),
@@ -127,7 +114,6 @@ impl Watch {
             selector,
         });
         if state.watching {
-            // An add is not an observation: only the reader may assert freshness.
             monitor.refresh();
             return;
         }
@@ -143,7 +129,6 @@ impl Watch {
         }
     }
 
-    /// Stops showing a subscription; the last one stops the monitor.
     pub(crate) fn remove(&self, id: SubscriptionId) {
         let mut state = self.lock();
         state.entries.retain(|entry| entry.subscription.id() != id);
@@ -152,7 +137,6 @@ impl Watch {
                 monitor.stop();
             }
             state.watching = false;
-            // The next time starts from nothing, not from a picture that went stale.
             state.cache = Cache::Loading;
         }
     }

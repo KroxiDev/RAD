@@ -18,3 +18,8 @@ incluidas las del lanzador y la navegación. Se formaliza la transferencia:
   dueños de su residual;
 - si el trabajo despachado todavía necesita su revisión, el Host retiene la raíz; si
   no, se libera. Se confirma al diseñar el cambio.
+
+El mismo principio se aplica a las consultas de opciones y a sus credenciales. Una consulta
+puede avisar del fallo sin esperar al reap, pero un kill aún no demuestra que hayan terminado
+todos los consumidores de una revisión. Una respuesta tardía se drena y libera su crédito sin
+emitir otro resultado.

@@ -1,4 +1,3 @@
-//! XL output/input adapter only. No domain, navigation, admission or action execution.
 mod protocol;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeckError {

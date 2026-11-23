@@ -234,7 +234,6 @@ fn persistent_reaffirmation_failure_stays_uncertain_then_recovers_without_replay
         CommitOutcome::NotApplied(StoreError::Uncertain)
     );
     vfs.state.disarm();
-    // Now let reaffirmation take effect but fail the directory-sync return.
     vfs.state.arm(vfs::Event::Delete, 1, false, true);
     assert!(matches!(store.reconcile(), CommitOutcome::Uncertain { .. }));
     vfs.state.disarm();
@@ -678,7 +677,7 @@ fn oversized_real_normalized_batch_is_rejected_before_any_sql_write() {
     };
     let (candidate, image) = pictured(&initial);
     assert!(image.png_bytes().len() * 512 > 128 * 1024 * 1024);
-    let batch = vec![image; 512]; // Genuine canonical PNGs; not fabricated 512KiB outputs.
+    let batch = vec![image; 512];
     vfs.state.arm(vfs::Event::Write, usize::MAX, false, false);
     assert_eq!(
         store.commit_with_media(&candidate, &batch),

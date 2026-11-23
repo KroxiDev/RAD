@@ -1,4 +1,3 @@
-//! Source-observation freshness, on a private bus with a synthetic player only.
 mod support;
 use std::time::Duration;
 use support::*;
@@ -59,9 +58,6 @@ fn a_blocked_source_reader_cannot_renew_cached_current_content() {
     player.command("status Paused").sync();
     let mut timing = quick();
     timing.recheck = Duration::from_millis(50);
-    // Deliberately exceed the observation window: no independent SDK timer may
-    // pretend that this blocked read is evidence of freshness. Host expiry itself
-    // is exercised by rad-plugin-host/tests/freshness_v1.rs with its own clock.
     timing.refresh_deadline = Duration::from_secs(60);
     let mut host = Host::start(Some(bus.address()), timing);
     let subscription = host.subscribe("strawberry");

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Same implementation, private fake backends, no product changes or personal services.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export CARGO_HOME="$PWD/target/cargo-home" CARGO_TARGET_DIR="$PWD/target"

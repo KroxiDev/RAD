@@ -57,7 +57,6 @@ impl StagingArea {
             next: 0,
             files: BTreeMap::new(),
         };
-        // Validate the complete bounded inventory before deleting anything.
         for entry in fs::read_dir(&anchored).map_err(|_| Error::Io)? {
             let entry = entry.map_err(|_| Error::Io)?;
             let name = entry.file_name();

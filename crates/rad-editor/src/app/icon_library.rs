@@ -1,4 +1,3 @@
-//! Contextual library in the actions column. Raster work stays off the GUI thread.
 use super::{App, look::Look, tr};
 use crate::{
     icon_library::{Choice, ENTRIES, GROUPS, Rendered, Renderer, SCALE_STEP, SCALES},
@@ -33,10 +32,7 @@ pub(super) struct Library {
     query: String,
     scroll_query: Option<String>,
     choice: Option<Choice>,
-    /// What this computer remembers drew the key's image: the choice starts here and only a
-    /// different one is a change to save.
     recalled: Option<Choice>,
-    /// Scroll the grid once to the recalled icon.
     reveal: bool,
     prepared: Option<Prepared>,
     before: Option<Prepared>,
@@ -571,8 +567,6 @@ impl App {
             .retain(|token| !result.released.contains(token));
         self.queue_image_cleanup(result.retry.iter().cloned());
         if result.disconnect {
-            // Only unpublished imported digests depend on this connection. Recipes
-            // can regenerate; published pictures and all locally edited text survive.
             let images: Vec<_> = self
                 .prepared_imports
                 .drain(..)
@@ -636,7 +630,6 @@ impl App {
             .filter(|(selection, draft)| *selection == self.selection && draft.id == fresh.id)
             .map(|(_, draft)| draft)
             .collect();
-        // A field stays local when it differs from any value the runtime may now hold.
         let rebase = |fresh: &mut super::Draft,
                       published: &crate::session::Inspection,
                       edited: &super::Draft| {
@@ -715,7 +708,6 @@ impl App {
         let unknown = result.as_ref().is_err_and(|e| e.unknown);
         let matched = self.icon_library.finish(button, ticket, applied, unknown);
         if matched && (applied || unknown) {
-            // Do not offer Save with the pre-upload image while the new view is loading.
             self.inspection = None;
         }
         match result {
@@ -761,7 +753,6 @@ mod tests {
         });
         app
     }
-    /// Draws the keys screen once and returns the width of the right column.
     fn side_panel_width(ctx: &egui::Context, app: &mut App, look: &Look) -> f32 {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -1020,7 +1011,7 @@ mod tests {
         );
         assert_eq!(library.preview("b9").unwrap().id(), current);
         assert!(library.preview("b7").is_none());
-        library.reset(); // same invalidation used on disconnect and disappearance
+        library.reset();
         library.accept_preview(
             &ctx,
             old,

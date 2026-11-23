@@ -1,4 +1,3 @@
-//! Synchronous persistence only. The caller owns authorization and publication.
 mod source;
 pub use rad_media::{MediaEntry, MediaReadError, MediaSource};
 mod recovery;
@@ -182,8 +181,6 @@ impl Store {
             fail_return: false,
         };
         store.load()?;
-        // Startup/reopen cannot turn a previously failed commit return into a
-        // durable assertion by reading alone. Force a distinct metadata write.
         let tx = store
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;

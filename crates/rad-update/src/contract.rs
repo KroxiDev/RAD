@@ -172,7 +172,6 @@ pub struct ReleaseIdentity {
     pub architecture: String,
     pub base: String,
 }
-/// The checked-in release identity is the sole product/package version source.
 pub fn current_release() -> Result<ReleaseIdentity, Error> {
     serde_json::from_str(include_str!("../../../packaging/release.json"))
         .map_err(|_| Error("invalid compiled release identity".into()))

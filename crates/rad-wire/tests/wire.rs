@@ -152,7 +152,6 @@ fn hello_must_be_first_exact_id_one_empty_args_and_cannot_repeat() {
     );
 }
 
-// Regression/characterization: parser behavior already implemented, not a TDD cycle.
 #[test]
 fn malformed_utf8_json_nonfinite_and_trailing_values_close_without_echoing_input() {
     for bad in [

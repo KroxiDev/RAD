@@ -1,6 +1,3 @@
-//! Recovery mode (ADR 0011) seen from the client sockets, in process: the runtime that
-//! cannot open the configuration keeps serving the narrow recovery surface and leaves
-//! the damaged file alone until «Empezar de nuevo».
 use rad_client::{
     connection::{Client, Endpoint},
     response::{Outcome, Response, Status},
@@ -48,7 +45,6 @@ impl Fixture {
     fn session(&self) -> NonZeroU128 {
         NonZeroU128::new(0xABCD_0000 + NEXT.fetch_add(1, Ordering::Relaxed) as u128).unwrap()
     }
-    /// The data directory with exactly `database` in it.
     fn with_database(&self, database: &[u8]) {
         std::fs::create_dir(self.data()).unwrap();
         std::fs::set_permissions(self.data(), std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -89,8 +85,6 @@ impl Drop for Fixture {
     }
 }
 
-/// What the binary's loop does: serve recovery, and become the Server in the same process
-/// once a restart is done.
 enum Mode {
     Recovery(Box<Recovery>),
     Serving(Box<Server>),
@@ -118,7 +112,6 @@ impl Mode {
             Mode::Moving => unreachable!(),
         }
     }
-    /// Runs the client `work` on its own thread while this serves.
     fn run<T: Send + 'static>(&mut self, work: impl FnOnce() -> T + Send + 'static) -> T {
         let (send, receive) = mpsc::sync_channel(1);
         let client = std::thread::spawn(move || send.send(work()).unwrap());
@@ -139,7 +132,6 @@ impl Mode {
 fn connect(root: &Path, endpoint: Endpoint) -> Client {
     Client::connect(root, endpoint).expect("recovery mode negotiates the handshake")
 }
-/// `(error code, outcome)` of a refusal.
 fn refusal(response: &Response) -> (&str, Option<Outcome>) {
     assert_eq!(response.status, Status::Error, "{response:?}");
     let error = response.error.as_ref().expect("error");
@@ -282,7 +274,6 @@ fn starting_again_needs_confirmation_keeps_the_evidence_and_the_same_connection(
         assert_eq!(reset.status, Status::Applied, "{reset:?}");
         assert_eq!(data(&reset)["changed"], true);
         assert!(data(&reset)["revision"].is_string());
-        // The same connections now find the normal runtime.
         let overview = editor.request("overview", json!({})).unwrap();
         assert_eq!(overview.status, Status::Ok, "{overview:?}");
         assert_eq!(
@@ -304,7 +295,6 @@ fn starting_again_needs_confirmation_keeps_the_evidence_and_the_same_connection(
                 ("recovery_reset", None)
             ]
         );
-        // Recovery is over: its operations are not served any more.
         assert_eq!(
             refusal(&editor.request("recovery", json!({})).unwrap()),
             ("invalid_request", None)
@@ -335,8 +325,6 @@ fn create_button(editor: &mut Client, folder: &str, position: usize, name: &str)
     panic!("the runtime stayed busy")
 }
 
-/// A copy of the configuration as the real server exports it: base64 chunks with the
-/// bytes each one holds.
 type Copy = Vec<(String, usize)>;
 fn export_copy(editor: &mut Client) -> Copy {
     let token = request_ok(
@@ -361,7 +349,6 @@ fn export_copy(editor: &mut Client) -> Copy {
         }
     }
 }
-/// Uploads `copy` and returns the token with the answer to `transfer_finish`.
 fn upload_copy(editor: &mut Client, copy: &Copy) -> (Value, Value) {
     let size: usize = copy.iter().map(|(_, bytes)| bytes).sum();
     let token = request_ok(
@@ -393,8 +380,6 @@ fn request_ok(client: &mut Client, operation: &str, args: Value) -> Value {
 fn populated(fixture: &Fixture) -> u128 {
     populate(fixture, false).0
 }
-/// The same, plus a copy exported after the two buttons and a third button the copy does
-/// not hold.
 fn populated_with_copy(fixture: &Fixture) -> (u128, Copy) {
     populate(fixture, true)
 }
@@ -515,8 +500,6 @@ fn a_hot_journal_that_survives_the_failed_open_is_kept_with_the_evidence() {
     assert_eq!(std::fs::read(&evidence[1]).unwrap(), journal);
 }
 
-/// Restores `copy` from recovery mode on `fixture`, whose database is already damaged,
-/// and runs `after` on the editor connection that did it.
 fn restore_into<T: Send + 'static>(
     fixture: &Fixture,
     copy: Copy,
@@ -536,7 +519,6 @@ fn restore_into<T: Send + 'static>(
             .unwrap();
         assert_eq!(restored.status, Status::Applied, "{restored:?}");
         assert_eq!(data(&restored)["changed"], true);
-        // The same connection now finds the normal runtime, with the copy in it.
         assert_eq!(
             editor.request("overview", json!({})).unwrap().status,
             Status::Ok

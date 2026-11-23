@@ -1,4 +1,3 @@
-//! Per-process credential state. No retries; ACKs are one-shot and deadline bounded.
 use crate::{Diagnostic, Error, Host, State};
 use rad_plugin_contract::{Correlation, CredentialValues, MAX_CREDENTIAL_REVISIONS, Message};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,7 +11,6 @@ pub(super) struct Installed {
     pub state: CredentialState,
     pub correlation: Correlation,
     pub deadline: u64,
-    // Retain the private copy until the peer releases it or is actually reaped.
     pub values: Option<CredentialValues>,
 }
 impl Host {

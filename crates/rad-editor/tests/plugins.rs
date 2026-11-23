@@ -63,7 +63,6 @@ fn catalog_entries_read_their_plugin_texts_in_the_user_language() {
     assert_eq!(catalog[0].shown(Language::Es), "Grabación");
     assert_eq!(catalog[0].texts.get(Language::Es, "Toggle"), "Alternar");
     assert_eq!(catalog[0].shown(Language::En), "Recording");
-    // A plugin without readable translations keeps its own texts.
     assert_eq!(catalog[1].shown(Language::Es), "Recording");
 }
 

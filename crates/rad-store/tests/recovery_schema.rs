@@ -1,4 +1,3 @@
-// Promoted from independent core fix-recovery review; original SHA in fix-recovery-2/reviewer-source.sha256.
 use rad_core::{
     configuration::{Configuration, Edit, Origin},
     identity::IdentityRegistry,
@@ -52,7 +51,6 @@ fn held(label: &str) -> std::path::PathBuf {
 fn missing_table_must_not_authorize_gc_of_previously_held_material() {
     let p = held("missing-table");
     let db = rusqlite::Connection::open(&p).unwrap();
-    // Controlled incomplete-schema fixture, not a claim of attacker resistance.
     db.execute_batch("DROP TABLE recovery").unwrap();
     drop(db);
     let bytes_before = std::fs::read(&p).unwrap();

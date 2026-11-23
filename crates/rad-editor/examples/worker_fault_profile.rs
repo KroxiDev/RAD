@@ -61,7 +61,7 @@ fn main() {
     let seconds: u64 = args[1].parse().unwrap();
     assert!((1..=10).contains(&seconds));
     private_root(&root);
-    std::panic::set_hook(Box::new(|_| {})); // Expected synthetic panic, no private data in logs.
+    std::panic::set_hook(Box::new(|_| {}));
     let mut healthy = Worker::spawn(|job: u64| job + 1);
     let mut failed = Worker::spawn(|job: u64| {
         assert_ne!(job, 0, "synthetic worker death");

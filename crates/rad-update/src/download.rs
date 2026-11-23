@@ -1,4 +1,3 @@
-//! Bounded HTTPS subprocesses, private staging and complete-artifact verification.
 use crate::{Cancellation, Error, Progress, ReleaseMetadata};
 use sha2::{Digest, Sha256};
 use std::{

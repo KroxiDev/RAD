@@ -1,4 +1,3 @@
-//! Structural ELF checks, not a loader or a claim of trust/ABI compatibility.
 use crate::Error;
 
 pub(crate) fn validate(bytes: &[u8], target: &str) -> Result<(), Error> {
@@ -35,7 +34,7 @@ pub(crate) fn validate(bytes: &[u8], target: &str) -> Result<(), Error> {
         let kind = u32_at(header, 0);
         if kind == 0 {
             continue;
-        } // PT_NULL has no defined payload.
+        }
         let file_offset = u64_at(header, 8);
         let address = u64_at(header, 16);
         let file_size = u64_at(header, 32);
@@ -47,12 +46,10 @@ pub(crate) fn validate(bytes: &[u8], target: &str) -> Result<(), Error> {
             return Err(Error::InvalidExecutable);
         }
         if kind == 1 {
-            // PT_LOAD
             let alignment = u64_at(header, 48);
             let end = address
                 .checked_add(memory_size)
                 .ok_or(Error::InvalidExecutable)?;
-            // Linux x86-64 user addresses cannot exceed the 57-bit user range.
             if end > (1u64 << 56)
                 || file_size > memory_size
                 || alignment > 1
@@ -61,8 +58,6 @@ pub(crate) fn validate(bytes: &[u8], target: &str) -> Result<(), Error> {
             {
                 return Err(Error::InvalidExecutable);
             }
-            // The entry must contain supplied instructions, not zero-fill/BSS.
-            // file_size <= memory_size and checked address + memory_size above.
             executable_entry |=
                 u32_at(header, 4) & 1 != 0 && entry >= address && entry < address + file_size;
         }

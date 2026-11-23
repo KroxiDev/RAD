@@ -1,4 +1,3 @@
-//! Terminal, bounded writes of whole SDK frames. A partial frame is never followed by another.
 use std::{
     io::{self, Write},
     os::fd::{AsRawFd, FromRawFd, OwnedFd},

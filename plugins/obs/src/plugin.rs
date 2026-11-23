@@ -1,4 +1,3 @@
-//! SDK adapter and one bounded worker. No OBS I/O occurs on the SDK thread.
 use crate::{protocol, transport::Transport};
 mod wake;
 use rad_plugin_sdk::*;
@@ -32,19 +31,14 @@ pub fn config() -> Config {
     ])
     .credential_slots(vec!["password".into()])
 }
-/// How long an action waits for OBS to accept connections, as when OBS is still opening.
 const CONNECT_SECONDS: u64 = 15;
-/// Whole budget of an action, inside the 20 seconds its manifest declares to the host.
 const ACTION_SECONDS: u64 = 18;
 struct Wait {
     credentials: Option<Credentials>,
     reply: Reply<Outcome>,
-    /// Until then a missing connection is waited for; afterwards OBS is not there.
     connect_by: Instant,
     deadline: Instant,
     flow: crate::workflow::Workflow,
-    /// Some request of this action reached OBS: a lost connection now fails it, because
-    /// nothing is replayed on another one.
     started: bool,
     sent: Option<String>,
     outcome: Option<Outcome>,
@@ -105,7 +99,6 @@ impl Shared {
         } else {
             self.endpoint.port()
         };
-        // A test endpoint is never allowed to fall back to personal OBS, even through settings.
         if self.endpoint.port() != 4455 && port == 4455 {
             return Err(FailureCode::InvalidParameters);
         }
@@ -224,7 +217,6 @@ impl Plugin for ObsPlugin {
             pending_text: None,
             backoff: Duration::from_millis(250),
         });
-        // A scene collection is changing: its targets are not known to exist.
         if session.blocked {
             drop(inner);
             drop(credentials);
@@ -385,14 +377,11 @@ fn run_worker(shared: Arc<Shared>) {
             .values()
             .filter_map(|session| session.transport.as_ref().and_then(Transport::readiness))
             .collect();
-        // Retain the existing timer bound for deadlines/retries, but socket data and
-        // new SDK demand wake immediately. With no demand there is no periodic wake.
         let timeout = if inner.sessions.is_empty() { -1 } else { 20 };
         drop(inner);
         shared.wake.wait(sockets, timeout);
     }
 }
-// Same turn for production monotonic time and isolated deadline tests.
 fn worker_turn(shared: &Shared, now: Instant) -> bool {
     let mut inner = lock(&shared.inner);
     if inner.stop {
@@ -421,7 +410,6 @@ fn worker_turn(shared: &Shared, now: Instant) -> bool {
             {
                 Some(Outcome::Failure { code })
             } else if !wait.started && !ready && now >= wait.connect_by {
-                // OBS never accepted the connection: it is closed or not listening.
                 Some(Outcome::Failure {
                     code: FailureCode::Unavailable,
                 })
@@ -459,8 +447,6 @@ fn worker_turn(shared: &Shared, now: Instant) -> bool {
             }
         }
     }
-    // Retire the transport before answering the final consumer, not only when credentials
-    // are replaced. A later consumer starts a fresh session with no old actions or state.
     inner.sessions.retain(|_, session| session.has_demand());
     drop(inner);
     for (reply, outcome) in replies {
@@ -490,8 +476,6 @@ impl Session {
         }
         if event == "CurrentSceneCollectionChanged" {
             self.blocked = false;
-            // OBS may abandon requests from the old collection. Their IDs are no longer
-            // owned by any consumer; a late response cannot match a fresh request.
             self.discarded = None;
         }
         let lists_changed = matches!(
@@ -766,7 +750,6 @@ impl Session {
             && !self.queries.iter().any(|q| q.sent.is_some())
             && !self.watches.iter().any(|w| w.sent.is_some())
             && let Some(job) = {
-                // One action at a time, in order: the next reads the state the last one left.
                 let running = self.waits.iter().any(|w| w.started && w.outcome.is_none());
                 self.waits.iter_mut().find(|w| {
                     w.outcome.is_none()
@@ -852,7 +835,6 @@ impl Session {
         Ok(())
     }
 }
-// Event payloads identify what to reread; only visual_state interprets observations.
 fn event_affects(watch: &Watch, event: &str, data: &Value) -> bool {
     let source = watch.sub.source();
     let params = watch.sub.parameters();
@@ -866,7 +848,6 @@ fn event_affects(watch: &Watch, event: &str, data: &Value) -> bool {
     let target = params
         .text(field)
         .and_then(|v| crate::workflow::target(v).ok());
-    // Missing identity fields mean reread this type, never guess which object changed.
     let name_matches = |name: Option<&str>, key: &str, old: Option<&str>| {
         data[key].as_str().is_none()
             || old.is_some_and(|key| data[key].as_str().is_none())

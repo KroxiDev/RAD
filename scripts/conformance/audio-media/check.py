@@ -19,7 +19,6 @@ def equal(label, actual, expected):
     print(f'PASS {label}: {actual!r}', flush=True)
 
 
-# Reuse the typed Rust client bridge, not a second runtime wire implementation.
 sys.dont_write_bytecode = True
 import importlib.util
 _peer_spec = importlib.util.spec_from_file_location("typed_peer", Path(__file__).resolve().parents[1] / 'obs/check.py')
@@ -89,10 +88,6 @@ class World:
         return [s for s in child.events if s.startswith('call ')]
 
     def start(self, expected_host='absent'):
-        # The host and pactl deliberately discard PULSE_*; they are NOT our isolation.
-        # Only the private fixture tree is writable. No host home/run/Pulse config or network.
-        # Both merged-/usr and traditional library layouts: mirror the host's own
-        # /lib and /lib64, wherever its dynamic loader lives.
         libraries = [arg for path in ('/lib', '/lib64') if os.path.exists(path)
                      for arg in ('--ro-bind', path, path)]
         isolation = ['/usr/bin/bwrap', '--die-with-parent', '--unshare-net',
@@ -193,7 +188,6 @@ def scenario(w):
         dict(label='First Brave', value='brave'), dict(label='Strawberry (not running)', value='strawberry')])
     equal('editor/CLI same options', e.call('options', id='a1', field='player', cursor=None), options)
     w.cli('schema', 'org.rad.media:control')
-    # Negative control: merely querying options/schema must not execute a method.
     equal('queries have no media effects', w.calls(first) + w.calls(second), [])
     denied = w.cli('run', 'a1', '--wait', code=3)
     equal('default execute permission denied', denied['error']['code'], 'permission_denied')
@@ -205,7 +199,7 @@ def scenario(w):
     e.call('set_permissions', target='global', value=dict(own=dict(consult=True, modify=True, execute=True)))
     result = w.cli('run', 'a1', '--wait')
     equal('media execution successful', result['data']['state'], 'succeeded')
-    w.command(first, 'identity First Brave')  # barrier for observations
+    w.command(first, 'identity First Brave')
     equal('AC30 first matching instance receives method', w.calls(first), ['call Play'])
     equal('AC30 other instance untouched', w.calls(second), [])
     w.command(first, 'can play false')
@@ -232,7 +226,6 @@ def scenario(w):
         type='org.rad.media#now_playing', parameters=parameters(player='absent')))])
     w.until(lambda: e.call('plugin_visual', id='b3'), lambda v: v['availability'] == 'unavailable')
     equal('visual failure independent from healthy action', w.cli('run', 'a3', '--wait')['data']['state'], 'succeeded')
-    # Real PNG -> official media plugin JPEG -> RAD normalized image over IPC.
     def chunk(kind, payload):
         return struct.pack('>I', len(payload)) + kind + payload + struct.pack('>I', zlib.crc32(kind + payload))
     art = w.root / 'cover.png'

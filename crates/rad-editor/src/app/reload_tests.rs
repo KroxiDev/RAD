@@ -1,5 +1,3 @@
-//! A change replaces what is on screen at once, never blank or mixing revisions, and
-//! Delete removes the selected key.
 use super::*;
 use crate::session::{Grid, Inspection, KeyView, Refresh};
 use std::sync::{
@@ -23,7 +21,6 @@ pub(super) fn event(result: Result<Reply, crate::session::Error>) -> Event {
         result,
     }
 }
-/// Preserve the production Save envelope while fixtures answer ordinary requests.
 pub(super) fn worker(mut run: impl FnMut(Job) -> Event + Send + 'static) -> Worker<Job, Event> {
     Worker::spawn(move |job| {
         let (ticket, job) = match job {
@@ -122,7 +119,6 @@ fn a_change_to_the_selected_key_replaces_its_panel_without_blanking_it() {
     pump_until(&mut app, &ctx, |app| app.board.is_some());
     app.select(1, Some("b2".into()));
     pump_until(&mut app, &ctx, |app| app.inspection.is_some());
-    // What the runtime's notices ask for after an edit.
     revision.store(2, Ordering::SeqCst);
     app.force = true;
     app.inspect_needed = true;
@@ -455,7 +451,6 @@ fn queued_saves_retain_later_edits_when_either_result_is_refused_or_unknown() {
 
 #[test]
 fn a_save_of_unknown_outcome_keeps_fields_set_back_and_fields_left_as_sent() {
-    // Whether or not the runtime applied it, no edit disappears and untouched fields follow.
     for applied in [true, false] {
         let mut app = app();
         app.board = Some(board(1));
@@ -475,7 +470,6 @@ fn a_save_of_unknown_outcome_keeps_fields_set_back_and_fields_left_as_sent() {
                     if applied {
                         view.button["fields"]["name"] = json!("Sent name");
                     }
-                    // Another client's change, so the view is new either way.
                     view.button["fields"]["gesture"] = json!("hold");
                     Ok(Reply::Refresh(Refresh {
                         status: Value::Null,
@@ -508,7 +502,6 @@ fn a_save_lost_with_its_worker_keeps_a_field_set_back() {
     app.board = Some(board(1));
     app.control.select(Some("b2".into()));
     app.adopt_inspection(inspection(1, vec![]));
-    // The Save landed before its worker died; the replacement reads it back.
     app.worker_respawn = crate::worker::Respawner::new(|| {
         worker(|job| {
             event(Ok(match job {
@@ -689,8 +682,6 @@ fn delete_removes_the_selected_key_or_the_folder_it_enters_without_asking() {
 
 #[test]
 fn manual_inspection_after_removing_a_linked_action_saves_the_visible_base_face() {
-    // Replay the separate Board/Inspector reads after removing the linked action.
-    // No reselection: this goes through pump_replies, not just Draft::load.
     for route in 0..3 {
         let ctx = egui::Context::default();
         let mut app = app();
@@ -877,7 +868,6 @@ fn appearance_conflict_rereads_without_replaying_and_retains_only_the_same_visua
             fresh.appearance["visual_type"] = Value::Null;
             fresh.appearance["states"] = json!({});
         }
-        // The same adoption is shared by all three worker reply variants above.
         app.adopt_inspection(fresh);
         assert_eq!(
             app.draft.name, "Remote name",
@@ -1010,7 +1000,6 @@ fn conflict_refresh_and_followup_inspection_do_not_erase_the_rebased_face() {
         app.draft.text, "Keep my text",
         "scheduler's next inspection erased the rebased face"
     );
-    // A coalesced notice can still request the same immutable inspection later.
     app.worker.enqueue(Job::Inspect("b2".into())).unwrap();
     while app.worker.busy() {
         let _ = app.pump_replies(&ctx);

@@ -1,4 +1,3 @@
-//! `manifest.json` is what the host reads before it starts the plugin; the code must agree with it.
 mod support;
 use rad_plugin_audio::{Kind, config};
 use serde_json::{Value, json};
@@ -57,7 +56,6 @@ fn every_definition_has_the_documented_fields() {
         assert_eq!(definition["credential_slots"], json!([]));
         assert_eq!(definition["schema"]["version"], 1);
         let expected = if category == "actions" {
-            // The device first: the operation starts on Toggle.
             json!([device, operation])
         } else {
             json!([device])
@@ -72,8 +70,6 @@ fn every_definition_has_the_documented_fields() {
 
 #[test]
 fn the_values_the_manifest_offers_are_the_ones_the_plugin_accepts() {
-    // Each declared operation is a valid action; the dynamic `device` field is answered with
-    // options for exactly the declared definitions and field.
     let server = FakeServer::new();
     let mut host = Host::start(&server, quick());
     for operation in manifest()["actions"][0]["schema"]["fields"][1]["kind"]["options"]

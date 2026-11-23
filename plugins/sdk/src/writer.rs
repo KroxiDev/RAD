@@ -1,12 +1,9 @@
-//! Frame output shared by every thread of the plugin.
 use crate::{Correlation, Envelope, Error, Message, PROTOCOL, frame};
 use std::{
     io::{self, Write},
     sync::{Arc, Mutex, PoisonError},
 };
 
-/// Serialises whole frames onto the plugin's output; clones share one lock, so frames from the
-/// dispatch loop, reply threads and the heartbeat never interleave.
 #[derive(Clone)]
 pub(crate) struct Writer(
     Arc<Mutex<Option<Box<dyn Write + Send>>>>,
@@ -62,7 +59,6 @@ impl Writer {
     }
 }
 
-// Bound allocation during serialization, including escaping expansion.
 struct Payload(zeroize::Zeroizing<Vec<u8>>);
 impl Write for Payload {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -110,7 +106,6 @@ mod tests {
             outcome: crate::Outcome::Success,
         };
         assert!(writer.send(correlation, message.clone()).is_err());
-        // The shared writer remains terminal even if a new producer attempts to send.
         assert!(writer.send(correlation, message).is_err());
         assert_eq!(bytes.lock().unwrap().len(), 1);
     }

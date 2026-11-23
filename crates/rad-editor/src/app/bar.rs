@@ -1,4 +1,3 @@
-//! Top bar, connection notices and the status line.
 use super::{
     App,
     look::{Icon, Look, icon_button, state_pill},

@@ -1,4 +1,3 @@
-//! Private runtime credential vault; never part of exported configuration.
 use std::{collections::BTreeMap, fmt, path::Path};
 use zeroize::Zeroizing;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +111,6 @@ impl Vault {
             self.key()?.ok_or(Error::Unavailable)?;
             Ok(())
         })();
-        // Publication happened: any subsequent failure must retain Unknown, never generate another key.
         if durable.is_err() {
             self.unknown = true;
             return Err(Error::Uncertain);
@@ -285,9 +283,6 @@ impl Vault {
         let Some(dir) = files::directory(&self.dir, plugin, false)? else {
             return Ok(());
         };
-        // Explicit deletion cannot increase quota and must remain possible when
-        // multiple siblings are corrupt. Validate only the file being removed;
-        // replacement still requires safe accounting of every retained sibling.
         if let Some(file) = files::child(&dir, &format!("{slot}.radc"), libc::O_RDONLY)? {
             files::private(&file, false)?;
         }
@@ -369,7 +364,6 @@ impl Vault {
             files::sync_directory(&dir)?;
         }
         files::sync_directory(&self.dir)?;
-        // Missing is a recoverable state; an existing invalid key is not.
         self.key()?;
         self.unknown = false;
         Ok(())

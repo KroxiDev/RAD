@@ -1,4 +1,3 @@
-//! Which session bus the plugin is pointed at.
 use std::{
     fmt::Write,
     fs,
@@ -28,8 +27,6 @@ fn standard_address(runtime_dir: &Path) -> Option<String> {
     is_socket.then(|| format!("unix:path={}", escaped(&socket)))
 }
 
-/// `path` as the value of a bus address key: every byte that is not a letter, a digit or one of
-/// `-_/.\*` is written as `%` and two hex digits.
 fn escaped(path: &Path) -> String {
     path.as_os_str()
         .as_bytes()

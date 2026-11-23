@@ -48,3 +48,19 @@ sesión real, no se
 certifican con los tests aislados. Estos prueban bus privado, watcher tardío y
 reemplazado, activación única, parada sin reinicio solicitada y fin del proceso.
 Una compilación parcial sin `rad-tray` no impide arrancar la autoridad.
+
+## Ventana y bandeja
+
+Una ventana Wayland oculta puede dejar de recibir callbacks de frame. Con
+intercambio de buffers sincronizado, el hilo que también atiende la ventana puede
+quedar bloqueado al dibujar. El editor desactiva `vsync` y limita los dibujos a
+60 por segundo con su propio reloj. Redondea la espera mínima hacia arriba y la
+incluye al calcular el comienzo del siguiente frame. La activación por D-Bus
+es opcional en un escritorio que carece de bus de sesión.
+[Ventana](../../crates/rad-editor/src/main.rs) y [temporización](../../crates/rad-editor/src/app/pacing.rs).
+
+El menú de aplicaciones recibe el ejecutable como un argumento de `Exec`
+con el escape de argumentos y el escape de cadenas de una entrada de escritorio.
+La bandeja deriva los mapas de píxeles del PNG común. StatusNotifierItem los
+recibe como bytes ARGB en orden de red. [Entrada de escritorio](../../crates/rad-editor/src/desktop.rs)
+y [bandeja](../../crates/rad-tray/src/main.rs).

@@ -38,8 +38,6 @@ fn helper_child_does_not_inherit_blocked_shutdown_signals() {
     assert!(result.unwrap().success());
 }
 
-// Runtime binary smoke tests are enabled only in the complete isolated snapshot.
-
 #[cfg(feature = "fixture-tests")]
 #[test]
 fn binary_private_session_shutdown_and_corrupt_startup_enter_recovery_and_start_again() {
@@ -125,7 +123,6 @@ fn binary_private_session_shutdown_and_corrupt_startup_enter_recovery_and_start_
     let status = client.request("status", serde_json::json!({})).unwrap();
     assert!(status.error.is_none());
     drop(client);
-    // Only the child created above is signalled; no user sessions or hardware.
     assert_eq!(unsafe { libc::kill(child.0.id() as i32, libc::SIGTERM) }, 0);
     loop {
         if let Some(status) = child.0.try_wait().unwrap() {
@@ -139,7 +136,6 @@ fn binary_private_session_shutdown_and_corrupt_startup_enter_recovery_and_start_
     assert!(database.is_file());
     let invalid = b"not a sqlite database; preserve this material";
     fs::write(&database, invalid).unwrap();
-    // Not a reason to exit: the runtime keeps serving recovery mode, in this same process.
     let mut child = ChildGuard(command().spawn().unwrap());
     let mut client = loop {
         if let Ok(client) = Client::connect(&base.join("runtime"), Endpoint::Editor) {
@@ -176,7 +172,6 @@ fn binary_private_session_shutdown_and_corrupt_startup_enter_recovery_and_start_
         .collect();
     assert_eq!(evidence.len(), 1);
     assert_eq!(fs::read(&evidence[0]).unwrap(), invalid);
-    // The same process, the same connection, now the normal runtime.
     assert!(child.0.try_wait().unwrap().is_none());
     let overview = client.request("overview", serde_json::json!({})).unwrap();
     assert!(overview.error.is_none(), "{overview:?}");

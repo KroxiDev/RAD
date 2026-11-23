@@ -54,7 +54,6 @@ fn peer(id: &str) {
             return;
         }
         if hello && id == BLOCKED {
-            // Deliberately no more reads. Host owns this process and kills/reaps it.
             loop {
                 std::thread::park();
             }

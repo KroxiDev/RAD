@@ -1,4 +1,3 @@
-//! The runtime as a service: start it when it does not answer, and say plainly when it cannot.
 use super::{App, look::Look, tr};
 use crate::{
     service::{AutostartWarning, Failure, FailureKind, Job, Outcome},
@@ -8,11 +7,9 @@ use eframe::egui;
 
 #[derive(Default)]
 pub(super) struct ServiceUi {
-    /// Bootstrap was attempted or a connection already succeeded; never undo a stop.
     tried: bool,
     /// The next failed connection asks systemd why.
     inspect_due: bool,
-    /// Something was asked of systemd and the verdict is not in.
     waiting: bool,
     failure: Option<Failure>,
     /// Autostart needs attention even if the runtime is already connected.
@@ -20,7 +17,6 @@ pub(super) struct ServiceUi {
 }
 
 impl App {
-    /// One editor launch refreshes the installed units even when the runtime already answers.
     pub(super) fn bootstrap_service(&mut self) {
         if self.service.tried {
             return;
@@ -42,8 +38,6 @@ impl App {
     /// asks systemd why when it still does not. Called every turn; it sleeps when idle.
     pub(super) fn pump_service(&mut self, ctx: &egui::Context) {
         if self.connected {
-            // After connecting, only systemd owns restart policy. Otherwise losing a
-            // connection after the tray's Stop would silently start the service again.
             self.service = ServiceUi {
                 tried: true,
                 warning: self.service.warning.take(),
@@ -94,7 +88,6 @@ impl App {
             self.service.waiting = true;
         }
     }
-    /// The user asked again: reset the unit, start it, connect.
     pub(super) fn retry_service(&mut self, ctx: &egui::Context) {
         let Some(worker) = self.service_worker.as_mut() else {
             return self.reconnect(ctx);
@@ -121,12 +114,9 @@ impl App {
                 self.service.waiting = false;
             }
             None if outcome.job == Job::Inspect || self.connected => {
-                // Bootstrap also updates units for an already-active runtime. Do not
-                // replace a healthy RPC session just because its idempotent Start ended.
                 self.service.waiting = false;
             }
             None => {
-                // Started: connect once; if the runtime still is silent, say why.
                 self.service.inspect_due = true;
                 self.reconnect(ctx);
             }

@@ -37,3 +37,18 @@ este modo solo aparece cuando no queda ninguna.
 de salida ni el journal; el último motivo de salida queda en «Ver detalles» tras
 reiniciar. El registro va a journald, más un búfer acotado de eventos recientes para
 «Avanzado → Registro».
+
+Una lectura después de un retorno incierto de SQLite no demuestra durabilidad. Al reconciliar,
+el Store verifica que la cabecera, el registro y los contadores corresponden al estado
+anterior o al candidato. Después cambia el valor de una barrera en una transacción real: una
+escritura idéntica podría omitir la sincronización. Al reabrir se comprueba la integridad y se
+cambia la barrera antes de continuar.
+[Reconciliación](../../crates/rad-store/src/reconciliation.rs).
+
+Para rescatar contadores de un archivo dañado se abre como inmutable, evitando que SQLite
+reproduzca un journal o modifique evidencia. Se toma el mayor valor legible de cada fuente:
+una reserva demasiado alta deja un hueco admisible. Al reemplazar la base se separan primero
+sus sidecars para que un journal caliente no se reproduzca sobre la nueva, y se intercambian
+atómicamente los archivos. Los fallos posteriores conservan la evidencia. [Lectura de
+contadores](../../crates/rad-store/src/peek.rs) y
+[reemplazo](../../crates/rad-store/src/replace.rs).

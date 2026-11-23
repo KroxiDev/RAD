@@ -1,4 +1,3 @@
-//! Versioned, I/O-free client contract. Domain validation belongs to the authority.
 pub const VERSION: u8 = 1;
 pub const CLI_VERSION: u8 = 1;
 mod request;

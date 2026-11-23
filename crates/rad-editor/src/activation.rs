@@ -1,6 +1,3 @@
-//! One editor per session bus. Registration precedes window creation, so even
-//! simultaneous launches become activations of the same owner, not extra windows.
-//! Its `quit` action closes the editor when RAD is quit from the tray.
 use gio::{glib, prelude::*};
 use std::sync::{
     Arc,
@@ -117,7 +114,6 @@ impl WindowActivation {
             state.pending = true;
         }
     }
-    /// RAD was quit: the window closes, or will as soon as it exists.
     pub fn close(&self) {
         let mut state = self.0.lock().expect("window activation mutex");
         match &state.context {
@@ -143,8 +139,6 @@ impl WindowActivation {
         context.send_viewport_cmd(ViewportCommand::Visible(true));
         context.send_viewport_cmd(ViewportCommand::Minimized(false));
         context.send_viewport_cmd(ViewportCommand::Focus);
-        // On Wayland winit::focus_window is a no-op. Its attention request uses
-        // xdg_activation_v1.activate; the compositor retains final focus policy.
         context.send_viewport_cmd(ViewportCommand::RequestUserAttention(
             eframe::egui::UserAttentionType::Informational,
         ));

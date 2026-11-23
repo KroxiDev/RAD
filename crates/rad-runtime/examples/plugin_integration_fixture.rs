@@ -205,7 +205,6 @@ fn scenario(root: PathBuf, live: bool, measure: bool, idle: bool, baseline: Vec<
                 }
             }
         }
-        // Transport deliberately expires idle clients; reconnect, never replay.
         c = Client::connect(&root.join("runtime"), Endpoint::Editor).unwrap();
         let mut admission = vec![];
         let mut complete = vec![];

@@ -59,7 +59,6 @@ fn png_decoder_budget_is_enforced_at_the_real_locked_metadata_boundary() {
     assert_eq!(normalize(&over_budget), Err(MediaError::DecoderLimit));
 }
 
-// Characterization/regression of behavior already green, not additional TDD cycles.
 #[test]
 fn strips_metadata_and_has_deterministic_reachable_encoder_bound() {
     let mut seed = 17u32;

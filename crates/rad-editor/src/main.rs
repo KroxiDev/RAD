@@ -21,12 +21,10 @@ fn main() -> Result<(), eframe::Error> {
         Ok(Some(instance)) => Some(instance),
         Ok(None) => return Ok(()),
         Err(error) => {
-            // A desktop without a session bus still gets a usable editor.
             eprintln!("RAD editor activation unavailable: {error}");
             None
         }
     };
-    // The menu entry follows the editor in use (E2); failing to write it never blocks the editor.
     std::thread::spawn(|| {
         if let Err(error) = rad_editor::desktop::install_for_user() {
             eprintln!("RAD menu entry not installed: {error}");
@@ -53,8 +51,6 @@ fn main() -> Result<(), eframe::Error> {
             .with_min_inner_size([980., 680.]),
         ..Default::default()
     };
-    // Hidden Wayland windows get no frame callbacks: a vsynced swap blocks the main
-    // thread, so the compositor marks the application as unresponsive.
     options.glow_options.vsync = false;
     eframe::run_native(
         rad_editor::texts::text("en", "RAD"),

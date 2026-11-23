@@ -72,7 +72,6 @@ impl Store {
     }
 }
 
-// One strict prerelease format. Missing metadata is not permission to discard.
 pub(crate) fn validate(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     let hold: i64 =
         connection.query_row("SELECT hold FROM recovery WHERE singleton=1", [], |r| {

@@ -1,4 +1,3 @@
-//! One coalesced slot per notice kind, plus connection state. No unbounded queue.
 use rad_api::NoticeKind;
 use rad_client::connection::{Client, Endpoint, SubscriptionCancel};
 use std::{
@@ -70,7 +69,6 @@ impl Notices {
                 if changed {
                     wake();
                 }
-                // This is transport reconnect backoff, never a state query or GUI timer.
                 let state = source.0.lock().unwrap();
                 let _ = source
                     .1

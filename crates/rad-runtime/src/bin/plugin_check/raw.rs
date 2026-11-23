@@ -192,7 +192,6 @@ impl Peer {
     fn receive(&mut self, timeout: u64) -> Result<Envelope> {
         self.receive_sized(timeout).map(|(e, _)| e)
     }
-    /// The next envelope and the size of its frame.
     fn receive_sized(&mut self, timeout: u64) -> Result<(Envelope, usize)> {
         let end = Instant::now() + Duration::from_millis(timeout);
         loop {
@@ -455,7 +454,6 @@ pub(super) fn pressure(path: &Path, m: &Manifest, s: &Scenario) -> Result {
                 ) => {}
             Err(_) => return Err("pressure_write"),
         };
-        // Deliberately no stdout read until process termination.
         std::thread::sleep(Duration::from_micros(100));
     };
     p.stderr()?;

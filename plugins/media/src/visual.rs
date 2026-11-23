@@ -1,4 +1,3 @@
-//! What the `now_playing` visual shows for one application, from what its player says.
 use crate::{
     Timing,
     bus::{Bus, Failure},
@@ -18,7 +17,6 @@ const PLAYING: [u8; 4] = [40, 167, 69, 255];
 const PAUSED: [u8; 4] = [255, 193, 7, 255];
 const STOPPED: [u8; 4] = [108, 117, 125, 255];
 
-/// A cover is made again only if its file changed: the URL, the size and the time of change.
 #[derive(PartialEq)]
 struct CoverKey {
     path: PathBuf,
@@ -26,8 +24,6 @@ struct CoverKey {
     modified: Option<SystemTime>,
 }
 
-/// Reads one application's player and works out what to show. It remembers the cover it made,
-/// so that an unrelated change does not decode the picture again.
 pub(crate) struct Reader {
     app: String,
     converter: Arc<cover::Converter>,
@@ -43,8 +39,6 @@ impl Reader {
         }
     }
 
-    /// The state to show. `shown` is what is displayed now: if the player cannot be asked, it is
-    /// kept but marked stale instead of being passed off as current.
     pub(crate) fn read(
         &mut self,
         bus: &Bus,
@@ -77,7 +71,6 @@ impl Reader {
             Ok(state) => VisualState::Current {
                 content: self.content(&state),
             },
-            // It left between the list and the question.
             Err(Failure::Unavailable) => VisualState::Unavailable,
             Err(_) => stale(),
         }
@@ -103,7 +96,6 @@ impl Reader {
         }
     }
 
-    /// The cover as hex of a JPEG, if the player offers a local picture that can be used.
     fn cover(&mut self, art_url: Option<&str>) -> Option<String> {
         let path = cover::path_of(art_url?).ok()?;
         let metadata = fs::metadata(&path).ok()?;
@@ -141,7 +133,6 @@ mod tests {
         if let Some(p) = &mut profile {
             p.snapshot("before");
         }
-        // The receiver stays alive but never accepts a conversion: sending to it would block.
         let (converter, stalled) = cover::Converter::stalled();
         if let Some(p) = &mut profile {
             p.snapshot("during");
@@ -163,7 +154,7 @@ mod tests {
                 profile_answer.elapsed().as_nanos(),
             );
         }
-        drop(stalled); // Release a regressed sender before joining, even when the assertion fails.
+        drop(stalled);
         handle.join().unwrap();
         if let Some(p) = &mut profile {
             p.snapshot("after");

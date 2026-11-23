@@ -1,4 +1,3 @@
-//! Closed v3 importer: action variants added by v4 are never accepted under v3.
 use crate::{CodecError, document, v3_document};
 pub(crate) fn import(bytes: &[u8]) -> Result<document::Document, CodecError> {
     let old: v3_document::Document =

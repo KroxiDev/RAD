@@ -1,4 +1,3 @@
-//! Client projections and coalesced invalidations; no state authority lives here.
 use super::*;
 use rad_api::{
     Notice, NoticeKind, OverviewView, PluginAttention, PluginAttentionCode, RestartState,
@@ -106,7 +105,6 @@ impl Server {
         ) {
             return Ok(false);
         }
-        // A refused change says so: a mutation's error always carries its outcome.
         let mutation = rad_api::Operation::parse(r.operation()).is_some_and(|o| o.is_mutation());
         if c.origin != Origin::Editor {
             self.respond(key, self.error(c, "permission_denied", mutation))?;
@@ -120,7 +118,6 @@ impl Server {
             Ok(rad_api::Request::SetMachineSettings{use_stream_deck,start_with_session})=>
                 self.set_machine_settings(use_stream_deck,start_with_session)?,
             Ok(rad_api::Request::Subscribe{})=>{
-                // A peer that left meanwhile has nothing to subscribe: its answer finds no request.
                 if self.transport.subscribe(c.connection){self.notices.subscribers.insert(c.connection);}
                 Ok(rad_api::ResponseData::Empty(rad_api::Empty {}))
             },
@@ -174,9 +171,6 @@ impl Server {
             start_with_session: self.machine.start_with_session,
         })
     }
-    /// Stores first and applies after: a change that could not be stored changes nothing.
-    /// Only `use_stream_deck` acts on the runtime; `start_with_session` is applied by the
-    /// editor, which owns the service unit.
     fn set_machine_settings(
         &mut self,
         use_stream_deck: Option<bool>,
@@ -213,7 +207,6 @@ impl Server {
             revision: self.notices.epoch.to_string(),
         };
         let payload = serde_json::to_vec(&notice).map_err(|_| RuntimeError::Protocol)?;
-        // Notices coalesce and a missed one is recovered by the next: a refusal is not fatal.
         if self
             .transport
             .notify(connection, kind.key(), &payload)

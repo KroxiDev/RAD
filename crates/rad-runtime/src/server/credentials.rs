@@ -94,7 +94,6 @@ impl Server {
         }
         Ok(())
     }
-    /// Applies what the credential worker finished; `true` when it finished anything.
     pub(super) fn poll_credentials(&mut self) -> Result<bool, RuntimeError> {
         let mut advanced = false;
         while let Some(event) = self.credentials.worker.poll() {
@@ -167,8 +166,6 @@ impl Server {
                     },
                     Err(error) => {
                         let mut response = self.error(context, error_code(error), mutation);
-                        // Unknown readiness is not proof that this request wrote anything.
-                        // The vault (or lost worker) explicitly classifies uncertain effects.
                         if mutation && error == VaultError::Uncertain {
                             response.error.as_mut().unwrap().outcome = Some(Outcome::Unknown);
                         }

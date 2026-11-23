@@ -1,4 +1,3 @@
-//! Blocking transfer services for the single Store worker, never the actor.
 use rad_core::configuration::{Candidate, Origin};
 use rad_package::{PreparedMedia, PreparedRestore, RestoreSummary, StagingArea};
 use rad_store::{CommitOutcome, Store, StoreError};
@@ -93,7 +92,6 @@ pub enum Operation {
     LoadVisual {
         resolved_key: String,
     },
-    /// Internal runtime operation, not an IPC command.
     RetainImages {
         media_refs: Vec<String>,
     },
@@ -761,8 +759,6 @@ impl Transfers {
         connection: u64,
         transfer_id: &str,
     ) -> CommitOutcome {
-        // The primary lease owns every freshly prepared picture referenced by this edit.
-        // RetainImages pins this group before queuing; direct callers are grouped here too.
         if self.entries.get(transfer_id).is_some_and(|t| {
             t.connection == connection && !t.started && matches!(t.body, Body::Image(_))
         }) {
@@ -848,8 +844,6 @@ impl Transfers {
         t.started = true;
         Store::create_from_media(path, candidate, media)
     }
-    /// A typed view conflict rejected the edit before persistence began. Restore
-    /// the entire image group to its original prepared lease, never extend expiry.
     pub fn unretain_images(&mut self, transfer_id: &str) -> Result<(), Error> {
         let primary = self.entries.get(transfer_id).ok_or(Error::NotFound)?;
         let ids: Vec<_> = std::iter::once(transfer_id.to_owned())

@@ -178,7 +178,6 @@ pub fn installed_version() -> Result<String, Error> {
     compare_versions(version, version)?;
     Ok(version.into())
 }
-/// A development checkout must never replace the system installation.
 pub fn managed() -> Result<bool, Error> {
     let executable = std::env::current_exe()?;
     if executable != Path::new("/usr/lib/rad/rad-editor") {

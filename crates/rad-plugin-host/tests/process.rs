@@ -101,7 +101,6 @@ fn running_timeout_cycles_keep_slots_until_reap_and_never_replay() {
         let key = host
             .invoke("org.rad.fixture", g, "run", parameters("slow"), now + 10)
             .unwrap();
-        // Deadline changes status, not ownership. No pump/reap is needed to observe admission cap.
         for _ in 1..rad_plugin_host::MAX_PLUGIN_JOBS {
             host.invoke("org.rad.fixture", g, "run", parameters("slow"), now + 10)
                 .unwrap();
@@ -323,7 +322,6 @@ fn timeout_retains_residual_until_late_reply_without_killing_healthy_plugin() {
         host.last_diagnostic("org.rad.fixture"),
         Some(rad_plugin_host::Diagnostic::Deadline)
     );
-    // The deadline is reported once, as a timeout and not as a failure.
     assert_eq!(
         host.take_completion(),
         Some((
@@ -357,7 +355,6 @@ fn timeout_retains_residual_until_late_reply_without_killing_healthy_plugin() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(host.resources(), (1, 0));
-    // The late reply was drained: no second report and nothing left to wait for.
     assert!(host.take_completion().is_none());
     assert!(host.idle("org.rad.fixture"));
     stop(&mut host, 10);
@@ -433,7 +430,6 @@ fn plugin_identity_and_allowlisted_environment_are_enforced_at_spawn() {
 
 #[test]
 fn plugin_started_under_blocked_shutdown_signals_still_terminates_on_sigterm() {
-    // The runtime blocks both signals before spawning; a child inherits its spawning thread's mask.
     let mut blocked = unsafe { std::mem::zeroed::<libc::sigset_t>() };
     let mut original = unsafe { std::mem::zeroed::<libc::sigset_t>() };
     unsafe {
@@ -478,7 +474,6 @@ fn plugin_started_under_blocked_shutdown_signals_still_terminates_on_sigterm() {
     assert_eq!(host.resources(), (0, 0));
 }
 
-/// Pid written by the fixture's descendant modes, killed on drop so a failing test leaks nothing.
 struct Descendant {
     dir: std::path::PathBuf,
     pid: Option<i32>,
@@ -497,7 +492,6 @@ impl Descendant {
     fn wait_for_pid(&mut self, host: &mut Host) -> i32 {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            // The fixture may still be writing the file: an unparsable read is retried.
             if let Some(pid) = std::fs::read_to_string(self.dir.join("descendant.pid"))
                 .ok()
                 .and_then(|text| text.parse().ok())
@@ -520,7 +514,6 @@ impl Drop for Descendant {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
-/// Dead means gone or an unreaped zombie (the test, not the Host, may be its parent's heir).
 fn is_dead(pid: i32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Err(_) => true,

@@ -167,7 +167,6 @@ fn sqlite_transaction_rolls_back_the_entire_revision_tuple_on_fk_error() {
             .unwrap();
         tx.execute("INSERT INTO heads VALUES (1,1,NULL)", [])
             .unwrap();
-        // A dangling reference must abort publication; explicit rollback is checked.
         assert!(
             tx.execute("INSERT INTO revision_media VALUES (2,zeroblob(32))", [])
                 .is_err()
@@ -229,7 +228,6 @@ fn real_sqlite_full_keeps_pretransaction_ledger_after_reopen() {
         }
     }
     assert!(full);
-    // FULL may already have rolled back the transaction. Never infer a Store verdict here.
     if !tx.is_autocommit() {
         tx.rollback().unwrap();
     } else {

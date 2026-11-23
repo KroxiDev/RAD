@@ -118,7 +118,6 @@ class CriticalMetricsEvidence(unittest.TestCase):
         self.assertEqual(M.evaluate_target(summary, availability(), 1)['status'], 'not_verified')
 
     def test_valid_gpu_scenario_reports_only_observed_sampled_target(self):
-        # User-approved budget; derive expected bytes independently of implementation.
         summary = [active_summary('one'), active_summary(rss=30*1024*1024)]
         result = M.evaluate_target(summary, availability(), 1)
         self.assertEqual(result['target_bytes'], 30*1024*1024)

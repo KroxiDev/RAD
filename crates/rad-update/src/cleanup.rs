@@ -1,4 +1,3 @@
-//! Conservative, bounded collection of updater-owned temporary directories only.
 use crate::Error;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -438,7 +437,6 @@ fn remove(
             return Err(Error("temporary file was replaced".into()));
         }
     }
-    // Known data first, ownership/lease last. Unknown entries are never recursively removed.
     for (name, _) in files
         .iter()
         .filter(|(name, _)| name != OWNER && name != LEASE)
@@ -466,7 +464,6 @@ pub fn collect_in(
         ..Default::default()
     };
     for name in names {
-        // Filter names before opening or statting anything outside this UID's exact namespace.
         let Some((kind, nonce)) = parse_name(&name, uid) else {
             continue;
         };
@@ -582,7 +579,6 @@ impl Lease {
             kind,
             uid,
         } = self;
-        // Closing only this descriptor preserves inherited SH locks in live consumers.
         drop(file);
         let lease = private_file(&directory, OsStr::new(LEASE), uid)?;
         lock(&lease, libc::LOCK_EX)?;

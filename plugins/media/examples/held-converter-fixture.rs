@@ -1,4 +1,3 @@
-//! Explicit private control socket + bus, never a desktop-bus fallback.
 use rad_plugin_media::{MediaPlugin, Timing, config};
 use std::{
     io::Read,
@@ -8,8 +7,6 @@ use std::{
 };
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // Only a package installed by the private test Store is runnable. Do not use
-    // inherited desktop environment variables to select a gate or a bus.
     let executable = std::env::current_exe()?.canonicalize()?;
     let plugins = executable
         .ancestors()

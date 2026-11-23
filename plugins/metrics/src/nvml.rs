@@ -70,7 +70,6 @@ impl Nvml {
                 return None;
             }
             let mut device = std::ptr::null_mut();
-            // Exactly index 0. No enumeration/count, fallback GPU, or sensor scan.
             if handle(0, &mut device) != 0 || device.is_null() {
                 shutdown();
                 return None;
@@ -113,7 +112,6 @@ impl Nvml {
 }
 impl Drop for Nvml {
     fn drop(&mut self) {
-        // Runs only on the isolated reader, never in plugin/supervisor teardown.
         unsafe {
             (self.shutdown)();
         }

@@ -1,4 +1,3 @@
-//! Minimal privileged installer. The executable has no arbitrary-command or arbitrary-package mode.
 use crate::{Cancellation, Candidate, Error, InstallOutcome, Prepared};
 use std::{fs::File, path::Path};
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,7 +22,6 @@ pub struct Authorized {
     candidate: Candidate,
     staging: crate::download::Temporary,
 }
-/// Authenticate from the official origin and freeze the user's bytes before READY.
 pub fn preflight_with(
     prepared: &Prepared,
     uid: u32,
@@ -104,7 +102,6 @@ pub fn preflight_with(
         staging,
     })
 }
-/// Revalidate immediately before the one irreversible transaction; no retry or downgrade.
 pub fn commit_with(
     authorized: Authorized,
     system: &mut impl System,
@@ -298,7 +295,6 @@ impl System for OfficialSystem {
             .parent()
             .ok_or_else(|| Error("protected package directory is missing".into()))?;
         inherit_transaction_leases(&mut command, package_directory, &temporary)?;
-        // None is intentional: never kill a running pacman transaction for cancellation/deadline.
         let result = crate::installation::capture(command, None, &Cancellation::default(), 32768)?;
         Ok(TransactionReport {
             success: result.code == Some(0),
@@ -449,9 +445,6 @@ pub fn run() -> Result<(), Error> {
         .filter(|uid| *uid > 0)
         .ok_or_else(|| Error("original authorized user is missing".into()))?;
     let _lock = root_lock()?;
-    // Only the already-authorized privileged entrypoint collects root-owned
-    // updater staging/config leftovers. Maintenance never changes admission and
-    // never writes to the READY/outcome protocol or touches another user's data.
     let _ = crate::cleanup::collect_in(Path::new("/tmp"), 0, &crate::cleanup::ProcessLiveness);
     let request = read_frame(
         crate::MAX_REQUEST_BYTES as usize,
@@ -583,8 +576,6 @@ mod lease_tests {
             )
             .unwrap();
             fs::write(root.join("consumer.pid"), spawned.id().to_string()).unwrap();
-            // Deliberate abrupt owner exit: no Temporary Drop runs. The controlled
-            // transaction-equivalent child must retain both SH leases after exec.
             std::process::exit(0);
         }
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

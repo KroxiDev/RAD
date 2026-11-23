@@ -1,4 +1,3 @@
-//! Active-folder navigation and client disconnection.
 use super::{Authority, Effect, EntityIdentity, Origin, Phase, Rejection, StorageState};
 
 impl Authority {

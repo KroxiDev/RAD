@@ -1,5 +1,4 @@
 use rad_core::{configuration::*, execution::*, identity::*};
-/// Two launchers with a wait of `wait_ms` between them: actions 0, 1 (the wait) and 2.
 fn fixture(mode: Mode, wait_ms: u64) -> Candidate {
     let c = Configuration::prepare_new(&IdentityRegistry::new(1).unwrap()).unwrap();
     let c = c
@@ -92,7 +91,6 @@ fn overflow_rolls_back_other_timeout_and_clock_in_the_same_transition() {
     assert_eq!(e.result(a.id), a_before);
     assert_eq!(e.result(b.id), b_before);
     assert_eq!(e.next_deadline(), Some(100));
-    // Error did not publish MAX as current time or consume A's actual completion.
     e.advance(99).unwrap();
     e.complete(a.dispatches[0].id, Completion::Succeeded)
         .unwrap();

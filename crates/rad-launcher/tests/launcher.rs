@@ -210,8 +210,6 @@ fn bounded_32_jobs_keep_residuals_while_helper_is_stopped_and_never_retry() {
     stop(&mut l);
 }
 
-// --- Per-application systemd scope (ADR 0013) ---
-/// Private session bus whose activatable services are `(name, exec)`.
 fn private_bus(
     f: &Fixture,
     services: &[(&str, String)],

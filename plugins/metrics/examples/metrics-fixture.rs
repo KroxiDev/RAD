@@ -1,4 +1,3 @@
-//! Same plugin and SDK, deterministic data instead of proc/NVML. Never probes hardware.
 use rad_plugin_metrics::{MetricsPlugin, config, polling::Sample, readings::Memory};
 use std::process::ExitCode;
 fn main() -> ExitCode {

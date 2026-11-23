@@ -367,7 +367,6 @@ impl StorageWorker {
                             if let ResultValue::Commit(outcome) = &result {
                                 let _ = fixture.entered.try_send(*outcome);
                             }
-                            // A panic/drop of the controller also releases this wait.
                             let _ = fixture
                                 .release
                                 .recv_timeout(std::time::Duration::from_secs(5));

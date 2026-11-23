@@ -1,4 +1,3 @@
-//! Dynamic options against the real `org.rad.test.options` process (major 1 with dynamic_options).
 use rad_plugin_contract::*;
 use rad_plugin_host::{
     Diagnostic, Error, Host, MAX_PLUGIN_JOBS, OptionsOutcome, OptionsQuery, State, TARGET,
@@ -33,7 +32,6 @@ fn start() -> (Host, u64) {
     wait(&mut host, 0, |h| h.state(ID) == Some(State::Ready));
     (host, generation)
 }
-/// Pump at virtual time `now` until `condition`, with a real-time watchdog.
 fn wait(host: &mut Host, now: u64, condition: impl Fn(&Host) -> bool) {
     let end = Instant::now() + Duration::from_secs(3);
     while !condition(host) {
@@ -53,7 +51,6 @@ fn query(scope: OptionsScope, definition: &str, field: &str, values: Value) -> O
 fn action(field: &str, values: Value) -> OptionsQuery {
     query(OptionsScope::Action, "pick", field, values)
 }
-/// Pump until this query's result is ready; results are consumed exactly once.
 fn resolve(host: &mut Host, now: u64, key: Correlation) -> OptionsOutcome {
     let end = Instant::now() + Duration::from_secs(3);
     loop {
@@ -88,7 +85,6 @@ fn pick(scenario: &str, group: &str) -> Parameters {
     serde_json::from_value(json!({"schema_version":1,"values":{"scenario":scenario,"group":group}}))
         .unwrap()
 }
-/// A full action round trip: proves the plugin is alive and has handled every earlier frame.
 fn ping(host: &mut Host, g: u64, now: u64) {
     let key = host
         .invoke(
@@ -119,7 +115,6 @@ fn a_late_reply_is_drained_by_its_own_correlation_and_frees_the_slot() {
         .unwrap();
     host.pump(100).unwrap();
     assert_eq!(host.take_options(), Some((late, OptionsOutcome::TimedOut)));
-    // The expired query still holds one of the two slots until its reply is drained.
     let slow = host
         .options(ID, g, action("group", json!({"scenario":"slow"})), 60_000)
         .unwrap();
@@ -134,7 +129,6 @@ fn a_late_reply_is_drained_by_its_own_correlation_and_frees_the_slot() {
         }
         std::thread::sleep(Duration::from_millis(5));
     };
-    // The drained reply completed neither the slow query nor the new one.
     assert_eq!(listed(resolve(&mut host, 100, next)).len(), 2);
     assert_eq!(host.take_options(), None);
     assert_eq!(host.state(ID), Some(State::Ready));
@@ -147,7 +141,6 @@ fn a_late_reply_is_drained_by_its_own_correlation_and_frees_the_slot() {
 #[test]
 fn two_queries_per_plugin_use_no_action_slot_and_a_refused_third_sends_nothing() {
     let (mut host, g) = start();
-    // All 16 action slots are taken before any query: queries do not need them.
     for _ in 0..MAX_PLUGIN_JOBS {
         host.invoke(ID, g, "pick", pick("normal", "a"), 60_000)
             .unwrap();
@@ -165,7 +158,6 @@ fn two_queries_per_plugin_use_no_action_slot_and_a_refused_third_sends_nothing()
         (1, MAX_PLUGIN_JOBS),
         "queries are not jobs"
     );
-    // A `crash` query would kill the plugin if it reached it.
     let refused = action("group", json!({"scenario":"crash"}));
     assert_eq!(host.options(ID, g, refused, 60_000), Err(Error::Capacity));
     let mut done = 0;
@@ -187,7 +179,6 @@ fn two_queries_per_plugin_use_no_action_slot_and_a_refused_third_sends_nothing()
 #[test]
 fn a_plugin_that_dies_during_a_query_leaves_that_list_unavailable() {
     let (mut host, g) = start();
-    // An expired query whose timeout was already reported must not leave a result behind.
     let slow = host
         .options(ID, g, action("group", json!({"scenario":"slow"})), 100)
         .unwrap();
@@ -231,7 +222,6 @@ fn a_list_beyond_the_contract_bounds_is_a_protocol_violation() {
 fn queries_that_do_not_fit_the_manifest_fail_before_anything_is_sent() {
     let (mut host, g) = launch();
     let crash = || json!({"scenario":"crash"});
-    // Not ready yet: nothing may be sent before the handshake.
     assert_eq!(
         host.options(ID, g, action("group", crash()), 60_000),
         Err(Error::Unavailable)
@@ -317,7 +307,6 @@ fn queries_that_do_not_fit_the_manifest_fail_before_anything_is_sent() {
         host.options("org.rad.unknown", g, action("group", crash()), 60_000),
         Err(Error::Unavailable)
     );
-    // Every refused query above would have killed the plugin had it been sent.
     ping(&mut host, g, 0);
     assert_eq!(host.state(ID), Some(State::Ready));
     stop(&mut host, 0);
@@ -350,7 +339,6 @@ fn querying_options_never_invokes_and_a_negotiated_jpeg_visual_is_accepted() {
         assert!(content.png_hex.is_none());
         content.text.clone().expect("probe reports a count")
     };
-    // The count is read when the plugin handles Subscribe, after every query above.
     assert_eq!(probe(&mut host), "invocations:0");
     ping(&mut host, g, 0);
     assert_eq!(probe(&mut host), "invocations:1");
@@ -413,9 +401,8 @@ fn a_late_reply_drained_before_the_timeout_is_taken_still_reports_it_once() {
     let late = host
         .options(ID, g, action("group", json!({"scenario":"late"})), 100)
         .unwrap();
-    host.pump(0).unwrap(); // `options` only queues: send the frame before the deadline
-    host.pump(100).unwrap(); // expired; the caller has not taken the timeout yet
-    // The plugin answers ~500 ms after the query. Keep pumping well past that, taking nothing.
+    host.pump(0).unwrap();
+    host.pump(100).unwrap();
     let end = Instant::now() + Duration::from_millis(900);
     while Instant::now() < end {
         host.pump(100).unwrap();
@@ -424,7 +411,6 @@ fn a_late_reply_drained_before_the_timeout_is_taken_still_reports_it_once() {
     assert_eq!(host.state(ID), Some(State::Ready));
     assert_eq!(host.take_options(), Some((late, OptionsOutcome::TimedOut)));
     assert_eq!(host.take_options(), None, "reported once, and nothing else");
-    // Its slot is free again: both slots take new queries.
     for _ in 0..2 {
         host.options(ID, g, action("group", json!({"scenario":"slow"})), 60_000)
             .unwrap();

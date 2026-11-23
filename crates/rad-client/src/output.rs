@@ -99,7 +99,6 @@ fn options_failure<'a>(code: &str, server_message: &'a str) -> &'a str {
         _ => server_message,
     }
 }
-/// `None` when the data is not a well-formed options answer.
 fn options_text(data: &rad_api::ResponseData) -> Option<String> {
     let rad_api::ResponseData::Options(data) = data else {
         return None;

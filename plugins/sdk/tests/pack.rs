@@ -1,5 +1,3 @@
-//! The RADP v1 container: `RADP`, u32 BE version 1, u32 BE manifest length, u64 BE executable
-//! length, the manifest, the executable. Nothing else.
 use rad_plugin_sdk::pack::{self, PackError};
 use std::{
     fs,
@@ -22,7 +20,6 @@ fn the_package_is_exactly_the_documented_header_followed_by_the_two_blobs() {
     let manifest = br#"{"contract":1}"#;
     let executable = b"\x7fELF-not-really";
     let package = pack::encode(manifest, executable).unwrap();
-    // Header laid out by hand: 4 + 4 + 4 + 8 bytes.
     assert_eq!(&package[..4], b"RADP");
     assert_eq!(package[4..8], [0, 0, 0, 1]);
     assert_eq!(package[8..12], [0, 0, 0, 14]);
@@ -53,7 +50,6 @@ fn sizes_outside_the_bounds_are_refused_and_the_bounds_themselves_accepted() {
         pack::encode(b"{}", &vec![0u8; 64 * 1024 * 1024 + 1]),
         Err(PackError::ExecutableSize(64 * 1024 * 1024 + 1))
     );
-    // Sizes alone can be checked without holding the data.
     assert_eq!(
         pack::check_sizes(2, 64 * 1024 * 1024 + 1),
         Err(PackError::ExecutableSize(64 * 1024 * 1024 + 1))
@@ -115,7 +111,6 @@ fn the_cli_refuses_bad_input_without_leaving_a_package_behind() {
     fs::write(dir.path("manifest.json"), b"{}").unwrap();
     fs::write(dir.path("empty"), b"").unwrap();
     fs::write(dir.path("plugin"), b"binary").unwrap();
-    // Sparse file one byte over the limit: refused from its length, never read.
     let huge = fs::File::create(dir.path("huge")).unwrap();
     huge.set_len(64 * 1024 * 1024 + 1).unwrap();
     let out = dir.path("out.radp");
@@ -134,7 +129,6 @@ fn the_cli_refuses_bad_input_without_leaving_a_package_behind() {
         );
         assert!(!out.exists(), "{manifest} + {executable} left a package");
     }
-    // Wrong argument counts are a usage error.
     assert_eq!(pack_cli(&[]).status.code(), Some(2));
     assert_eq!(
         pack_cli(&[&dir.path("manifest.json"), &dir.path("plugin")])
@@ -159,8 +153,6 @@ fn a_write_that_fails_halfway_leaves_the_previous_package_and_no_scratch_file() 
     fs::write(dir.path("manifest.json"), b"{}").unwrap();
     fs::write(dir.path("plugin"), vec![7u8; 2 * 1024 * 1024]).unwrap();
     fs::write(dir.path("out.radp"), b"PREVIOUS").unwrap();
-    // The shell caps file sizes at 256 KiB for the packer and ignores the signal that would kill
-    // it, so the write fails with "file too large" part of the way through the 2 MiB package.
     let result = Command::new("sh")
         .arg("-c")
         .arg("ulimit -f 512; trap '' XFSZ; exec \"$0\" \"$@\"")
@@ -205,7 +197,6 @@ fn a_package_replacing_another_appears_whole_or_not_at_all() {
         ])
         .spawn()
         .unwrap();
-    // Watch the destination while the packer works: it is the old file or the finished one.
     let mut seen = std::collections::BTreeSet::new();
     while child.try_wait().unwrap().is_none() {
         if let Ok(meta) = fs::metadata(dir.path("out.radp")) {

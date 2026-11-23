@@ -146,10 +146,8 @@ fn result_filters_current_c_not_snapshot_e_and_child_does_not_require_parent_c()
     assert_eq!(a.result(Origin::Automation, id), None);
     let d = e;
     drop(d);
-    // Complete the existing full execution; then individually admit daughter.
     let initial = a.result(Origin::Editor, id).unwrap();
     assert_eq!(initial.steps.len(), 1);
-    // Timeout releases owner, but retained result stays filtered with current C.
     a.advance(5000).unwrap();
     let t = a.reserve(2, Origin::Editor).unwrap();
     let e = a.submit(

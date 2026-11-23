@@ -92,8 +92,6 @@ impl Paths {
         self.prepare_runtime()?;
         self.prepare_data()
     }
-    /// Apart from the data directory because the exit classes differ (ADR 0011): an unsafe
-    /// runtime directory blocks any restart, an unsafe data directory does not.
     pub fn prepare_runtime(&self) -> Result<(), LifecycleError> {
         check_directories(&self.runtime, false)?;
         check_private(&self.runtime)

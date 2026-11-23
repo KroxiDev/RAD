@@ -1,4 +1,3 @@
-//! Private-bus entrypoint for the generic checker; never falls back to a desktop bus.
 use rad_plugin_media::{MediaPlugin, Timing, config};
 fn main() {
     let bus = std::env::args()

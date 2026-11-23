@@ -1,4 +1,3 @@
-//! Configuration document codec. Decoded data is UNTRUSTED, not Configuration.
 use rad_core::{configuration::*, identity, permissions};
 mod document;
 mod v1;
@@ -437,7 +436,6 @@ impl std::io::Write for LimitedWriter {
 }
 
 fn text(value: &str) -> Result<(), CodecError> {
-    // Length check first prevents serialization allocating beyond the scalar bound.
     if value.len() > 8192
         || serde_json::to_vec(value)
             .map_err(|_| CodecError::InvalidValue)?

@@ -1,4 +1,3 @@
-//! Repeatable wall-clock measurements of the real SDK and production worker.
 use super::tests::{AVAILABLE, recv, send};
 use super::*;
 use std::{io, net::TcpListener, os::unix::net::UnixStream, sync::mpsc};
@@ -263,7 +262,6 @@ impl Bench {
     }
     fn visual_inflight(&self) {
         self.controls.send(Control::HoldNext).unwrap();
-        // The peer's ACK below proves an actual visual request arrived before invoke.
         std::thread::sleep(Duration::from_millis(4));
         lock(&self.shared.inner)
             .sessions
@@ -398,7 +396,6 @@ fn time_to_order_real_worker() {
     let mut bench = Bench::new();
     bench.subscribe_all();
     bench.quiesce();
-    // Queue measurement isolates the two actions from periodic visual work.
     for session in lock(&bench.shared.inner).sessions.values_mut() {
         for watch in &mut session.watches {
             watch.next = Instant::now() + Duration::from_secs(3600);

@@ -1,6 +1,3 @@
-//! State of the fake sound server. A directory stands in for `XDG_RUNTIME_DIR`: the fake `pactl`
-//! (examples/fake_pactl.rs) keeps everything in it, and the tests change it from outside the way
-//! another application would. Nothing here ever talks to a real sound server.
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -28,8 +25,6 @@ pub fn file(dir: &Path, name: &str) -> PathBuf {
     dir.join(name)
 }
 
-/// Read-modify-write under an exclusive lock, so the fake pactl processes and the test never
-/// overwrite each other's changes.
 pub fn update<R>(dir: &Path, change: impl FnOnce(&mut State) -> R) -> R {
     let lock = fs::OpenOptions::new()
         .create(true)
@@ -55,7 +50,6 @@ pub fn read(dir: &Path) -> State {
         .unwrap_or_default()
 }
 
-/// Appends one line to a log file with a single `write`, so concurrent writers do not mix lines.
 pub fn append(dir: &Path, name: &str, line: &str) {
     let mut log = fs::OpenOptions::new()
         .create(true)

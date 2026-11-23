@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Isolated synthetic baseline. No downloads, personal services, windows or deck.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export CARGO_HOME="$PWD/target/cargo-home" CARGO_TARGET_DIR="$PWD/target"

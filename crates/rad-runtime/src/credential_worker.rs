@@ -83,8 +83,6 @@ impl Worker {
                     let mut result = None;
                     let bindings = match task {
                         Task::Request(operation, bindings) => {
-                            // A new explicit request gets one recovery attempt, never a replay
-                            // of the request whose durability was uncertain.
                             if let Ok(vault) = &mut vault {
                                 if vault.state() == State::Unknown {
                                     let _ = vault.reconcile();

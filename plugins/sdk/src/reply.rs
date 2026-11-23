@@ -1,4 +1,3 @@
-//! Deferred replies and the concurrency slots that bound them.
 use crate::{
     ChoiceList, Correlation, Error, FailureCode, Message, Outcome, frame::FrameError,
     writer::Writer,
@@ -14,10 +13,7 @@ use std::{
 mod private {
     use crate::Message;
     pub trait Sealed: Sized {
-        /// The wire message for this answer; an answer the host would reject degrades to the
-        /// closest valid one instead of getting the plugin disconnected.
         fn into_message(self) -> Message;
-        /// What the host gets when a [`Reply`](super::Reply) is dropped unanswered.
         fn fallback() -> Self;
     }
 }
@@ -51,7 +47,6 @@ impl private::Sealed for ChoiceList {
     }
 }
 
-/// A bounded number of in-flight jobs of one kind. Nothing waits for a slot: a full set refuses.
 pub(crate) struct Slots {
     in_use: AtomicUsize,
     limit: usize,
@@ -125,9 +120,6 @@ impl<T: Answer> Reply<T> {
     }
 
     fn write(&self, answer: T) {
-        // A failed write means the host is gone; the dispatch loop sees the same and stops. An
-        // answer too big for one frame (JSON escaping can make a valid list so) would never
-        // arrive and leave the host waiting, so the fallback is sent in its place.
         if let Err(Error::Frame(FrameError::TooLarge(_))) =
             self.writer.send(self.correlation, answer.into_message())
         {

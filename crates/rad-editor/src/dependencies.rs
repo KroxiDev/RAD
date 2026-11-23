@@ -1,4 +1,3 @@
-//! Revision-bound, bounded projection of used plugins, never installation authority.
 use crate::{Request, session::Error};
 use serde_json::Value;
 use std::collections::BTreeSet;

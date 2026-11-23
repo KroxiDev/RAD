@@ -1,5 +1,3 @@
-//! Shared test scaffolding: a fake sound server, and a scripted host that speaks the plugin
-//! protocol with hand-written JSON and framing.
 #![allow(dead_code)]
 pub mod fake;
 pub mod fake_state;
@@ -18,7 +16,6 @@ use std::{
 
 pub const GENERATION: u64 = 11;
 
-/// Timings short enough for tests: the production values only matter against a real server.
 pub fn quick() -> Timing {
     Timing::default()
         .action_deadline(Duration::from_millis(600))
@@ -115,7 +112,6 @@ impl Host {
         Some(serde_json::from_slice(&payload).unwrap())
     }
 
-    /// The first frame, buffered or newly read, that satisfies `wanted`. Others stay buffered.
     pub fn take(&mut self, wanted: impl Fn(&Value) -> bool, within: Duration) -> Option<Value> {
         if let Some(at) = self.inbox.iter().position(&wanted) {
             return Some(self.inbox.remove(at));
@@ -142,7 +138,6 @@ impl Host {
         )
     }
 
-    /// The `list` of the choices answer.
     pub fn options(&mut self, scope: &str, definition: &str, field: &str) -> Value {
         let request = self.ask_options(scope, definition, field);
         let frame = self
@@ -164,7 +159,6 @@ impl Host {
         })
     }
 
-    /// Runs an action and returns its outcome JSON.
     pub fn invoke(&mut self, action: &str, operation: &str, device: &str) -> Value {
         let request = self.ask_invoke(action, operation, device);
         self.outcome_of(request, Duration::from_secs(5))
@@ -181,7 +175,6 @@ impl Host {
             "subscription":{"generation":GENERATION,"request":subscription}}));
     }
 
-    /// The next visual state of `subscription`, as `(availability, text)`.
     pub fn next_visual(
         &mut self,
         subscription: u64,
@@ -205,8 +198,6 @@ impl Host {
         ))
     }
 
-    /// Waits until a visual of `subscription` shows `(availability, text)`; the full sequence it
-    /// went through is returned on failure.
     pub fn wait_visual(
         &mut self,
         subscription: u64,
@@ -228,7 +219,6 @@ impl Host {
         Err(seen)
     }
 
-    /// Drops everything buffered or already sent, so the next read sees only what happens next.
     pub fn discard_pending(&mut self) {
         self.inbox.clear();
         while self.read_frame(Duration::from_millis(30)).is_some() {}

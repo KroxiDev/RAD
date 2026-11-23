@@ -19,7 +19,6 @@ const PREVIEW: f32 = 80.;
 const ACTION_WIDTH: f32 = 560.;
 /// Longest wait the runtime accepts; checked here to explain it instead of a bare rejection.
 const MAX_WAIT_MS: u64 = 600_000;
-/// Seconds the panel of a newly selected key takes to fade in once it is read.
 const REVEAL_SECONDS: f32 = 0.12;
 
 impl App {
@@ -66,7 +65,6 @@ impl App {
             }
         });
     }
-    /// The draft differs from what the runtime last published for this key.
     pub(super) fn unsaved(&self) -> bool {
         self.icon_library.dirty_for(&self.draft.id)
             || self.inspection.as_ref().is_some_and(|published| {
@@ -95,7 +93,7 @@ impl App {
                 .as_ref()
                 .is_none_or(|view| view.button["id"].as_str() != Some(self.draft.id.as_str()))
         {
-            return; // A revision invalidated the inspection; wait before capturing action edits.
+            return;
         }
         let actions = self.inspection.iter().flat_map(|i| &i.actions);
         let waits: Option<Vec<_>> = actions
@@ -231,14 +229,12 @@ impl App {
                 })
                 .inner;
             let _ = preview;
-            // Clicking the face opens the image choices, as the image button does.
             let open_image = self.inspection.is_some() && preview_response.clicked();
             if self.inspection.is_some() {
                 preview_response.on_hover_text(tr(self.es, "Change the image"));
             }
             ui.add_space(10.);
             if self.inspection.is_none() {
-                // A quick read shows the key without a flash of "Loading…".
                 let waited = self.selected_at.elapsed();
                 if waited >= super::LOADING_DELAY {
                     ui.spinner();
@@ -255,8 +251,6 @@ impl App {
                 .spacing([12., 8.])
                 .show(ui, |ui| {
                     ui.label(look.muted_text(tr(self.es, "Text on key")));
-                    // The placeholder says what an empty field shows: the name on a key
-                    // without image, nothing on one that has an image to speak for it.
                     let placeholder = if self.draft.state.is_none()
                         && self.draft.image.is_empty()
                         && !self.icon_library.dirty_for(id)
@@ -306,7 +300,6 @@ impl App {
                 {
                     self.delete_selected();
                 }
-                // A key without actions has nothing to run.
                 if !actions.is_empty()
                     && ui
                         .button(tr(self.es, "⏵ Try"))
@@ -428,8 +421,6 @@ impl App {
             }
         }
     }
-    /// The key face as the deck will show it; once loaded it follows the draft, so edits
-    /// show before saving.
     fn paint_preview(&self, ui: &egui::Ui, look: &Look, id: &str, preview: egui::Rect) {
         let face = self.plugins.visuals.get(id);
         let state = self.draft.state.as_ref();
@@ -541,7 +532,6 @@ impl App {
                 .then_some(self.draft.name.as_str()),
         )
     }
-    /// A position click fixes the automatic choice; changing color, size or band does not.
     fn text_placement_menu(&mut self, ui: &mut egui::Ui, look: &Look) {
         use rad_api::TextPosition as P;
         let button = menu_button(ui, tr(self.es, "Style"));
@@ -634,7 +624,6 @@ impl App {
         if open_now {
             egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&button));
         }
-        // Offered only where it can work: no image yet and an application on top.
         let icon_available = !has_image
             && self
                 .inspection
@@ -653,7 +642,6 @@ impl App {
                 if (manual || self.draft.state.is_some())
                     && ui.button(tr(self.es, "Icon library")).clicked()
                 {
-                    // Start from what drew the current image, when this computer remembers it.
                     let recalled = crate::icon_memory::default_path()
                         .and_then(|path| crate::icon_memory::recall(&path, &self.draft.image));
                     self.icon_library.begin(&self.draft.id, recalled);
@@ -720,7 +708,6 @@ impl App {
                 }
             });
     }
-    /// One action of the key, as a row that can be dragged by its handle to reorder.
     fn action_row(&mut self, ui: &mut egui::Ui, look: &Look, action: &Value, display_index: usize) {
         let kind = string(&action["fields"]["type"]);
         let card = look.card().show(ui, |ui| {
@@ -780,7 +767,6 @@ impl App {
             self.draft.order.swap(from, display_index);
         }
     }
-    /// What an action does, in words, with the one setting that some actions show inline.
     fn action_content(
         &mut self,
         ui: &mut egui::Ui,
@@ -996,7 +982,6 @@ impl App {
     }
 }
 
-/// Consult/Modify/Execute for automation. Returns true when the user applies the value.
 pub(super) fn permission_ui(
     ui: &mut egui::Ui,
     value: &mut Value,

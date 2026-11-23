@@ -1,5 +1,3 @@
-//! Editor window: state, worker pump and layout. Views live in the submodules; the
-//! runtime stays the only authority, so nothing here edits published state optimistically.
 use crate::{
     Controller, Request,
     catalog::Entry,
@@ -38,20 +36,15 @@ mod updates;
 
 use look::Look;
 
-/// Pause after the last keystroke before the application list is searched again.
 const SEARCH_DEBOUNCE_MS: u64 = 250;
 
 /// Pause after starting the service so the runtime can open its socket before connecting.
 const SERVICE_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// Duration a wait starts with when it is put on a key.
 const DEFAULT_WAIT_MS: u64 = 1000;
 
-/// A selected key whose inspector is not read yet says so only after this long; a quicker
-/// read shows the key without a flash of "Loading…".
 const LOADING_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
-/// Something from the list that becomes an action on a key.
 #[derive(Clone)]
 enum NewAction {
     OpenApp,
@@ -63,30 +56,19 @@ enum NewAction {
 }
 #[derive(Clone)]
 enum Drag {
-    /// A key of the board, with where it lay around the point it was picked up at.
-    Button {
-        id: String,
-        face: egui::Rect,
-    },
-    /// An action from the list, with the name shown while it is dragged.
-    Add {
-        action: NewAction,
-        label: String,
-    },
+    Button { id: String, face: egui::Rect },
+    Add { action: NewAction, label: String },
     Folder,
-    /// A row of the selected key's actions, by its place in the draft order.
     Reorder(usize),
 }
 #[derive(Clone, Default)]
 struct Draft {
-    /// Baseline survives a temporarily incoherent/missing on-screen inspection.
     source: Option<Inspection>,
     visual_type: Option<String>,
     state: Option<String>,
     state_initialized: bool,
     states: std::collections::BTreeMap<String, rad_api::StateFace>,
     base_face: rad_api::StateFace,
-    /// Only Inspection populates this baseline; switching edited tabs cannot publish media.
     published_states: std::collections::BTreeMap<String, rad_api::StateFace>,
     id: String,
     name: String,
@@ -98,10 +80,8 @@ struct Draft {
     mode: String,
     gesture: String,
     order: Vec<usize>,
-    /// Milliseconds typed for each action; only wait actions use theirs.
     waits: Vec<String>,
     entries: Vec<String>,
-    /// The sole parameter of native Brightness actions; other steps do not use theirs.
     brightness_directions: Vec<rad_api::BrightnessDirection>,
     permissions: Value,
     action_permissions: Vec<Value>,
@@ -132,7 +112,6 @@ impl Draft {
                 (!self.image.is_empty()).then(|| self.image.clone()),
                 self.style,
             );
-            // Preserve an explicitly empty published face; selecting it is not an edit.
             if face == rad_api::StateFace::default() && states.get(id) != Some(&face) {
                 states.remove(id);
             } else {
@@ -154,8 +133,6 @@ impl Draft {
             .unwrap_or_default();
         self.state = Some(id);
     }
-    /// Rebase local edits onto a newer view. Untouched fields follow the runtime;
-    /// edited fields stay local, including each native action's parameters.
     fn retain_appearance_edits(&mut self, before: &Self, edited: &Self) {
         let published_image = self.published_image.clone();
         if let Some(state) = &edited.state {
@@ -214,8 +191,6 @@ impl Draft {
             let Some(local) = edited.action_ids.iter().position(|old| old == id) else {
                 continue;
             };
-            // Save publishes a number, not the spacing/leading zeroes typed in the field.
-            // Adopt that confirmation while retaining any different or unfinished edit.
             let typed = edited.waits[local].trim().parse::<u64>().ok();
             if typed.is_none() || typed != self.waits[index].parse::<u64>().ok() {
                 retain(
@@ -293,7 +268,6 @@ impl Draft {
 fn string(v: &Value) -> String {
     v.as_str().unwrap_or_default().into()
 }
-/// The plugin visual a key of `board` shows, if any.
 fn visual_type<'a>(board: &'a Board, id: &str) -> Option<&'a Value> {
     board
         .buttons
@@ -307,11 +281,8 @@ pub struct App {
     preferences: crate::preferences::Preferences,
     preferences_path: Option<PathBuf>,
     worker: Worker<Job, Event>,
-    /// Questions about plugin option lists, on a connection of their own: a slow plugin
-    /// must not hold up Apply or the polling that `worker` does.
     options_worker: Worker<OptionsJob, OptionsEvent>,
     credential_worker: credentials::CredentialWorker,
-    /// Replace a worker whose thread died, a bounded number of times in a row.
     worker_respawn: crate::worker::Respawner<Job, Event>,
     options_respawn: crate::worker::Respawner<OptionsJob, OptionsEvent>,
     credential_respawn: crate::worker::Respawner<credentials::Job, credentials::Event>,
@@ -330,7 +301,6 @@ pub struct App {
     reconnect_needed: bool,
     started: Instant,
     connected: bool,
-    /// A connection attempt has finished, so "not connected" is a fact worth showing.
     attempted: bool,
     force: bool,
     inspect_needed: bool,
@@ -339,28 +309,21 @@ pub struct App {
     inspection: Option<Inspection>,
     draft: Draft,
     save_ticket: u64,
-    /// At most the worker's in-flight Save and its one queued Save.
     saves: std::collections::BTreeMap<u64, (u64, Draft)>,
-    /// Confirmed values sent by Save, separate from the published inspection.
     saved_draft: Option<(u64, Draft)>,
-    /// Values sent by Saves of unknown outcome since the last confirmed one: the runtime
-    /// may hold any of them or the earlier baseline.
     unknown_saves: Vec<(u64, Draft)>,
     icon_library: icon_library::Library,
     selected_slot: Option<usize>,
     message: String,
     message_is_error: bool,
-    /// Raw code behind an error message, kept for the tooltip.
     message_code: String,
     es: crate::preferences::Language,
     palette: Palette,
     styled: Option<Palette>,
-    /// Keys or settings: the screen that fills the window.
     navigation: crate::screens::Navigation,
     updates: crate::updates::Controller,
     update_outcome_asked: bool,
     update_reopen_ack: bool,
-    /// Back from a plugin form in the key panel.
     form_leave: crate::screens::Leave,
     settings: Value,
     new_name: String,
@@ -380,13 +343,9 @@ pub struct App {
     restore_summary: String,
     global_permissions: Value,
     catalog: crate::catalog::Catalog,
-    /// When the application list must be asked again, in milliseconds since start.
     catalog_due: Option<u64>,
-    /// The next palette read advances its current application page.
     catalog_more: bool,
-    /// Destination and query of the single application-catalog read in flight.
     catalog_read: Option<launcher::CatalogRead>,
-    /// Application choices, remembered display names and the uncommitted placement.
     app_picker: launcher::ApplicationPicker,
     /// Action dropped on an empty key: added once the new key is published.
     pending_action: Option<(usize, NewAction)>,
@@ -397,33 +356,23 @@ pub struct App {
     icon_candidate: Option<(String, String)>,
     /// The user asked for the application icon, so a missing one deserves a word.
     icon_asked: bool,
-    /// Action categories the user folded away in the list.
     application_icons: application_icons::ApplicationIcons,
     folded: std::collections::BTreeSet<actions::Category>,
-    /// Key pictures on the board and, within a budget, those it may show next.
     pictures: pictures::Pictures,
-    /// Inspectors and folders read ahead at the board's revision.
     ahead: ahead::Ahead,
-    /// When the selected key was chosen; a key still loading says so only after a while.
     selected_at: Instant,
-    /// Counts selections, so each selected key's panel fades in on its own.
     selection: u64,
-    /// When the board last changed revision or folder: a plugin face not read yet is shown
-    /// plain for a moment instead of as unavailable.
     board_since: Instant,
     plugins: plugins::PluginUi,
     /// Owner of every call to systemd; absent where the editor must not touch the system.
     service_worker: Option<Worker<crate::service::Job, crate::service::Outcome>>,
     service: service::ServiceUi,
-    /// What the runtime says this computer is set to do; absent until it has answered.
     machine: Option<crate::machine::Settings>,
     machine_due: bool,
-    /// A machine change awaiting publication/reconciliation, or an explicit retry.
     machine_pending: Option<machine::Pending>,
     recovery: crate::recovery::Mode,
     recovery_due: bool,
     recovery_reset_confirm: bool,
-    /// The previous exit the user has already seen: its code and time.
     previous_exit_seen: Option<(String, String)>,
     runtime_log: Option<rad_api::RuntimeLogView>,
 }
@@ -583,7 +532,6 @@ impl App {
         self.message_is_error = true;
         self.message_code.clear();
     }
-    /// Says how a run of a key is going, in words; its execution id stays in the tooltip.
     fn say_run(&mut self, execution: &Value, state: &str) {
         let text = match state {
             "running" => tr(self.es, "Running…"),
@@ -599,7 +547,6 @@ impl App {
         }
         self.message_code = string(execution);
     }
-    /// A user command waits behind the in-flight poll; controls never depend on polling.
     fn command(&mut self, job: Job) -> bool {
         let refused = self.worker.enqueue(job).err();
         match refused {
@@ -609,8 +556,6 @@ impl App {
         }
         refused.is_none()
     }
-    /// The user asked to reconnect: a worker given up on is replaced first.
-    /// The user asked to reconnect: every worker that gave up starts again with a fresh count.
     fn reconnect(&mut self, ctx: &egui::Context) {
         if self.worker_respawn.gave_up() {
             let wake = ctx.clone();
@@ -629,12 +574,7 @@ impl App {
         }
         self.command(Job::Connect);
     }
-    /// The worker's thread ended. A job in flight has an unknown outcome: it is not repeated,
-    /// whatever waited for its answer stops waiting, and the state is read again. A command
-    /// that never left is said not to have been applied. Replacement is bounded; once the
-    /// limit is reached the bar offers Retry.
     fn worker_lost(&mut self, ctx: &egui::Context, in_flight: bool, unsent: bool) {
-        // A Save left without an answer may or may not have landed.
         self.unknown_saves
             .extend(std::mem::take(&mut self.saves).into_values());
         self.machine_request_failed();
@@ -716,7 +656,6 @@ impl App {
         self.control.select(id);
         self.selected_at = Instant::now();
         self.selection += 1;
-        // A key whose inspector was read ahead shows at once.
         let ready = self
             .control
             .selected()
@@ -768,7 +707,6 @@ impl App {
             }
         }
     }
-    /// Name for a new key or folder: what the user typed, else a default for its kind.
     fn creation_name(&self, folder: bool) -> String {
         let typed = self.new_name.trim();
         if !typed.is_empty() {
@@ -836,7 +774,6 @@ impl App {
             )),
         }
     }
-    /// What the list calls `action`; also the name of a key created just for it.
     fn action_name(&self, action: &NewAction) -> String {
         match action {
             NewAction::OpenApp => tr(self.es, "Open App").into(),
@@ -847,7 +784,6 @@ impl App {
             NewAction::Plugin(entry) => entry.shown(self.es).to_owned(),
         }
     }
-    /// An action lands on a key: added to an existing one, or a key is created for it.
     fn place_action(&mut self, position: usize, action: &NewAction) {
         if matches!(action, NewAction::OpenApp) {
             self.begin_application_choice(position);
@@ -857,7 +793,6 @@ impl App {
             self.create_action_button(folder, position, action);
         }
     }
-    /// Reused by direct application drops and by a completed Open App choice.
     fn create_action_button(
         &mut self,
         folder: String,
@@ -894,8 +829,6 @@ impl App {
         self.pump_service(ctx);
         self.pump_reads();
         if self.connected && (self.image_cleanup_disconnect || !self.discarded_imports.is_empty()) {
-            // The UI may otherwise sleep indefinitely after a busy cleanup reply.
-            // While a job is in flight its worker owns the next wake.
             let delay = self
                 .image_cleanup_due
                 .saturating_duration_since(Instant::now());
@@ -912,8 +845,6 @@ impl App {
         if let Some(notices) = &self.notices {
             let (connection, changed) = notices.take();
             if connection == Some(true) {
-                // Even when disconnect/reconnect coalesced before this frame, the old
-                // request socket belongs to the old session and must be replaced.
                 self.reconnect_needed = true;
                 self.connected = false;
             }
@@ -921,7 +852,6 @@ impl App {
                 self.connected = false;
             }
             for kind in changed {
-                // Nothing is read while the runtime is in recovery mode: it would refuse.
                 if !self.recovery.is_normal() {
                     break;
                 }
@@ -948,7 +878,6 @@ impl App {
             }
         }
     }
-    /// Work waiting for the worker that a repaint must start.
     fn reads_due(&self) -> bool {
         self.force
             || self.overview_due
@@ -959,8 +888,6 @@ impl App {
             || self.app_picker.is_due(self.now_ms())
             || (self.result_due && self.control.result_request().is_some())
     }
-    /// Results of the credential and option-list workers; a dead one is replaced, within
-    /// the same bound as the main worker.
     fn pump_auxiliary(&mut self, ctx: &egui::Context) {
         if !self.connected {
             self.icon_library.reset();
@@ -1023,7 +950,6 @@ impl App {
             }
         }
     }
-    /// The keys, the actions to drop on them and the panel of the selected one.
     fn keys_screen(&mut self, ui: &mut egui::Ui, look: &Look, editable: bool) {
         egui::Panel::top("bar")
             .frame(look.panel(look.surface, 10))
@@ -1165,8 +1091,6 @@ impl eframe::App for App {
             self.shortcuts(&ctx);
         }
         let look = Look::new(&self.palette);
-        // Background polling must not gate the controls: disabling them every poll made
-        // the panels blink and took keyboard focus away from their text fields.
         let editable = self.connected && !self.transfer_active;
         if !self.recovery.is_normal()
             && self.navigation.screen()
@@ -1193,7 +1117,6 @@ impl eframe::App for App {
                 eprintln!("RAD update reopen acknowledgement: {error}");
             }
         }
-        // A password is typed only next to the form or the plugin that asks for it.
         if self.plugins.form.is_none() && self.plugins.dependency_credentials.is_none() {
             self.credentials.clear();
         }

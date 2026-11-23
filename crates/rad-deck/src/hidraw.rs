@@ -1,17 +1,10 @@
 use crate::DeckError;
 use std::path::Path;
-/// A hidraw node together with the serial of the USB device that owns it.
 #[derive(Debug, PartialEq, Eq)]
 struct Located {
     node: String,
     serial: String,
 }
-/// Finds the XL through `<sys>/class/hidraw`, on any USB port (ADR 0006).
-///
-/// With several XL connected the one with the lowest serial wins, so the choice is
-/// stable across ports, hidraw numbering and reconnections; the others are never
-/// touched. A device without a valid serial has no verifiable identity and is not
-/// eligible: if no XL has one, or two share the lowest, the result is `Identity`.
 fn locate(sys: &Path) -> Result<Located, DeckError> {
     use std::{fs, io::Read, path::PathBuf};
     const MAX_ENTRIES: usize = 256;
@@ -49,7 +42,6 @@ fn locate(sys: &Path) -> Result<Located, DeckError> {
         if number.is_empty() || !number.bytes().all(|c| c.is_ascii_digit()) {
             continue;
         }
-        // <usb device>/<interface>/<hid device>/hidraw/<node>
         let Ok(real) = fs::canonicalize(entry.path()) else {
             continue;
         };
@@ -280,8 +272,6 @@ mod tests {
         std::fs::create_dir_all(root.join("class/hidraw")).unwrap();
         root
     }
-    /// Builds `devices/.../usb1/<port>/<port>:1.0/<hid>/hidraw/<node>` plus the
-    /// relative `class/hidraw/<node>` symlink, as sysfs lays it out.
     fn add(root: &Path, port: &str, ids: (&str, &str), serial: Option<&str>, nodes: &[&str]) {
         let usb = root.join(format!("devices/pci0000:00/0000:00:14.0/usb1/{port}"));
         let interface = usb.join(format!("{port}:1.0"));

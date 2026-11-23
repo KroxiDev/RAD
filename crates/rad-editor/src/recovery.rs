@@ -1,5 +1,3 @@
-//! The screen the editor shows while the runtime is in recovery mode (ADR 0011): what
-//! happened, and only the ways out the runtime offers.
 use crate::texts::tr;
 use serde_json::Value;
 

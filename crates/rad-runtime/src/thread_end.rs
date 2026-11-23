@@ -1,4 +1,3 @@
-//! A worker thread's end, published before the runtime loop is woken.
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -18,7 +17,6 @@ impl Drop for EndGuard {
         (self.wake)();
     }
 }
-/// Whether the thread holding the matching guard has ended.
 #[derive(Clone)]
 pub(crate) struct Ended(Arc<AtomicBool>);
 impl Ended {

@@ -10,7 +10,6 @@ fn manifest_compatibility_preserves_unknown_and_incompatible_bytes() {
     let bytes = serde_json::to_vec(&manifest()).unwrap();
     let doc = Document::new(&bytes).unwrap();
     assert!(doc.manifest(1, "x86_64-unknown-linux-gnu").is_ok());
-    // A future host may include major 1 in its range; major 0 shares nothing with it.
     assert!(doc.manifest(2, "x86_64-unknown-linux-gnu").is_ok());
     assert_eq!(
         doc.manifest(0, "x86_64-unknown-linux-gnu").unwrap_err(),

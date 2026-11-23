@@ -60,8 +60,6 @@ pub fn parse(args: &[String]) -> Result<Invocation, InvalidArguments> {
                 return Err(InvalidArguments);
             }
             let value = rad_wire::parse_json(value.as_bytes()).map_err(|_| InvalidArguments)?;
-            // Textual field/value is the CLI input boundary. Its only structural
-            // definition is the same API FieldEdit used by all clients.
             let edit = serde_json::from_value(serde_json::json!({"field":field,"value":value}))
                 .map_err(|_| InvalidArguments)?;
             R::Edit {

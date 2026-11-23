@@ -1,25 +1,15 @@
-//! Key pictures the editor holds: those on the board and, within a spare budget, those of
-//! folders one press away and of past visits, so changing folder rarely shows one arriving.
-//! It keeps the same order as the deck's pictures in the runtime: the board's never go,
-//! nearby ones outrank past visits, and the least recently wanted goes first.
 use crate::native::PictureRead;
 use eframe::egui::TextureHandle;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Room for pictures off the board: about thirty 256 px icons.
 pub(super) const SPARE_BYTES: usize = 8 * 1024 * 1024;
-/// A picture that arrives while its key is on screen fades in for this long, in seconds.
 const FADE: f64 = 0.15;
-/// Pictures read ahead in one go: few, so a command waits little behind them.
 const AHEAD_BATCH: usize = 8;
-/// Bytes of the largest picture the editor accepts (256 × 256). Reads ahead never take more
-/// than fits in the room left, counting each at this size, so they exceed it by one at most.
 const LARGEST_PICTURE: usize = 256 * 256 * 4;
 
 pub(super) struct Pictures {
     spare: usize,
     held: BTreeMap<String, Held>,
-    /// Asked for since the board last changed; one that failed waits for the next change.
     asked: BTreeSet<String>,
     /// Counts the times the wanted pictures were stated; the lowest mark goes first.
     tick: u64,
@@ -27,7 +17,6 @@ pub(super) struct Pictures {
 struct Held {
     texture: TextureHandle,
     wanted: u64,
-    /// When it arrived with its key on screen; it fades in from then.
     fade_from: Option<f64>,
 }
 impl Held {
@@ -50,7 +39,6 @@ impl Pictures {
             tick: 0,
         }
     }
-    /// The picture and how far it has faded in, from 0 to 1, at `now` seconds.
     pub(super) fn get(&self, reference: &str, now: f64) -> Option<(&TextureHandle, f32)> {
         let held = self.held.get(reference)?;
         let shown = held
@@ -58,17 +46,11 @@ impl Pictures {
             .map_or(1., |from| ((now - from) / FADE).clamp(0., 1.));
         Some((&held.texture, shown as f32))
     }
-    /// Some picture is still fading in, so the screen must be drawn again.
     pub(super) fn fading(&self, now: f64) -> bool {
         self.held
             .values()
             .any(|held| held.fade_from.is_some_and(|from| now - from < FADE))
     }
-    /// States what the board shows and what is one press away, and names what to read
-    /// next: every missing picture of the board at once, so they appear together; else a
-    /// few nearby ones while the spare room lasts. Nothing counts as asked until [`asked`].
-    ///
-    /// [`asked`]: Self::asked
     pub(super) fn next(
         &mut self,
         shown: &[PictureRead],
@@ -107,12 +89,10 @@ impl Pictures {
         }
         batch
     }
-    /// These pictures are being read; one that fails waits for the board to change.
     pub(super) fn asked(&mut self, batch: &[PictureRead]) {
         self.asked
             .extend(batch.iter().map(|picture| picture.reference.clone()));
     }
-    /// Lets go of past visits while the pictures off the board exceed the spare room.
     fn let_go(&mut self, on_show: &BTreeSet<&str>, close: &BTreeSet<&str>) {
         let mut spare: usize = self
             .held
@@ -135,7 +115,6 @@ impl Pictures {
             spare -= self.held.remove(&oldest).map_or(0, |held| held.bytes());
         }
     }
-    /// A picture was read. `fade_from` is the time it arrived if its key is on screen.
     pub(super) fn arrived(
         &mut self,
         reference: String,
@@ -151,7 +130,6 @@ impl Pictures {
             },
         );
     }
-    /// The board changed: a picture that could not be read may be asked for again.
     pub(super) fn changed(&mut self) {
         self.asked.clear();
     }

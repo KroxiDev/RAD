@@ -1,4 +1,3 @@
-//! Validate the contract's JSON limits without creating a plaintext Value tree.
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use std::{collections::BTreeSet, fmt};
 pub(crate) fn validate(bytes: &[u8]) -> Result<(), serde_json::Error> {

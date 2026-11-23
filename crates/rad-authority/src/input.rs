@@ -1,4 +1,3 @@
-//! Physical input, gesture admission, and ownership of held executions.
 use super::{AdmissionError, Authority, Effect, ExecutionError, ExecutionId, StorageState, Target};
 
 impl Authority {
@@ -19,8 +18,6 @@ impl Authority {
         {
             Ok(output) => output,
             Err(_) => {
-                // Preserve Engine intents already produced; consume this report without
-                // admitting a partial set of presses or retrying the impossible deadline.
                 let folder = self
                     .published
                     .configuration()
@@ -106,8 +103,6 @@ impl Authority {
                 }
                 rad_core::input::Output::Candidate { key, button }
                 | rad_core::input::Output::Gesture { key, button, .. } => {
-                    // An earlier candidate in this batch may have put the deck to sleep.
-                    // HoldEnd above must still run, but invalidated starts are consumed.
                     if self.state == StorageState::Ready && !self.asleep {
                         let gesture = match output {
                             rad_core::input::Output::Gesture { gesture, .. } => gesture,

@@ -1,9 +1,3 @@
-//! Pure identity values and a non-recycling registry.
-//!
-//! Restore produces a candidate, not a durable commit. The future Store must
-//! persist the complete ledger, including retired bindings, atomically with the
-//! configuration. Reconstructing only the active snapshot would lose reservations.
-
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -204,7 +198,6 @@ impl IdentityRegistry {
 }
 
 impl IdentityRegistry {
-    /// Called only after both keys have been validated or freshly allocated.
     fn insert(&mut self, record: IdentityRecord) {
         let binding = record.binding;
         let number = self.counters.number_mut(binding.short.kind);

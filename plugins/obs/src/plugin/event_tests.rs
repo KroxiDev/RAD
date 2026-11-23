@@ -1,4 +1,3 @@
-//! Event regressions use the real websocket/SDK boundaries and a controlled worker clock.
 use super::tests::{AVAILABLE, recv, send};
 use super::*;
 use std::{io, net::TcpListener, os::unix::net::UnixStream, sync::mpsc};
@@ -337,7 +336,6 @@ fn targeted_events_read_only_matching_visuals_without_losing_current_state() {
             .unwrap();
         let mut header = [0; 4];
         use std::io::Read;
-        // Unchanged reads only renew freshness; no event publishes unavailable.
         while peer.host.read_exact(&mut header).is_ok() {
             let mut body = vec![0; u32::from_be_bytes(header) as usize];
             peer.host.read_exact(&mut body).unwrap();

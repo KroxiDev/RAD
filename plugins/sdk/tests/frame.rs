@@ -1,4 +1,3 @@
-//! Wire framing: u32 big-endian length followed by 1..=65536 payload bytes.
 use rad_plugin_sdk::frame::{self, FrameError, MAX_PAYLOAD};
 use std::io::Cursor;
 
@@ -30,20 +29,17 @@ fn reads_consecutive_frames_then_reports_a_clean_end_of_stream() {
 
 #[test]
 fn accepts_the_limits_and_rejects_everything_outside_them() {
-    // Largest legal payload round-trips.
     let largest = vec![b'a'; MAX_PAYLOAD];
     let encoded = frame::encode(&largest).unwrap();
     assert_eq!(
         frame::read(&mut Cursor::new(encoded)).unwrap().unwrap(),
         largest
     );
-    // Sizes outside 1..=65536 are refused when writing...
     assert!(matches!(frame::encode(b""), Err(FrameError::Empty)));
     assert!(matches!(
         frame::encode(&vec![0; MAX_PAYLOAD + 1]),
         Err(FrameError::TooLarge(n)) if n == MAX_PAYLOAD + 1
     ));
-    // ...and when reading, judged from the header alone (no payload follows).
     assert!(matches!(
         frame::read(&mut Cursor::new([0, 0, 0, 0])),
         Err(FrameError::Empty)

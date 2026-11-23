@@ -1,4 +1,3 @@
-//! Resource lifetime observed on an isolated bus, not through implementation counters.
 mod support;
 use std::time::{Duration, Instant};
 use support::*;
@@ -23,7 +22,7 @@ fn readers_share_the_bus_and_last_consumer_releases_it() {
     let bus = PrivateBus::start();
     let _player = FakePlayer::start(&bus, "org.mpris.MediaPlayer2.brave");
     let mut host = Host::start(Some(bus.address()), quick());
-    clients(&bus, 1); // Construction does not connect.
+    clients(&bus, 1);
     let first = host.subscribe("brave");
     let second = host.subscribe("brave");
     host.wait_visual(
@@ -38,7 +37,7 @@ fn readers_share_the_bus_and_last_consumer_releases_it() {
         Duration::from_secs(3),
     )
     .unwrap();
-    clients(&bus, 2); // One player and the shared monitor; the reads have finished.
+    clients(&bus, 2);
     host.unsubscribe(first);
     assert_eq!(host.invoke("play", "brave")["status"], "success");
     assert!(!host.choices("action", "control").is_empty());
@@ -63,7 +62,6 @@ fn returning_during_linger_does_not_republish_an_old_current_state() {
     let first = host.subscribe("brave");
     host.wait_state(first, "current", Some("Playing"), Duration::from_secs(3))
         .unwrap();
-    // Let the initial monitor resync finish; the fake then cannot answer a fresh read.
     std::thread::sleep(Duration::from_millis(300));
     player.freeze();
     host.unsubscribe(first);
@@ -94,7 +92,6 @@ fn an_old_in_flight_read_cannot_publish_into_a_returned_subscription() {
     host.wait_state(first, "current", Some("Playing"), Duration::from_secs(3))
         .unwrap();
     player.freeze();
-    // The periodic reader captures the old shown state and waits for the frozen fake.
     std::thread::sleep(Duration::from_millis(250));
     host.unsubscribe(first);
     let second = host.subscribe("brave");
@@ -125,10 +122,10 @@ fn a_timed_out_action_does_not_close_a_concurrent_query_and_repeated_timeouts_re
         player.freeze();
         let action = host.ask_invoke("play", "brave");
         let query = host.ask_options("action", "control", "player");
-        clients(&bus, 2); // Both calls share the same connection.
+        clients(&bus, 2);
         let outcome = host.outcome_of(action, Duration::from_secs(2)).unwrap();
         assert_eq!(outcome["code"], "timed_out");
-        clients(&bus, 2); // The longer query still owns it.
+        clients(&bus, 2);
         player.thaw();
         let answer = host
             .take(
@@ -144,9 +141,8 @@ fn a_timed_out_action_does_not_close_a_concurrent_query_and_repeated_timeouts_re
                 .iter()
                 .any(|o| o["label"] == "Concurrent Player")
         );
-        clients(&bus, 1); // Neither a timeout nor the completed query retains resources.
+        clients(&bus, 1);
     }
-    // Timed-out calls only read the capability: no command was replayed after thaw.
     assert!(player.calls().is_empty());
     host.finish().unwrap();
 }

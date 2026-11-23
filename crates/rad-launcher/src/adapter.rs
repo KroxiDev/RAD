@@ -70,7 +70,6 @@ impl Launcher {
         // SAFETY: child-only async-signal-safe fd syscalls; socket is held through spawn.
         unsafe {
             command.pre_exec(move || {
-                // Linux per-process death signal; forked applications do not inherit it.
                 if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) < 0
                     || libc::getppid() as u32 != parent
                 {
@@ -288,7 +287,6 @@ impl Drop for Launcher {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
-            // Shutdown/reaping is outside authority; never wait on this caller thread.
             let _ = std::thread::Builder::new()
                 .name("rad-launcher-reap".into())
                 .spawn(move || {

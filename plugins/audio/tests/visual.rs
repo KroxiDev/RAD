@@ -1,5 +1,3 @@
-//! The visual states: they follow the sound server through one shared event monitor, which only
-//! exists while something is subscribed.
 mod support;
 use rad_plugin_audio::{AudioPlugin, Kind};
 use std::time::Duration;
@@ -8,7 +6,6 @@ use support::*;
 fn secs(n: u64) -> Duration {
     Duration::from_secs(n)
 }
-/// The integration's latency budget for a source change (not an SDK heartbeat).
 const HEARTBEAT: Duration = Duration::from_millis(500);
 
 #[test]
@@ -43,7 +40,7 @@ fn a_chosen_device_follows_only_itself() {
     let chosen = host.subscribe("output", "sink-b");
     host.wait_visual(chosen, "current", Some("On"), secs(5))
         .unwrap();
-    server.set_mute(Kind::Output, "sink-a", true); // the default, not the chosen one
+    server.set_mute(Kind::Output, "sink-a", true);
     server.set_default(Kind::Output, "sink-b");
     let after = host.wait_visual(chosen, "current", Some("Muted"), Duration::from_millis(600));
     assert!(
@@ -70,7 +67,6 @@ fn the_default_is_resolved_again_when_it_changes() {
     server.set_default(Kind::Output, "sink-a");
     host.wait_visual(output, "current", Some("On"), HEARTBEAT)
         .unwrap();
-    // No default at all is not a state to show.
     server.set_default(Kind::Output, "");
     host.wait_visual(output, "unavailable", None, HEARTBEAT)
         .unwrap();
@@ -104,7 +100,7 @@ fn a_server_that_goes_away_is_unavailable_and_recovery_restores_the_state() {
     server.down();
     host.wait_visual(output, "unavailable", None, secs(2))
         .unwrap_or_else(|seen| panic!("{seen:?}"));
-    server.set_mute(Kind::Output, "sink-a", true); // changed while nobody could see
+    server.set_mute(Kind::Output, "sink-a", true);
     server.up();
     host.wait_visual(output, "current", Some("Muted"), secs(3))
         .unwrap_or_else(|seen| panic!("{seen:?}"));
@@ -133,7 +129,6 @@ fn the_monitor_exists_only_while_something_is_subscribed() {
         "actions and options need no monitor"
     );
 
-    // Two subscriptions share one monitor.
     let output = host.subscribe("output", "@default");
     let microphone = host.subscribe("microphone", "@default");
     host.wait_visual(output, "current", Some("Muted"), secs(5))
@@ -150,8 +145,6 @@ fn the_monitor_exists_only_while_something_is_subscribed() {
         "the monitor child is gone"
     );
 
-    // Resubscribing starts a new monitor and shows the state as it is now, not as it was: two
-    // subscriptions in a row, so the second arrives before the new monitor has any picture.
     server.set_mute(Kind::Output, "sink-a", false);
     host.discard_pending();
     let again = host.subscribe("output", "@default");
@@ -181,7 +174,6 @@ fn between_observations_there_is_no_blind_renewal_or_process() {
         .unwrap();
     std::thread::sleep(Duration::from_millis(100));
     let calls = server.calls().len();
-    // A live SDK is not evidence that the source was observed again.
     assert!(
         host.take(
             |f| matches!(
@@ -210,8 +202,6 @@ fn a_burst_of_events_becomes_a_few_refreshes_not_one_per_event() {
         .unwrap();
     std::thread::sleep(Duration::from_millis(100));
     let before = server.listings();
-    // 30 events over about 150 ms, spaced closer than a refresh takes: refreshing per event
-    // would mean a dozen; the monitor waits for quiet, at most 80 ms in these timings.
     for n in 0..30 {
         server.emit(&format!("Event 'change' on sink #{n}"));
         std::thread::sleep(Duration::from_millis(5));
@@ -246,7 +236,6 @@ fn events_that_cannot_change_a_device_are_ignored() {
     }
     std::thread::sleep(Duration::from_millis(400));
     assert_eq!(server.listings(), before);
-    // The kinds that can are: sinks, sources and the server's defaults.
     server.emit("Event 'change' on source #4");
     assert!(eventually(secs(2), || server.listings() > before));
     host.finish().unwrap();
@@ -269,7 +258,6 @@ fn a_subscription_that_cannot_work_is_unavailable_and_starts_no_monitor() {
     std::thread::sleep(Duration::from_millis(150));
     assert_eq!(server.subscribers_started(), 0);
     host.finish().unwrap();
-    // Without pactl everything is unavailable, and the answer is immediate.
     let mut host = Host::with_plugin(AudioPlugin::new(None, quick()));
     let output = host.subscribe("output", "@default");
     assert_eq!(
@@ -286,12 +274,10 @@ fn a_failed_refresh_is_tried_again_without_waiting_for_another_event() {
     let output = host.subscribe("output", "@default");
     host.wait_visual(output, "current", Some("On"), secs(5))
         .unwrap();
-    // The event stream stays up, but the listings stop being usable: the refresh fails.
     server.garbage(true);
     server.set_mute(Kind::Output, "sink-a", true);
     host.wait_visual(output, "unavailable", None, secs(2))
         .unwrap_or_else(|seen| panic!("{seen:?}"));
-    // The service is back and nothing announces it: the plugin finds it out by itself.
     server.garbage(false);
     host.wait_visual(output, "current", Some("Muted"), secs(2))
         .unwrap_or_else(|seen| panic!("{seen:?}"));
@@ -342,7 +328,6 @@ fn stopping_cuts_short_the_wait_before_a_retry() {
     host.finish().unwrap();
 }
 
-/// How many times the plugin tried to reach the event stream.
 fn connection_attempts(server: &FakeServer) -> usize {
     server.calls_starting_with("subscribe")
 }
@@ -359,20 +344,16 @@ fn an_unreachable_server_is_retried_with_growing_waits_that_start_over_after_rec
     host.wait_visual(output, "unavailable", None, secs(2))
         .unwrap_or_else(|seen| panic!("{seen:?}"));
 
-    // 30, 60, 120, 240, 240... ms: about eight tries in 1.5 s. A fixed 30 ms wait makes forty.
     std::thread::sleep(Duration::from_millis(1500));
     let tries = connection_attempts(&server);
     assert!((5..=12).contains(&tries), "{tries} tries in 1.5 s");
 
-    // The longest wait is 240 ms, so recovery shows within that plus a refresh.
     server.up();
     let took = host
         .wait_visual(output, "current", Some("On"), secs(2))
         .unwrap_or_else(|seen| panic!("{seen:?}"));
     assert!(took < Duration::from_millis(900), "{took:?}");
 
-    // Back to short waits: 30, 60, 120 ms means at least three tries in the next half second,
-    // where a wait that stayed at 240 ms would allow two.
     server.down();
     host.wait_visual(output, "unavailable", None, secs(2))
         .unwrap_or_else(|seen| panic!("{seen:?}"));
@@ -398,12 +379,10 @@ fn watching_resumed_while_a_refresh_is_stuck_shows_only_fresh_pictures() {
         "the first refresh is stuck"
     );
     host.unsubscribe(first);
-    // The listing works again, and the output was muted meanwhile.
     server.hang(&[]);
     server.set_mute(Kind::Output, "sink-a", true);
     host.discard_pending();
     let second = host.subscribe("output", "@default");
-    // The abandoned refresh ends in a failure; none of that may reach the new subscription.
     assert_eq!(
         host.next_visual(second, secs(5)),
         Some(("current".into(), Some("Muted".into())))
@@ -436,7 +415,6 @@ fn adding_a_subscriber_during_a_blocked_read_does_not_refresh_cached_visuals() {
         Duration::from_millis(300),
     );
     let calls_after = server.calls();
-    // Release future reads; the current hung child still reaches its controlled deadline.
     server.hang(&[]);
     host.wait_visual(first, "current", Some("Muted"), secs(5))
         .unwrap();

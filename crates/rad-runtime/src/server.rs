@@ -1,4 +1,3 @@
-//! The sole runtime owner. Clients never own publication, history or execution.
 mod client_api;
 #[cfg(test)]
 mod contained_tests;
@@ -37,7 +36,6 @@ use std::{
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeError {
-    /// The instance lock or the sockets cannot be had: nothing can be served.
     Blocked,
     Startup,
     Transport,
@@ -51,8 +49,6 @@ struct ReplyTarget {
     sent: bool,
 }
 
-/// How to open the deck, registered by whoever owns the hardware; the server decides when
-/// (ADR 0006: only while the machine setting is on).
 type DeckFactory = Box<
     dyn FnMut(
         rad_deck::Desired,
@@ -87,9 +83,7 @@ pub struct Server {
     deck_connected: bool,
     deck_inaccessible: bool,
     deck_factory: Option<DeckFactory>,
-    /// The setting turned the deck off and it is being stopped; it is let go once it ends.
     deck_stopping: bool,
-    /// The setting is on and no attempt has been made since it was turned on.
     deck_open_pending: bool,
     machine: crate::machine_settings::MachineSettings,
     data_dir: std::path::PathBuf,
@@ -104,7 +98,6 @@ pub struct Server {
     previous_exit: Option<rad_api::PreviousExit>,
     events: crate::events::Events,
     connection_failures: crate::events::ConnectionFailures,
-    /// Last storage state recorded, so only a change leaves an event.
     storage_seen: rad_authority::StorageState,
 }
 impl Server {
@@ -115,7 +108,6 @@ impl Server {
             crate::startup::Opened::Recovery(_) => Err(RuntimeError::Startup),
         }
     }
-    /// The server over an open Store. `events` already holds what happened before.
     pub(crate) fn from_parts(
         transport: Transport,
         boot: bootstrap::Bootstrap,
@@ -223,7 +215,6 @@ impl Server {
                 | Effect::Accepted { request, .. }
                 | Effect::Unknown { request } => {
                     if matches!(effect, Effect::Reply { .. } | Effect::Rejected { .. }) {
-                        // Includes valid no-ops: no Persist means the prepared media is unused.
                         self.persistence.release_media(*request);
                         self.pictures.retry_failed();
                     }
@@ -258,7 +249,6 @@ impl Server {
                 | Effect::HardwareAccepted { .. } => self.display_dirty = true,
                 Effect::ReleaseHold { execution } => self.actor.hold_released(*execution),
                 Effect::Dispatch(intent) => {
-                    // No native port attached in this cut: fail explicitly, never pretend to launch.
                     let effects = self
                         .actor
                         .job_complete(
@@ -271,7 +261,6 @@ impl Server {
                     queue.extend(self.persistence.route(&mut self.actor, effects));
                 }
                 Effect::DisplayClockOverflow => {
-                    // The deck just does not go to sleep by itself; input still wakes it.
                     self.events.record(EventCode::DisplayClockOverflow, None);
                 }
                 Effect::InputRejected { .. }
@@ -286,7 +275,6 @@ impl Server {
         self.note_storage();
         Ok(())
     }
-    /// Records a change of the storage state, whatever produced it.
     fn note_storage(&mut self) {
         use rad_authority::StorageState;
         let now = self.actor.storage_state();
@@ -369,7 +357,6 @@ impl Server {
         }
         self.record_native_events();
     }
-    /// Records what the launcher and the plugin host reported since the last call.
     fn record_native_events(&mut self) {
         if let Some(native) = &mut self.native {
             self.events.record_all(native.take_events());
@@ -387,7 +374,6 @@ impl Server {
         self.effects(effects)?;
         Ok(advanced || produced)
     }
-    /// Lets the plugin administrator advance; `true` when it changed anything.
     fn poll_admin(&mut self) -> Result<bool, RuntimeError> {
         let (Some(native), Some(admin)) = (&mut self.native, &mut self.plugin_admin) else {
             return Ok(false);
@@ -404,7 +390,6 @@ impl Server {
             monotonic_ms().map_err(|_| RuntimeError::Clock)?,
         ))
     }
-    /// Refreshes plugin visuals; `true` when one changed, which also dirties the display.
     fn poll_visuals(&mut self) -> bool {
         if self.shutting_down {
             return false;
@@ -574,7 +559,6 @@ impl Server {
     fn settle(&mut self) -> Result<(), RuntimeError> {
         self.settle_with(Self::settle_round).map(|_| ())
     }
-    /// `settle` over an arbitrary round, returning how many rounds ran.
     fn settle_with(
         &mut self,
         mut round: impl FnMut(&mut Self) -> Result<bool, RuntimeError>,
@@ -721,8 +705,6 @@ impl Server {
         }
         Ok(())
     }
-    // One reaffirmation per incident, never a replay of the original commit.
-    // Persistent uncertainty remains visible and blocked, without an IO loop.
     fn reconcile_once(&mut self) -> Vec<Effect> {
         match self.actor.storage_state() {
             rad_authority::StorageState::Ready => self.reconciliation_attempted = false,

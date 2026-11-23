@@ -1,4 +1,3 @@
-//! Isolated conformance entrypoint, never packaged as the public OBS executable.
 use std::{
     fs::OpenOptions,
     io::Read,

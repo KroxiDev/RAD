@@ -1,4 +1,3 @@
-//! Isolated major-1 credential peer: only compares a fixture string, never connects to a service.
 use rad_plugin_contract::*;
 use std::{
     collections::BTreeMap,

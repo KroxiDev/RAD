@@ -1,4 +1,3 @@
-//! Typed I/O instructions only. Runtime owns bounded workers, leases and revalidation.
 use super::*;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Capabilities {

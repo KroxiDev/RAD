@@ -47,8 +47,6 @@ def inspect(root):
             raise ValueError(f'Fuente modificada durante lectura: {name}')
         files[name] = {'sha256': digest, 'mode': stat.S_IMODE(after.st_mode), 'mtime_ns': after.st_mtime_ns}
         parents.update(str(parent) for parent in PurePosixPath(name).parents if str(parent) != '.')
-    # Un directorio solo es reutilizable cuando TODO su inventario es conocido.
-    # Las entradas nuevas/no rastreadas y los enlaces lo excluyen junto a sus padres.
     for name in sorted(parents, key=lambda item: (-len(PurePosixPath(item).parts), item)):
         path = safe_path(root, name)
         if path is None or not path.is_dir():
@@ -95,7 +93,6 @@ def restore(root):
     try:
         snapshot = json.loads(path.read_text())
     finally:
-        # Una corrida fallida puede guardar artefactos parciales, nunca esta estampa vieja.
         path.unlink()
     if snapshot.get('version') != 1:
         raise ValueError('Versión de estampa desconocida')

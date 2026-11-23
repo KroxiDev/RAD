@@ -71,7 +71,6 @@ class ObsPeer(COMMON.Bridge):
         try:
             return super().call(operation, **args)
         except Exception:
-            # Never surface untrusted IPC details, parameters or synthetic credentials.
             raise RuntimeError('private OBS client request failed') from None
 
 
@@ -236,8 +235,6 @@ class RelayProcess:
         after = SAMPLER.parse_stat(path.read_text())
         if after['start_ticks'] != p['start_ticks'] or after['session'] != p['session']:
             raise ValueError('relay PID changed while sampling')
-        # PR_SET_DUMPABLE=0 protects the password. No ptrace bypass: smaps, fd
-        # and live /proc/exe are unavailable; never substitute zero measurements.
         p.update(role='readonly_relay', measurement='stat_only_nondumpable')
         return p
 
@@ -329,8 +326,6 @@ class ObsWorld(SERVICES.ServicesWorld):
         machine.chmod(0o600)
 
     def start_runtime(self):
-        # Only filesystem/PID isolation: trusted fixed production plugin is pinned
-        # to the checked guard port. This is not a network sandbox for hostile code.
         command = [v for v in SERVICES.namespace_command(self.root, self.elf) if v != '--unshare-net']
         started = time.time_ns()
         self.runtime = self.spawn(command, 'runtime_namespace')
@@ -480,7 +475,6 @@ def run_case(out, elf, hashes, relay, repetition, seconds, interval):
 
 
 def summarize(world, repetition):
-    # Do not let the generic summarizer turn protected relay metrics into zeros.
     result = [r for r in SERVICES.summarize(world, repetition) if r['group'] != 'readonly_proxy']
     for phase in PHASES:
         rows = [r for r in world.rows if r['phase'] == phase]
@@ -630,7 +624,7 @@ def main(argv=None):
             ['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(), kernel=os.uname().release,
             architecture=os.uname().machine)
         elf = retain(out, metadata)
-        write_metadata(out, metadata)  # Before gate, prompt or personal endpoint.
+        write_metadata(out, metadata)
         metadata['stage'] = 'synthetic_gate_then_observation'
         metadata.update(execute(out, elf, metadata, args))
         if provenance() != {k:metadata[k] for k in ('source_sha256', 'executable_sha256')}:

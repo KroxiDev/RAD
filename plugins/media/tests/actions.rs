@@ -1,4 +1,3 @@
-//! The `control` action: which method reaches which player, and what is reported when it cannot.
 mod support;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -44,7 +43,6 @@ fn each_operation_calls_its_mpris_method_on_the_chosen_player() {
         Vec::<String>::new(),
         "the other player is left alone"
     );
-    // And the other way round: the choice, not the order of starting, picks the player.
     assert_eq!(host.invoke("next", "brave"), success());
     assert_eq!(brave.calls(), ["Next"]);
     assert_eq!(strawberry.calls().len(), 6);
@@ -53,7 +51,6 @@ fn each_operation_calls_its_mpris_method_on_the_chosen_player() {
 
 #[test]
 fn an_application_that_is_not_running_is_unavailable_and_no_other_player_is_used() {
-    // The player that was chosen is missing: the one that is running is not used instead.
     let bus = PrivateBus::start();
     let mut strawberry = FakePlayer::start(&bus, STRAWBERRY);
     let mut lookalike = FakePlayer::start_owning(
@@ -79,7 +76,6 @@ fn an_application_that_is_not_running_is_unavailable_and_no_other_player_is_used
 
 #[test]
 fn with_several_instances_only_the_first_one_found_is_called() {
-    // Two matching players: no error and no choice to make; the first by name is used.
     let bus = PrivateBus::start();
     let mut second = FakePlayer::start(&bus, "org.mpris.MediaPlayer2.brave.instance9");
     let mut first = FakePlayer::start(&bus, "org.mpris.MediaPlayer2.brave.instance10");
@@ -89,7 +85,6 @@ fn with_several_instances_only_the_first_one_found_is_called() {
     assert_eq!(first.calls(), ["Next", "PlayPause"]);
     assert_eq!(second.calls(), Vec::<String>::new());
 
-    // Once the first one is gone, the next instance is the one found.
     first.quit();
     assert_eq!(host.invoke("stop", "brave"), success());
     assert_eq!(second.calls(), ["Stop"]);
@@ -101,7 +96,6 @@ fn a_player_that_cannot_do_it_is_incompatible_and_is_not_asked_to() {
     let bus = PrivateBus::start();
     let mut player = FakePlayer::start(&bus, STRAWBERRY);
     let mut host = Host::start(Some(bus.address()), quick());
-    // (operation, the ability it needs, the method it would call)
     let table = [
         ("play", "play", "Play"),
         ("pause", "pause", "Pause"),
@@ -119,7 +113,6 @@ fn a_player_that_cannot_do_it_is_incompatible_and_is_not_asked_to() {
             "{operation} without {ability}"
         );
         assert_eq!(player.calls().len(), calls_before, "{operation} was called");
-        // Only its own ability matters: every other operation still works.
         for (other, other_ability, other_method) in table {
             if other_ability != ability {
                 assert_eq!(host.invoke(other, "strawberry"), success(), "{other}");
@@ -148,7 +141,6 @@ fn a_player_that_never_answers_times_out_and_does_not_hold_up_the_others() {
     let mut host = Host::start(Some(bus.address()), quick());
     let started = Instant::now();
     let slow = host.ask_invoke("play", "brave");
-    // Meanwhile another action goes through at once.
     let quick_start = Instant::now();
     assert_eq!(host.invoke("play", "strawberry"), success());
     assert!(
@@ -193,11 +185,9 @@ fn a_frozen_player_times_out_whatever_is_asked_of_it() {
 fn a_player_that_leaves_during_the_call_is_unavailable() {
     let bus = PrivateBus::start();
     let mut player = FakePlayer::start(&bus, STRAWBERRY);
-    // From now on it takes method calls and never answers them.
     player.command("hang").sync();
     let mut host = Host::start(Some(bus.address()), quick());
     let request = host.ask_invoke("play", "strawberry");
-    // Wait until the call is with the player, so that it is the one the player leaves unanswered.
     let started = Instant::now();
     while player.calls().is_empty() {
         assert!(

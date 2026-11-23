@@ -1,4 +1,3 @@
-//! Persistible settings only: no clocks, timers, hardware or locale probing.
 use super::ConfigurationError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Untrusted reconstruction/edit input. Defaults are for new configurations only.
@@ -9,7 +8,6 @@ pub struct SettingsData {
     pub long_press_threshold_ms: u64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Validated complete settings; no universal mutable setters.
 pub struct Settings {
     data: SettingsData,
 }
@@ -20,7 +18,6 @@ impl Settings {
         }
         Ok(Self { data })
     }
-    // Only Configuration calls this after validating its private data.
     pub(super) fn validated(data: SettingsData) -> Self {
         Self { data }
     }

@@ -28,7 +28,6 @@ type Download = Box<
         + Send,
 >;
 enum Job {
-    /// `package` is the downloaded archive; the worker validates and stages it.
     Prepare {
         request: PluginAdmin,
         package: Option<Vec<u8>>,
@@ -101,7 +100,6 @@ impl From<&'static str> for Rejection {
         }
     }
 }
-/// Observable state of the administrator and the host bindings, compared around `poll`.
 #[derive(PartialEq)]
 struct ProgressMark {
     state: AdminState,
@@ -212,9 +210,6 @@ impl Admin {
         self.state = AdminState::Preparing;
         Ok(json!({"operation_id":next.to_string(),"state":"preparing"}))
     }
-    /// An update from another repository than the registered one must carry the user's
-    /// confirmation of exactly that registered origin. Refusing here, before any download,
-    /// also covers a registered origin that changed since the user looked at it.
     fn confirm_source(&self, request: &PluginAdmin) -> Result<(), Rejection> {
         use rad_plugin_manager::GithubSource;
         use rad_protocol::PluginOperation::{Reinstall, Update};
@@ -251,7 +246,6 @@ impl Admin {
         })
     }
     fn send(&mut self, job: Job) {
-        // Only continuation of the current operation: never a second admin request.
         match self.tx.try_send(job) {
             Ok(()) => {}
             Err(mpsc::TrySendError::Full(job)) => self.unsent = Some(job),
@@ -294,7 +288,6 @@ impl Admin {
         self.advance(actor, host, now);
         before != self.progress_mark(host)
     }
-    /// Everything `advance` can change that another step of the turn may be waiting on.
     fn progress_mark(&self, host: &Host) -> ProgressMark {
         ProgressMark {
             state: self.state,
@@ -403,7 +396,6 @@ impl Admin {
     /// publication stay here: the permit is born only in `Reply::Prepared`.
     fn dispatch_fetched(&mut self) {
         if self.stopping || self.locked {
-            // A download that returns after shutdown (or a lock) is dropped unused.
             if self.fetcher.take_done().is_some() && !self.locked {
                 self.error = Some("cancelled");
                 if !self.busy {
@@ -601,7 +593,6 @@ impl Admin {
             })
             .collect();
         let mut status = json!({
-            // The download is part of the visible operation although the worker is free.
             "state": if self.fetcher.active() { AdminState::Preparing.wire() } else { self.state.wire() },
             "operation_id": self.operation.map(|n| n.to_string()),
             "error": self.error,
@@ -1061,7 +1052,6 @@ mod lifecycle_tests {
         if let Some(p) = &mut profile {
             p.snapshot("before");
         }
-        // Install A: its download is held by the fake downloader.
         admin
             .submit(Origin::Editor, request("install", Some(2)), &actor)
             .unwrap();
@@ -1074,7 +1064,6 @@ mod lifecycle_tests {
         if let Some(p) = &mut profile {
             p.snapshot("during");
         }
-        // First demand for B while A is still downloading.
         let profile_cold = Instant::now();
         admin.set_extra_demand(["org.rad.fixture".into()].into());
         let cold_start = Instant::now() + Duration::from_secs(3);
@@ -1141,7 +1130,6 @@ mod lifecycle_tests {
             ..request(op, None)
         }
     }
-    /// An Admin whose downloader counts its calls and serves v2 for anything but `/v1`.
     fn counting_admin(root: &std::path::Path) -> (Admin, Arc<std::sync::atomic::AtomicUsize>) {
         let (v1, v2) = (package(1), package(2));
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1203,7 +1191,6 @@ mod lifecycle_tests {
             settle(&mut admin, &mut actor, &mut ports, 0);
             assert_eq!(registered_source(&admin, &ports), REGISTERED);
             let downloads = calls.load(std::sync::atomic::Ordering::SeqCst);
-            // Missing and wrong confirmations are both refused, with both origins named.
             for replaces in [None, Some("https://github.com/third/repo")] {
                 let refused = admin
                     .submit(Origin::Editor, replacing(op, OTHER, replaces), &actor)
@@ -1221,7 +1208,6 @@ mod lifecycle_tests {
                 assert!(!admin.busy && !admin.fetcher.active() && admin.error.is_none());
                 assert_eq!(registered_source(&admin, &ports), REGISTERED);
             }
-            // The confirmed origin (any case, any tag) lets the change through.
             admin
                 .submit(
                     Origin::Editor,

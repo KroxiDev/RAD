@@ -77,11 +77,8 @@ struct State {
     art_url: Option<String>,
     title: Option<String>,
     hang: bool,
-    /// The property whose next read makes the player give up its bus names.
     vanish: Option<String>,
-    /// The property whose next read makes the player end.
     die: Option<String>,
-    /// Calls accepted and never answered, kept alive so that they stay pending.
     pending: Vec<gio::DBusMethodInvocation>,
 }
 
@@ -176,7 +173,6 @@ impl Fake {
         }
     }
 
-    /// Ends the player, or gives up its bus names, if `property` is the one that was to make it.
     fn vanish_on_read(&self, property: &str) {
         if self.state.borrow().die.as_deref() == Some(property) {
             std::process::exit(0);
@@ -291,7 +287,6 @@ fn main() {
     }
 
     FAKE.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&fake)));
-    // Own the context from here on, so that the input thread can only queue commands onto it.
     let context = glib::MainContext::default();
     let _owner = context.acquire().expect("main context");
     let queue = context.clone();
@@ -301,7 +296,6 @@ fn main() {
                 FAKE.with(|slot| slot.borrow().as_ref().expect("fake").command(&line));
             });
         }
-        // End of input: the test is over (or gone).
         queue.invoke(|| FAKE.with(|slot| slot.borrow().as_ref().expect("fake").command("quit")));
     });
     say("ready");

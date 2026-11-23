@@ -11,7 +11,6 @@ fn cpu_and_ram_demand_do_not_touch_other_sources_and_release_resets_cpu() {
         "MemTotal: 1000 kB\nMemAvailable: 400 kB",
     )
     .unwrap();
-    // Observe reads of only these synthetic files; no proc/sensors/driver access.
     let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
     assert!(fd >= 0);
     let watch = |file: &str| {
@@ -74,7 +73,6 @@ fn cpu_and_ram_demand_do_not_touch_other_sources_and_release_resets_cpu() {
         "fresh CPU baseline after release"
     );
     reads();
-    // The publisher can coalesce off/on before the worker sees the intermediate mask.
     demand.set([false; 4]);
     demand.set([true, false, false, false]);
     assert!(reader.read_demand(demand, true).cpu.is_none());
@@ -108,7 +106,6 @@ fn gpu_and_vram_share_one_library_query_selectively_and_unload_while_cpu_continu
             .success()
     );
     let name = CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
-    // Hold a diagnostic reference only while reading fake ABI counters.
     let diagnostic = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
     assert!(!diagnostic.is_null());
     let counts: unsafe extern "C" fn(usize) -> u32 = unsafe {

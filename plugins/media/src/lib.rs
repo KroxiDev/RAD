@@ -1,4 +1,3 @@
-//! RAD Action Deck media plugin: control a media player and show its cover through MPRIS.
 mod actions;
 mod address;
 mod bus;

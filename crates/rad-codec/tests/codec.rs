@@ -81,7 +81,6 @@ fn input_limit_is_inclusive_and_checked_before_parser() {
 fn output_limit_is_real_document_boundary_not_a_post_parse_blob() {
     let (c, r) = full();
     let mut data = c.data().clone();
-    // Many valid buttons, each value small; grow total document above cap.
     let template = data
         .buttons
         .iter()
@@ -89,7 +88,6 @@ fn output_limit_is_real_document_boundary_not_a_post_parse_blob() {
         .unwrap()
         .clone();
     let mut r = r;
-    // A tree of folders provides legal slots for the repeated buttons.
     let mut config = c;
     for i in 0..160 {
         let root = config.data().folders.last().unwrap().binding.identity();
@@ -141,8 +139,6 @@ fn output_limit_is_real_document_boundary_not_a_post_parse_blob() {
         Err(CodecError::TooLarge)
     );
 }
-
-// Critical regressions promoted from the independent codec review.
 
 fn object_paths(value: &serde_json::Value, path: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
     match value {

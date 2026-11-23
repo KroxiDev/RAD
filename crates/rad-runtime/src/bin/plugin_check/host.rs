@@ -79,7 +79,6 @@ impl Drop for Session {
             let _ = self.host.pump(self.now());
             std::thread::sleep(Duration::from_millis(1));
         }
-        // The Host reaps only the plugin; its killed descendants are this subreaper's now.
         if self.pid > 0 {
             super::reap_group(self.pid);
         }

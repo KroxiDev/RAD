@@ -79,7 +79,6 @@ class PrivilegedBatch:
 
     def start(self):
         with D.registered_spawn():
-            # No internal stdin authentication agent: passwords never enter protocol/chat.
             self.child=subprocess.Popen(['/usr/bin/pkexec','--disable-internal-agent',
                 '/usr/bin/python3','-I','-S','-B',str(self.helper),'--capture'],
                 stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,
@@ -121,9 +120,6 @@ class PrivilegedBatch:
         try:self.child.wait(timeout=self.close_timeout)
         except subprocess.TimeoutExpired:
             self.cleanup['eof_wait_expired']=True
-            # A pkexec waiting for authentication still has the caller's REAL uid.
-            # Only that exact owned launcher can receive SIGTERM through a pidfd.
-            # An already-root helper is never signalled; it owns EOF/deadline cleanup.
             sent=False
             if self.identity is not None:
                 pid,start,session=self.identity
@@ -231,10 +227,6 @@ def calibrate(batch,out):
             request=identities(positive,{positive.pid:'probe'})
             batch.begin(request,first=True)
             for index in range(10):
-                # Waker is the unselected controller; another unselected target is
-                # deliberately woken too. Only positive's ten wakeups may count.
-                # ACK via shared memory avoids target-generated pipe wakeups: a
-                # wrong emitter/common_pid filter must not also happen to count ten.
                 for child,ack in zip(children,mappings):
                     sleeping(child);child.stdin.write('x');child.stdin.flush()
                     deadline=time.monotonic()+3
@@ -352,7 +344,7 @@ def main(argv=None):
     for name,path in (('pkexec',Path('/usr/bin/pkexec')),('privileged-python',Path('/usr/bin/python3')),
                       ('controller-probe-python',Path(sys.executable))):
         sha=digest(path);target=elf/('audit-'+name)
-        shutil.copy2(path,target);target.chmod(0o400)  # Never execute a copied setuid/interpreter artifact.
+        shutil.copy2(path,target);target.chmod(0o400)
         if digest(target)!=sha:raise RuntimeError('tool changed during preexec retention')
         metadata['tool_copies'][name]=dict(sha256=sha,path=str(target.relative_to(out)),audit_copy_only=True)
     persist_metadata(out,metadata)

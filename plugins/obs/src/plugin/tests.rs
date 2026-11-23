@@ -6,7 +6,6 @@ use std::{
     os::unix::net::UnixStream,
     time::Duration,
 };
-/// Every request the plugin may send, as a complete fake OBS announces them.
 pub(super) const AVAILABLE: &[&str] = &[
     "GetVersion",
     "GetSceneCollectionList",
@@ -41,12 +40,10 @@ pub(super) const AVAILABLE: &[&str] = &[
     "SaveReplayBuffer",
     "GetLastReplayBufferReplay",
 ];
-/// An action whose effect already holds: it reads the recording state and changes nothing.
 const RECORDING: &str = r#"{"kind":"invoke","credential_revision":REV,"action":"record","parameters":{"schema_version":1,"values":{"operation":"start"}}}"#;
 fn start_recording(revision: u64) -> Value {
     serde_json::from_str(&RECORDING.replace("REV", &revision.to_string())).unwrap()
 }
-/// Answers the next request, which must be `expected`, with `data`.
 fn answer(ws: &mut tungstenite::WebSocket<std::net::TcpStream>, expected: &str, data: Value) {
     let req: Value = serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
     assert_eq!(req["d"]["requestType"], expected);
@@ -250,7 +247,6 @@ fn disconnect_after_effect_never_replays_on_next_action() {
                     serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
                 assert_eq!(req["d"]["requestType"], "StartRecord");
             } else {
-                // The next action reads first: the lost StartRecord is never sent again.
                 answer(&mut ws, "GetRecordStatus", recording());
                 assert!(ws.read().is_err(), "old command replayed");
             }
@@ -647,7 +643,6 @@ fn flooded_session_defers_payload_over_64k_until_next_worker_turn() {
 
 #[test]
 fn an_action_waits_fifteen_seconds_for_obs_to_accept_then_says_it_is_unavailable() {
-    // Bound but never answering, like OBS while it is still opening.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = match listener.local_addr().unwrap() {
         std::net::SocketAddr::V4(v) => v,
@@ -661,7 +656,6 @@ fn an_action_waits_fifteen_seconds_for_obs_to_accept_then_says_it_is_unavailable
         wake: Wake::new().unwrap(),
         endpoint,
     });
-    // No worker thread: the identical production turn is driven by this test clock.
     let plugin = ObsPlugin {
         shared: shared.clone(),
         thread: None,
@@ -736,7 +730,6 @@ fn a_request_obs_does_not_announce_fails_without_being_sent() {
                 .into(),
         ))
         .unwrap();
-        // An OBS without a virtual camera.
         let announced: Vec<_> = AVAILABLE
             .iter()
             .filter(|r| !r.contains("VirtualCam"))
@@ -858,7 +851,6 @@ fn revision_churn_child() {
         assert_eq!(recv(&mut host)["message"]["kind"], "credentials_applied");
         send(&mut host, id + 1, start_recording(revision));
         let deadline = Instant::now() + Duration::from_secs(3);
-        // The real worker owns I/O; wait for its reply without driving competing turns.
         assert_eq!(recv(&mut host)["message"]["outcome"]["status"], "success");
         send(
             &mut host,
@@ -958,7 +950,6 @@ fn shared_transport_survives_one_consumer_and_closes_after_the_last() {
         5,
         json!({"kind":"unsubscribe","subscription":{"generation":1,"request":3}}),
     );
-    // Acknowledged later input establishes that unsubscribe has been handled.
     send(
         &mut host,
         6,
@@ -969,8 +960,6 @@ fn shared_transport_survives_one_consumer_and_closes_after_the_last() {
         !server.is_finished(),
         "remaining consumer lost its shared transport"
     );
-    // An action shares the surviving authenticated connection; a second connection would
-    // not be served by this fixture and could not answer successfully.
     send(&mut host, 7, start_recording(1));
     loop {
         let reply = recv(&mut host);

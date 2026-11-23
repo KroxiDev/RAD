@@ -18,8 +18,6 @@ _spec.loader.exec_module(observer)
 
 
 def holders(node):
-    # Paths are discovered absolute /dev nodes (or owned test fixtures), never options.
-    # This installed fuser treats a standalone '--' as ending its file list.
     result=subprocess.run(['fuser',str(node)],capture_output=True,text=True,timeout=3)
     words=result.stdout.split()
     if result.returncode not in (0,1) or any(not w.isdecimal() for w in words):

@@ -1,4 +1,3 @@
-//! Private OBS protocol oracle. Never contacts OBS; binds only an ephemeral loopback port.
 use serde_json::{Value, json};
 #[derive(Default)]
 struct Model {
@@ -145,7 +144,6 @@ impl Model {
                 self.replays += 1;
                 json!({})
             }
-            // Like OBS, there is no last replay before the first one is saved.
             "GetLastReplayBufferReplay" if self.replays > 0 => {
                 json!({"savedReplayPath":format!("/replays/{}.mkv", self.replays)})
             }
@@ -263,7 +261,6 @@ fn main() {
                     return false;
                 };
                 if !*auth {
-                    // Independent hashlib vector, not the plugin authentication function.
                     if v["op"] != 1 || v["d"]["authentication"] != expected_auth {
                         let _ = ws.close(Some(tungstenite::protocol::CloseFrame {
                             code: 4009u16.into(),

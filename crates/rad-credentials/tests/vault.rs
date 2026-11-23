@@ -281,7 +281,6 @@ fn reconcile_rejects_malformed_key_preserving_unknown_and_all_bytes() {
     fs::write(&key_path, valid_key).unwrap();
     v.reconcile().unwrap();
     assert_eq!(v.state(), State::Ready);
-    // No slot authentication can incidentally detect a bad key in an empty vault.
     let empty = Fixture::new();
     let mut vault = Vault::open(&empty.0).unwrap();
     let path = empty.0.join("credentials/master.key");

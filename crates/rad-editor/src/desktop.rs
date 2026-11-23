@@ -1,6 +1,3 @@
-//! RAD in the application menu (E2, ADR 0016): the editor installs its desktop entry and
-//! icon under the user's data directory, like the units of ADR 0012. Each file is written
-//! only when missing or different, and the entry runs the editor in use.
 use crate::{app_icon, service::write_atomic};
 use std::{
     ffi::OsString,
@@ -24,7 +21,6 @@ pub fn data_directory(xdg_data_home: Option<OsString>, home: Option<OsString>) -
         })
 }
 
-/// [`install`] for the current user and the running editor.
 pub fn install_for_user() -> Result<bool, String> {
     let data = data_directory(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
         .ok_or("no usable HOME or XDG_DATA_HOME")?;
@@ -77,7 +73,6 @@ fn render_entry(editor: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("{} cannot be written in a desktop entry", editor.display()))?;
     let reserved = |c: char| c.is_whitespace() || "\"'\\><~|&;$*?#()`".contains(c);
     let exec = if path.contains(reserved) {
-        // Quoting escapes `"`, `` ` ``, `$` and `\`; then the string escape doubles `\`.
         let quoted: String = path
             .chars()
             .flat_map(|c| match c {

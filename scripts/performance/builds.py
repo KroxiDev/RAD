@@ -113,7 +113,6 @@ def boot(binary, directory, env, initialized):
         try:
             socket = Path(env['XDG_RUNTIME_DIR'])/'rad/editor.sock'
             deadline = time.monotonic()+15
-            # Do not reuse a stale socket left by the previous session: clean exit removes it.
             while not socket.exists():
                 if process.poll() is not None:
                     raise RuntimeError('private runtime failed before socket readiness')
@@ -126,7 +125,7 @@ def boot(binary, directory, env, initialized):
                 raise RuntimeError('private machine profile must have deck disabled')
             ready_ns = time.monotonic_ns()-start
             peer.close();peer=None
-            time.sleep(.2)  # Let disconnect processing finish before the idle window.
+            time.sleep(.2)
             epoch = time.monotonic()
             for _ in range(6):
                 snapshot = []
@@ -149,7 +148,6 @@ def boot(binary, directory, env, initialized):
                 try:peer.close()
                 except Exception as error:peer_error=error
             if process.poll() is None:
-                # Discover children even when readiness failed before the first sample.
                 for pid in observer.descendants(process.pid):
                     try:
                         observed[pid] = observer.parse_stat((Path('/proc')/str(pid)/'stat').read_text())['start_ticks']
@@ -185,11 +183,9 @@ def measure(output,repetitions):
     results=[]
     names=['reference','strip-all','thin-lto']
     for repeat in range(repetitions):
-        # Rotate to avoid confounding variant with position in a warm cache sequence.
         for variant in names[repeat%3:]+names[:repeat%3]:
             root=runs/(str(repeat)+'-'+variant)
             root.mkdir(mode=0o700)
-            # Short XDG paths keep AF_UNIX addresses below their Linux length limit.
             env={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8'}
             for key,name in [('HOME','h'),('XDG_RUNTIME_DIR','r'),('XDG_DATA_HOME','d'),
                 ('XDG_CONFIG_HOME','c'),('XDG_CACHE_HOME','k'),('XDG_STATE_HOME','s'),

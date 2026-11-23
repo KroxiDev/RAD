@@ -5,7 +5,6 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
     pub version: u32,
-    /// Explicit consent to execute native code; not a sandbox declaration.
     pub trusted_native_code: bool,
     pub timeout_ms: u64,
     pub freshness_ms: u64,

@@ -149,7 +149,6 @@ pub enum FieldKind {
         depends_on: Vec<String>,
     },
 }
-/// A fixed option whose label is its value keeps the plain form older readers expect.
 fn fixed_options<S: serde::Serializer>(
     options: &[ChoiceOption],
     serializer: S,
@@ -213,7 +212,6 @@ impl Manifest {
             }
             for definition in definitions {
                 definition.validate()?;
-                // Dynamic options exist only from API 2: older hosts must never load them.
                 if definition.has_dynamic_choice()
                     && !crate::supports(&self.capabilities, crate::DYNAMIC_OPTIONS)
                 {
@@ -329,7 +327,6 @@ impl Manifest {
             .and_then(|texts| texts.get(text))
             .map_or(text, String::as_str)
     }
-    /// Some fixed option shows the user a text other than its stored value.
     fn labelled_options(&self) -> bool {
         self.actions
             .iter()
@@ -342,8 +339,6 @@ impl Manifest {
                 _ => false,
             })
     }
-    /// API used with this plugin: the newest both sides speak. Meaningful for a
-    /// manifest that `validate` accepted against the same `host_api`.
     /// Union of slots this process is allowed to receive, in canonical ASCII order.
     pub fn credential_slots(&self) -> BTreeSet<&str> {
         self.actions
@@ -485,7 +480,6 @@ impl Definition {
                 FieldKind::Integer { min, max } => min <= max,
                 FieldKind::Text { max_bytes } => (1..=4096).contains(max_bytes),
                 FieldKind::DynamicChoice { depends_on } => {
-                    // Earlier fields only: dependencies are acyclic by construction.
                     depends_on.len() <= 4
                         && unique(depends_on.iter().map(String::as_str))
                         && depends_on.iter().all(|dependency| {
@@ -545,7 +539,6 @@ impl<'de> Deserialize<'de> for FieldKind {
             Choice { options: Vec<FixedOption> },
             DynamicChoice { depends_on: Vec<String> },
         }
-        /// A plain value, or a value with the text the user reads (`labels` capability).
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum FixedOption {

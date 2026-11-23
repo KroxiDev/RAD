@@ -1,4 +1,3 @@
-//! One captured action edit and its derived visual, composed off the GUI thread.
 use crate::{
     Request,
     plugins::PluginTexts,
@@ -142,7 +141,6 @@ impl LinkedAction {
                 }
             }
         }
-        // No owner is persisted: only an exact, unshared derived binding may be changed.
         let replace = if id.is_none() {
             current.is_none() && desired.is_some()
         } else {

@@ -2,7 +2,6 @@ use crate::Error;
 use serde::Serialize;
 use std::io::{self, Write};
 
-// Cap output while serializing, not after allocating an arbitrarily large buffer.
 pub(crate) fn json(value: &impl Serialize, limit: usize) -> Result<Vec<u8>, Error> {
     struct Sink {
         bytes: Vec<u8>,

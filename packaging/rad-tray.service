@@ -1,5 +1,3 @@
-# Optional desktop companion, installed by the editor beside rad-runtime.service.
-# No separate enable/autostart: the authority starts and stops its tray (ADR 0016).
 [Unit]
 Description=RAD session tray
 BindsTo=rad-runtime.service

@@ -382,7 +382,6 @@ fn admission_during_normal_stop_waits_for_new_generation_without_rebinding_old_w
         .unwrap();
     assert_eq!(a.job_plugin(dispatch.id), None);
     assert_eq!(dispatch.deadline_ms, 5100);
-    // Caller has now reaped generation 41 and completed the new handshake.
     a.activate_plugin("fixture", selection, 42).unwrap();
     assert_eq!(a.job_plugin(dispatch.id), Some(("fixture", 42)));
     assert_eq!(a.begin_plugin_stop("fixture", 42), Err(PluginError::InUse));

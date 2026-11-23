@@ -1,10 +1,7 @@
-//! Recent runtime events for Advanced → Log (ADR 0011). Codes, never prose: the Editor
-//! words them. Integers travel as decimal strings like everywhere else in the client API.
 use serde::{Deserialize, Serialize};
 
 macro_rules! event_codes {
     ($($variant:ident => $wire:literal),* $(,)?) => {
-        /// Closed vocabulary of what the runtime reports about itself.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
         pub enum EventCode { $(#[serde(rename = $wire)] $variant),* }
         impl EventCode {
