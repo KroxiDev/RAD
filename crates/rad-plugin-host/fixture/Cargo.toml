@@ -1,4 +1,3 @@
-# Standalone publication candidate: no RAD source or workspace dependency.
 [package]
 name = "rad-plugin-fixture"
 version = "0.1.0"

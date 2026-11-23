@@ -1,4 +1,3 @@
-//! Shared wire types: the host and SDK compile the same strict contract.
 pub use rad_plugin_contract::{
     ChoiceList, ChoiceOption, Control, ControlEvent, ControlGesture, Correlation, Envelope,
     FailureCode, Gesture, MAX_CHOICES, Message, OptionsScope, Outcome, Parameters, Version,

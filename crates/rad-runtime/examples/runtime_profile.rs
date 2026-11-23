@@ -230,7 +230,6 @@ fn scenario(root: &Path, count: usize, seconds: u64, signals: &mut Signals) {
             "add_action",
             json!({"button_id":button,"type":kind,"parameters":parameters}),
         );
-        // No visual exists yet: metadata is installed but the plugin starts cold.
         let (admission, completion) = execute(&mut client, &button);
         for (operation, ns) in [
             ("run_admission_cold", admission),
@@ -383,7 +382,7 @@ fn main() {
     let seconds: u64 = args[2].parse().unwrap();
     assert!([0, 1, 4].contains(&count));
     assert!((1..=20).contains(&seconds));
-    private_dir(&root); // Never reuse or alter a pre-existing configuration.
+    private_dir(&root);
     for directory in ["runtime", "home", "data", "system", "config", "cache"] {
         private_dir(&root.join(directory));
     }

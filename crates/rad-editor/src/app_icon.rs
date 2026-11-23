@@ -1,4 +1,3 @@
-//! Desktop identity and the single replaceable artwork source (E1).
 pub const APP_ID: &str = "io.github.KroxiDev.RAD";
 pub const PNG: &[u8] = include_bytes!("../../../packaging/rad.png");
 

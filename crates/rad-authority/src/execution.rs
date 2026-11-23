@@ -1,4 +1,3 @@
-//! Execution admission and dispatch, using the published configuration snapshot.
 use super::{
     Authority, BTreeMap, Completion, DispatchId, DispatchIntent, Effect, ExecutionError,
     ExecutionId, NativeBrightness, Origin, Phase, Rejection, RequestId, StorageState, Target,
@@ -29,9 +28,6 @@ impl Authority {
         if let Some(control) = control {
             self.validate_control(target, control)?;
         }
-        // Failed external preflight exposes no executors to Engine. Engine keeps
-        // permission/busy error precedence and rejects before producing intents;
-        // do not duplicate its authorization policy here.
         let installed = if plugins.is_ok() {
             self.installed.as_slice()
         } else {
@@ -142,7 +138,6 @@ impl Authority {
                 let revision = self.runs[&intent.id.execution()];
                 self.jobs.insert(intent.id, revision);
                 if self.state == StorageState::Ready {
-                    // Engine credit bounds this queue to MAX_JOBS, including residuals.
                     self.brightness_queue.push_back(NativeBrightness {
                         id: intent.id,
                         direction,

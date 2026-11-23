@@ -25,3 +25,9 @@ el servicio; el estándar lo prohíbe y el arnés lo comprueba con un fixture qu
 un hijo. La limpieza del cgroup depende de systemd y no se puede probar en el sandbox
 de tests; la creación del scope se prueba contra un systemd falso en un bus D-Bus
 privado.
+
+El host restaura la máscara de señales del hijo antes de arrancar el plugin y comprueba el
+padre después de armar la señal de muerte para cubrir su salida durante el arranque. Detiene
+al grupo mientras el líder sigue sin recolectar. Así el kernel conserva su PID y evita que la
+señal se dirija accidentalmente a otro grupo. Si el líder cambió de grupo, también recibe la
+señal de forma individual.

@@ -1,5 +1,3 @@
-//! Read-only inventory bridge for packages installed before published contract v1.
-//! This does not negotiate their old protocol or authorize execution.
 use rad_plugin_contract::{Definition, Manifest, PluginLifecycle, Version};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,15 +23,11 @@ pub(super) fn inventory(
     target: &str,
 ) -> Result<Manifest, crate::Error> {
     let old: Prerelease = serde_json::from_slice(bytes).map_err(|_| crate::Error::CorruptState)?;
-    // Deserialize the original bytes first: Value alone would erase duplicate fields.
-    // Derive the expected object/list shape from the same typed metadata, not a
-    // second field table. Serde's positional struct arrays are not JSON objects.
     let original: Value = serde_json::from_slice(bytes).map_err(|_| crate::Error::CorruptState)?;
     let typed = serde_json::to_value(&old).map_err(|_| crate::Error::CorruptState)?;
     if !same_shape(&original, &typed) {
         return Err(crate::Error::CorruptState);
     }
-    // Only the known prerelease range, never a future published major or missing v1 caps.
     if !(2..=3).contains(&old.host_min) || !(old.host_min..=3).contains(&old.host_max) {
         return Err(crate::Error::CorruptState);
     }
@@ -72,14 +66,11 @@ pub(super) fn inventory(
         translations: Default::default(),
     };
     let normalized = serde_json::to_vec(&metadata).map_err(|_| crate::Error::CorruptState)?;
-    // Reuse strict manifest/schema and ELF validation. The original bytes remain untouched.
     rad_plugin_package::Candidate::from_parts(&normalized, binary, old.host_max, target)
         .map_err(|_| crate::Error::CorruptState)?;
     Ok(metadata)
 }
 
-// Omitted defaults are allowed; an explicitly null Option may disappear during
-// serialization. Unknown/duplicate fields were already rejected by typed parsing.
 fn same_shape(original: &Value, typed: &Value) -> bool {
     match (original, typed) {
         (Value::Object(original), Value::Object(typed)) => original.iter().all(|(key, value)| {

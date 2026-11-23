@@ -1,4 +1,3 @@
-//! Publication, persistence outcomes, history, and retained revision collection.
 use super::{
     AdmissionError, Authority, Candidate, Command, CommitId, Completion, Configuration,
     ConfigurationData, Effect, ExecutionError, Origin, Outcome, Pending, Phase, PublicationTarget,
@@ -160,8 +159,6 @@ impl Authority {
         }]
     }
     pub(super) fn drain(&mut self) -> Vec<Effect> {
-        // Native completions can immediately dispatch another step. The outer drain owns
-        // the bounded loop so chains of saturated/no-op adjustments do not recurse.
         if self.draining {
             return vec![];
         }
@@ -172,9 +169,6 @@ impl Authority {
             && self.state == StorageState::Ready
         {
             let Some((request, command)) = self.queue.pop_front() else {
-                // Client edits already queued have priority. Native jobs use the same
-                // publication lane and evaluate their delta against the published value
-                // at this turn, never the value captured at admission.
                 if let Some(job) = self.brightness_queue.pop_front() {
                     effects.extend(self.persist_brightness(job));
                     continue;

@@ -1,4 +1,3 @@
-//! All potentially blocking I/O is confined to the polling worker.
 use crate::{
     nvml::Nvml,
     polling::{Demand, Sample},
@@ -83,7 +82,6 @@ impl Reader {
             .map(|nvml| nvml.read_selected(demand.sources[2], demand.sources[3]))
             .unwrap_or_default();
         if needs_nvml && gpu.is_none() && vram.is_none() {
-            // A returned error can be retried on the next shared tick; never spawn a replacement.
             self.nvml = None;
         }
         Sample {

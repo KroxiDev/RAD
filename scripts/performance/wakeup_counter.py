@@ -161,7 +161,6 @@ class Perf:
         self.success_field=bool(re.search(r'field:[^\n;]+\bsuccess;',format_text))
 
     def open(self,cpu):
-        # Tracepoint counters only: disabled, period=0, sample_type=0, no ring buffer.
         attr=PerfAttr(type=2,size=128,config=self.event_id,read_format=3,flags=1)
         fd=self.libc.syscall(ctypes.c_long(298),ctypes.byref(attr),ctypes.c_int(-1),
                              ctypes.c_int(cpu),ctypes.c_int(-1),ctypes.c_ulong(8))

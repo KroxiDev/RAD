@@ -8,7 +8,6 @@ use rad_runtime::{
 };
 use std::{os::fd::AsRawFd, process::ExitCode, time::Duration};
 
-/// The class of every end is `rad_runtime::exit`'s: 0 clean, 75 blocking, 1 unexpected.
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::from(exit::CLEAN),
@@ -44,8 +43,6 @@ fn run() -> Result<(), Exit> {
             "directorio de runtime inseguro o inaccesible; se requiere un directorio privado sin symlinks",
         )
     })?;
-    // Preserve the runtime's specific environment/path diagnostics, while acquiring
-    // the lifetime lease before any Store, worker, socket authority or device use.
     let _update_guard = rad_update::gate::startup_guard()
         .map_err(|_| Exit::Blocking("no se pudo comprobar la actualización de RAD"))?
         .ok_or(Exit::Blocking("RAD se está actualizando"))?;
@@ -55,7 +52,6 @@ fn run() -> Result<(), Exit> {
     let session = bootstrap::random_id().map_err(|_| {
         Exit::Unexpected(Reason::Startup, "no se pudo crear identificador de sesión")
     })?;
-    // The instance lock comes before anything in the data folder is looked at.
     let bound = Bound::bind(&paths.runtime, session)?;
     // Only a verified private data directory may receive the record of how this run ends.
     let data_verified = paths.prepare_data().is_ok();
@@ -69,8 +65,6 @@ fn run() -> Result<(), Exit> {
     })
 }
 
-/// Recovery mode (ADR 0011) until the configuration is usable, then the normal runtime
-/// in the same process.
 enum Mode {
     Recovery(Box<Recovery>),
     Serving(Box<Server>),
@@ -140,8 +134,6 @@ fn serve(
     }
 }
 
-/// What only the normal runtime has: the launcher helper and the deck, which the server
-/// opens only while «Usar el Stream Deck con RAD» is on.
 fn attach(server: &mut Server, paths: &Paths) -> Result<(), Exit> {
     let startup = |message| Exit::Unexpected(Reason::Startup, message);
     if server.recovered_previous {
@@ -149,11 +141,9 @@ fn attach(server: &mut Server, paths: &Paths) -> Result<(), Exit> {
             "rad-runtime: se recuperó la publicación anterior válida; revise la configuración antes de continuar."
         );
     }
-    // Command inherits the desktop session, but pre_exec unblocks shutdown signals.
     let launcher = rad_launcher::Launcher::spawn(helper_command(&paths.helper))
         .map_err(|_| startup("no se pudo iniciar rad-launcher-helper hermano del runtime"))?;
     server.attach_launcher(launcher)?;
-    // Whether the deck is opened is the machine setting's decision, taken by the server.
     server.attach_hardware(rad_deck::DeviceConfig::xl())?;
     Ok(())
 }

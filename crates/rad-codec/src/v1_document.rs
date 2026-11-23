@@ -53,7 +53,6 @@ pub(crate) struct Button {
     pub permissions: Local,
     pub mode: Mode,
     pub actions: Vec<Action>,
-    /// Gap list that buttons carried before waiting became an action. Read, never written.
     #[serde(default, skip_serializing)]
     pub pauses_ms: Option<Vec<String>>,
 }
@@ -62,7 +61,6 @@ pub(crate) struct Button {
 pub(crate) struct Appearance {
     pub text: String,
     pub image: Option<String>,
-    /// Absent while the position follows the image, as in every earlier document.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_position: Option<TextPosition>,
 }

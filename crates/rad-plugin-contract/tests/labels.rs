@@ -1,4 +1,3 @@
-//! Plugin texts the user reads: labelled fixed options, translations and fixed response budgets.
 use rad_plugin_contract::{Document, Error, FieldKind, Manifest};
 use serde_json::{Value, json};
 
@@ -31,7 +30,6 @@ fn labelled_options_keep_values_apart_from_the_text_the_user_reads() {
         .iter()
         .map(|o| (o.value.as_str(), o.label.as_str()))
         .collect();
-    // A plain option is its own label, as before the capability existed.
     assert_eq!(
         shown,
         [("toggle", "Toggle"), ("start", "Start"), ("stop", "stop")]

@@ -1,4 +1,3 @@
-# Generated from packaging/release.json by packaging/release.py; local binary bundle.
 pkgname=@PACKAGE@
 pkgver=@VERSION@
 pkgrel=@PKGREL@

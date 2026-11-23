@@ -112,7 +112,6 @@ pub struct ChoiceOption {
     pub value: String,
     pub label: String,
 }
-/// A plain fixed option: its value is also the text the user reads.
 impl From<&str> for ChoiceOption {
     fn from(value: &str) -> Self {
         Self {
@@ -334,7 +333,6 @@ impl VisualContent {
                 && s.bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         }
-        // An image is PNG or JPEG, never both.
         (self.state.is_some()
             || self.text.is_some()
             || self.png_hex.is_some()
@@ -453,7 +451,6 @@ impl Message {
     }
 }
 
-// Empty struct alternatives make serde reject fields on internally tagged unit variants.
 impl<'de> Deserialize<'de> for ChoiceList {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]

@@ -67,7 +67,6 @@ class Gate:
         self.started = time.monotonic()
         self.run = ROOT / "target/gate" / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + f"-{os.getpid()}")
         self.run.mkdir(parents=True)
-        # Los fixtures agregan nombres y sockets propios: reservar margen bajo 108 bytes.
         self.scratch = tempfile.TemporaryDirectory(prefix="rg", dir="/tmp")
         self.environment_count = 0
         self.results = []
@@ -80,7 +79,6 @@ class Gate:
         print(f"Gate {mode} en {self.run.relative_to(ROOT)} (jobs {os.environ['CARGO_BUILD_JOBS']})", flush=True)
 
     def environment(self, name, plugin=False):
-        # Rutas cortas: los sockets Unix tienen un límite de longitud reducido.
         with self.lock:
             self.environment_count += 1
             base = Path(self.scratch.name) / f"{self.environment_count:02}"
@@ -90,8 +88,6 @@ class Gate:
             path.mkdir(parents=True, mode=0o700, exist_ok=True)
             env[variable] = str(path)
         if name in ("test-raiz", "test-rad-update", "conformidad-audio-media", "conformidad-obs"):
-            # El instalador y estos harness validan /tmp como padre; sus fixtures ya
-            # reservan raíces privadas únicas. XDG sigue siendo propio de la etapa.
             env["TMPDIR"] = "/tmp"
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env.setdefault("RUST_TEST_THREADS", str(max(1, int(env["CARGO_BUILD_JOBS"]) // 2)))
@@ -236,13 +232,13 @@ def main():
         else:
             ready = True
             if args.mode == "completo":
-                ready = gate.step("test-gate", ["python3", "-B", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py", "-v"])
+                ready = gate.step("comentarios", ["python3", "-B", "scripts/comment_lint.py"])
+                ready = gate.step("test-gate", ["python3", "-B", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py", "-v"]) and ready
                 for plugin, name in ((False, "raiz"), (True, "plugins")):
                     manifest = ["--manifest-path", "plugins/Cargo.toml"] if plugin else []
                     ready = gate.step(f"fmt-{name}", ["cargo", "fmt", *manifest, "--all", "--", "--check"]) and ready
             suites = gate.prepare() if ready else None
             if suites is not None:
-                # Cargo solo corre en preparación; doctests y Clippy conservan su cobertura.
                 if args.mode == "completo":
                     for plugin, name in ((False, "raiz"), (True, "plugins")):
                         ready = gate.step(f"doc-tests-{name}", gate.cargo("test", plugin, "--doc"), plugin=plugin) and ready

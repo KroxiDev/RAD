@@ -1,4 +1,3 @@
-//! Running an action: mute, unmute or toggle one device.
 use crate::{
     Pactl, Selector,
     devices::{Kind, looks_like_option},
@@ -25,7 +24,6 @@ impl Operation {
         }
     }
 
-    /// The value `set-sink-mute` / `set-source-mute` take.
     fn argument(self) -> &'static str {
         match self {
             Self::Toggle => "toggle",
@@ -39,8 +37,6 @@ fn failure(code: FailureCode) -> Outcome {
     Outcome::Failure { code }
 }
 
-/// Runs `call` before `deadline` and reports how it went. `pactl` is `None` when it is not
-/// installed.
 pub(crate) fn perform(pactl: Option<&Pactl>, call: &Invoke, deadline: Instant) -> Outcome {
     let (Some(kind), Some(operation), Some(selector)) = (
         Kind::from_definition(&call.action),
@@ -63,13 +59,6 @@ pub(crate) fn perform(pactl: Option<&Pactl>, call: &Invoke, deadline: Instant) -
     }
 }
 
-/// Changes the mute state of the device `selector` picks. A named device must exist right now,
-/// so a missing one is reported and nothing else is touched.
-///
-/// The output default is left to the server (`@DEFAULT_SINK@`), which keeps it right if the default
-/// changes between our commands. The microphone default is resolved here first: the server's
-/// default source may be a monitor, which `@DEFAULT_SOURCE@` would happily mute although it is
-/// not a microphone and the visual shows it unavailable.
 fn mute(
     pactl: &Pactl,
     kind: Kind,
@@ -95,7 +84,6 @@ fn mute(
         deadline,
     ) {
         Ok(_) => Ok(()),
-        // The command failed: say whether it was because the server or the device is gone.
         Err(RunError::Failed) => Err(match server::snapshot(pactl, deadline) {
             Ok(snapshot) if snapshot.resolve(kind, selector).is_some() => Failure::Failed,
             Ok(_) => Failure::Unavailable,

@@ -1,4 +1,3 @@
-//! Devices, how a definition selects them, and the `pactl` JSON they come from.
 use rad_plugin_sdk::{ChoiceList, ChoiceOption, MAX_CHOICES, MAX_LABEL, is_label};
 use serde::Deserialize;
 
@@ -6,17 +5,14 @@ use serde::Deserialize;
 pub const DEFAULT_VALUE: &str = "@default";
 const DEFAULT_LABEL: &str = "Default device (follows changes)";
 
-/// Which side of the sound server a definition acts on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// Sinks: the audio output.
     Output,
     /// Sources that are not monitors: microphones.
     Microphone,
 }
 
 impl Kind {
-    /// The kind a definition id (`output`, `microphone`) stands for.
     pub fn from_definition(id: &str) -> Option<Self> {
         match id {
             "output" => Some(Self::Output),
@@ -32,7 +28,6 @@ impl Kind {
         }
     }
 
-    /// What `pactl` accepts in place of a name to mean the current default.
     pub(crate) fn default_alias(self) -> &'static str {
         match self {
             Self::Output => "@DEFAULT_SINK@",
@@ -50,7 +45,6 @@ pub struct Device {
     pub is_monitor: bool,
 }
 
-/// Which device a stored `device` value picks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Selector {
     /// Whatever is the default, now and after it changes.
@@ -69,7 +63,6 @@ impl Selector {
     }
 }
 
-/// Everything the sound server said about devices at one moment.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Snapshot {
     pub sinks: Vec<Device>,
@@ -100,7 +93,6 @@ impl Snapshot {
         self.find(kind, name)
     }
 
-    /// The device a selector picks right now, if it exists.
     pub fn resolve(&self, kind: Kind, selector: &Selector) -> Option<&Device> {
         match selector {
             Selector::Default => self.default_device(kind),
@@ -109,7 +101,6 @@ impl Snapshot {
     }
 }
 
-/// A name `pactl` could mistake for one of its own options.
 pub(crate) fn looks_like_option(name: &str) -> bool {
     name.starts_with('-')
 }
@@ -139,9 +130,6 @@ pub fn options_for(kind: Kind, snapshot: &Snapshot) -> ChoiceList {
     ChoiceList::Available { options }
 }
 
-/// The description cleaned for display (control characters become spaces, runs of blanks
-/// collapse) and cut to the label limit on a character boundary. With nothing readable left, the
-/// name itself, which the host accepts as a label whenever it accepts it as a value.
 fn label_for(device: &Device) -> String {
     let cleaned = |text: &str| -> String {
         text.chars()
@@ -176,10 +164,8 @@ struct RawDevice {
     description: String,
     #[serde(default)]
     mute: bool,
-    // Sources that are monitors report the sink they follow here; plain sources an empty string.
     #[serde(default)]
     monitor_source: Option<String>,
-    // Older and newer clients spell the same fact differently; any of them marks a monitor.
     #[serde(default)]
     monitor_of_sink: Option<serde_json::Value>,
     #[serde(default)]
@@ -202,7 +188,6 @@ impl RawDevice {
     }
 }
 
-/// Reads `value` as `T`, but only from a JSON object: serde would also fill a struct from an array.
 fn from_object<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, ParseError> {
     if !value.is_object() {
         return Err(ParseError);

@@ -10,7 +10,6 @@ pub struct Grid {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "visibility", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Slot {
-    // Empty structs enforce deny_unknown_fields; tagged unit variants do not.
     Restricted {},
     Visible { id: String },
 }
@@ -75,7 +74,6 @@ pub enum Visibility {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "visibility", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ActionView {
-    // Keep this a struct variant so even unknown null members are rejected.
     Restricted {},
     Visible {
         id: String,
@@ -232,13 +230,10 @@ pub struct OverviewView {
     pub previous_exit: Option<PreviousExit>,
 }
 
-/// Why the runtime is in recovery mode (ADR 0011).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecoveryCause {
-    /// The configuration has no valid revision.
     Unreadable,
-    /// The configuration was written by a newer version of RAD.
     NewerVersion,
     /// The data folder or the database file is not private and owned by the user.
     UnsafeFolder,
@@ -260,12 +255,10 @@ pub enum RecoveryAction {
     /// «Restaurar una copia»: the transfer operations with `kind: "restore"` and
     /// `restore_commit`.
     Restore,
-    /// `recovery_reset`: start again with an empty configuration.
     Reset,
     /// Show the detail; always available.
     Details,
 }
-/// The finer reason behind a [`RecoveryCause`], for «Ver detalles».
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecoveryDetailCode {

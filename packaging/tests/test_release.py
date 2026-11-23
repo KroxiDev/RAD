@@ -135,7 +135,6 @@ class ReleaseContract(unittest.TestCase):
                 output = self.plan_for_host(f'ID="omarchy"\nVERSION_ID="{version}"\n')
                 self.assertIn(f"build_base=omarchy-{version}", output)
                 self.assertIn("cargo build --offline --locked", output)
-        # Installed updaters compare this wire identity literally.
         self.assertEqual(SOURCE["base"], "omarchy-4.0.6")
         self.assertEqual(SOURCE["schema"], 1)
 
@@ -171,7 +170,6 @@ class ReleaseContract(unittest.TestCase):
                 return read_text(path, *args, **kwargs)
 
             def external_tools(args, **kwargs):
-                # Replace compilation and host/package management, retaining real file assembly.
                 command = Path(args[0]).name
                 if command == "cargo" and args[1] == "build":
                     binaries = Path(kwargs["env"]["CARGO_TARGET_DIR"]) / "x86_64-unknown-linux-gnu/release"
@@ -277,7 +275,6 @@ class ReleaseContract(unittest.TestCase):
 
 
 TAG = f"v{SOURCE['version']}-{SOURCE['pkgrel']}"
-# Records every call and answers like gh: no releases unless told otherwise.
 FAKE_GH = """#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]

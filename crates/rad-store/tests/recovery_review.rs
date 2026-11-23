@@ -1,4 +1,3 @@
-// First five tests promoted from independent core review; original hash in fix-recovery/reviewer-source.sha256.
 use rad_core::{
     configuration::{Configuration, Edit, Origin},
     identity::IdentityRegistry,

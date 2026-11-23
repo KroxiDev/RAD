@@ -1,4 +1,3 @@
-//! Pure one-frame framing and request envelope validation; no transport or authority.
 mod json;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {

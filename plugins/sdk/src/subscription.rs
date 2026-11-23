@@ -1,4 +1,3 @@
-//! Source-observed visual subscriptions with content-free renewal.
 use crate::{Correlation, Message, Parameters, VisualState, writer::Writer};
 use std::{
     collections::HashMap,
@@ -58,7 +57,6 @@ impl Subscription {
         self.0.id
     }
 
-    /// The visual source the host subscribed to.
     pub fn source(&self) -> &str {
         &self.0.source
     }
@@ -125,7 +123,6 @@ pub(crate) enum Refused {
     Duplicate,
 }
 
-/// The subscriptions of one session, bounded by [`crate::MAX_SUBSCRIPTIONS`].
 pub(crate) struct Registry {
     limit: usize,
     subscriptions: Mutex<HashMap<SubscriptionId, Subscription>>,

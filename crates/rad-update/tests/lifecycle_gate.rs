@@ -1,4 +1,3 @@
-//! Critical lifecycle exclusion: no package replacement while any old RAD process lives.
 use rad_update::gate::SessionGate;
 use std::{os::unix::fs::PermissionsExt, time::Duration};
 struct Private(std::path::PathBuf);

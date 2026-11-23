@@ -346,8 +346,6 @@ fn corrupt_media_framing_checksums_duplicates_order_and_exact_references_reject(
 }
 #[test]
 fn valid_digest_of_noncanonical_png_still_rejects() {
-    // Add a valid ancillary text chunk to a normalized PNG, updating both package digests.
-    // CRC32 is computed here, independently of rad-media's canonical validator.
     fn crc(b: &[u8]) -> u32 {
         let mut c = !0u32;
         for v in b {
@@ -713,8 +711,6 @@ fn both_state_images_are_copy_restore_and_gc_roots_even_without_base_image() {
         "current copy excludes old visual's faces"
     );
     drop(prepared);
-    // Store also retains the previous durable head for recovery. Advance once
-    // more before releasing the old visual from all history/recovery roots.
     let next = cleared
         .configuration()
         .prepare_edit(

@@ -23,8 +23,6 @@ fn main() {
         app.run_with_args(&["fixture"]);
         return;
     }
-    // Optional: the process id seen by the OS, and a stderr marker that must
-    // never reach the helper's diagnostics.
     if let Some(pid_path) = std::env::var_os("RAD_FIXTURE_PID") {
         std::fs::write(pid_path, std::process::id().to_string()).unwrap();
     }

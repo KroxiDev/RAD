@@ -1,4 +1,3 @@
-//! Fake `org.freedesktop.systemd1` for tests: records each `StartTransientUnit`.
 use gio::prelude::*;
 const XML: &str = r#"<node><interface name="org.freedesktop.systemd1.Manager">
 <method name="StartTransientUnit">

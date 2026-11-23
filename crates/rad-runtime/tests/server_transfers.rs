@@ -53,7 +53,6 @@ fn editor_image_export_and_confirmed_restore_cross_the_real_store_lane() {
             json!({"transfer_id":token,"offset":"0","base64":png}),
         );
         let key = ok(&mut c, "transfer_finish", json!({"transfer_id":token}))["media_ref"].clone();
-        // A second synthetic pixel proves the whole retained group is retryable.
         let green = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg==";
         let green_token = ok(
             &mut c,
@@ -101,7 +100,6 @@ fn editor_image_export_and_confirmed_restore_cross_the_real_store_lane() {
             "edit",
             json!({"changes":[{"kind":"set","id":"b1","field":"appearance","value":{"text":"Red","image":key,"states":{}}}]}),
         );
-        // Re-importing the same normalized image is a legitimate no-op, not a leaked lease.
         let second = ok(
             &mut c,
             "transfer_begin",
@@ -239,9 +237,6 @@ fn editor_image_export_and_confirmed_restore_cross_the_real_store_lane() {
             ),
             image
         );
-        // Closing only this editor connection releases both unpublished leases.
-        // The server and automation client remain live; a new editor can prepare
-        // another full pair without waiting for the original 60-second expiry.
         for pixel in [png, green] {
             let token = ok(
                 &mut c,

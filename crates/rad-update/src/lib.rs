@@ -1,4 +1,3 @@
-//! Official installation updates, independent of runtime and deck data.
 pub mod cleanup;
 mod contract;
 pub mod download;
@@ -8,7 +7,6 @@ pub mod release;
 pub use contract::*;
 pub use download::discard_prepared;
 
-/// A manual query; constructing the UI does not call this function.
 pub fn check(cancel: &Cancellation) -> Result<CheckResult, Error> {
     use std::time::Duration;
     cancel.check()?;

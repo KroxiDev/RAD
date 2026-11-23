@@ -1,4 +1,3 @@
-//! Deck attachment, setting transitions, input events, and display projection.
 use super::{Arc, EventCode, RuntimeError, Server, monotonic_ms};
 
 impl Server {
@@ -15,15 +14,12 @@ impl Server {
         self.display_dirty = true;
         Ok(())
     }
-    /// Production bootstrap: registers how to open the Stream Deck and opens it now if the
-    /// machine setting «Usar el Stream Deck con RAD» is on. The setting decides, not the caller.
     pub fn attach_hardware(&mut self, config: rad_deck::DeviceConfig) -> Result<(), RuntimeError> {
         self.attach_deck_with(move |desired, wake| {
             let deck = rad_deck::Deck::spawn(config, desired, wake)?;
             Ok(Box::new(deck))
         })
     }
-    /// `open` is the seam for the failure path; production always passes the real deck.
     pub(super) fn attach_deck_with(
         &mut self,
         open: impl FnMut(
@@ -123,7 +119,6 @@ impl Server {
         }
     }
     pub(super) fn pump_deck(&mut self) -> Result<(), RuntimeError> {
-        // Bound matches the adapter event budget; reports are never coalesced.
         for _ in 0..64 {
             let Some(event) = self.deck.as_mut().and_then(|deck| deck.next_event()) else {
                 break;

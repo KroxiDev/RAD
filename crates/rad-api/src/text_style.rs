@@ -1,4 +1,3 @@
-//! Text resolution for one face; callers provide the images actually displayed.
 use crate::TextPosition;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextStyle {

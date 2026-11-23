@@ -1,4 +1,3 @@
-//! Native plugin routing, separate from Authority and the launcher process.
 use rad_authority::Authority;
 use rad_core::execution::{Completion, DispatchId, Failure};
 use rad_plugin_host::{Host, State};
@@ -14,7 +13,6 @@ pub(super) struct Plugins {
     end_budgets: BTreeMap<DispatchId, u64>,
     hold_ends: BTreeMap<(u64, u64), rad_core::execution::ExecutionId>,
     releasing: std::collections::BTreeSet<rad_core::execution::ExecutionId>,
-    /// Events for the server to record; taken by `Native::take_events`.
     pub events: Vec<crate::events::Occurrence>,
 }
 impl Plugins {
@@ -242,8 +240,6 @@ impl Plugins {
         self.jobs.insert((key.generation, key.request), intent.id);
         Ok(true)
     }
-    /// Records the lifecycle observation independently of how many pump turns
-    /// separate a failure from its eventual reap.
     fn observe_state(
         &mut self,
         actor: &mut Authority,
@@ -354,8 +350,6 @@ impl Plugins {
             .collect();
         for id in sent {
             let (ticket, budget) = self.holds.remove(&id).expect("collected hold");
-            // At the clock ceiling Host terminally fails the original process rather
-            // than silently dropping release ownership for a live effect.
             match self.host.release_hold(ticket, now.saturating_add(budget)) {
                 Ok(key) => {
                     self.hold_ends

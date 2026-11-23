@@ -1,4 +1,3 @@
-//! Test-side control of the fake sound server.
 #![allow(dead_code)]
 use super::fake_state::{self, Dev, State};
 use rad_plugin_audio::{Kind, Pactl};
@@ -21,9 +20,6 @@ fn dev(name: &str, description: &str) -> Dev {
     }
 }
 
-/// A built example of this package: `target/<profile>/examples/<name>`, found from the running
-/// test binary. `cargo test` builds them; with a filter such as `--test x` they need
-/// `cargo build --examples` first.
 pub fn example(name: &str) -> PathBuf {
     let exe = std::env::current_exe().expect("test binary path");
     let profile_dir = exe
@@ -44,7 +40,6 @@ pub fn fake_pactl_path() -> PathBuf {
 }
 
 impl FakeServer {
-    /// Two sinks and two microphones; the first of each is the default.
     pub fn new() -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
@@ -72,7 +67,6 @@ impl FakeServer {
         &self.dir
     }
 
-    /// A `Pactl` that runs the fake against this server, as the real one would against a socket.
     pub fn pactl(&self) -> Pactl {
         Pactl::new(fake_pactl_path(), Some(self.dir.clone().into_os_string()))
     }
@@ -101,7 +95,6 @@ impl FakeServer {
         fake_state::append(&self.dir, "events.log", line);
     }
 
-    /// An application mutes or unmutes a device behind the plugin's back.
     pub fn set_mute(&self, kind: Kind, name: &str, mute: bool) {
         fake_state::update(&self.dir, |s| {
             Self::list(s, kind)
@@ -156,7 +149,6 @@ impl FakeServer {
         }
     }
 
-    /// The server stops answering: every command, and a running `subscribe`, fails.
     pub fn down(&self) {
         self.marker("down", true);
     }
@@ -173,7 +165,6 @@ impl FakeServer {
     pub fn flood(&self, on: bool) {
         self.marker("flood", on);
     }
-    /// Commands whose arguments start with `prefix` hang instead of returning.
     pub fn hang(&self, prefixes: &[&str]) {
         fs::write(fake_state::file(&self.dir, "hang"), prefixes.join("\n")).unwrap();
     }
@@ -186,7 +177,6 @@ impl FakeServer {
             .collect()
     }
 
-    /// Every command line the fake was run with (`subscribe` included), in order.
     pub fn calls(&self) -> Vec<String> {
         self.log()
             .into_iter()
@@ -194,7 +184,6 @@ impl FakeServer {
             .collect()
     }
 
-    /// The environment variable names each run of the fake saw, one comma-separated list per run.
     pub fn environments(&self) -> Vec<String> {
         self.log()
             .into_iter()
@@ -209,7 +198,6 @@ impl FakeServer {
             .count()
     }
 
-    /// How many times the plugin listed devices (sinks or sources).
     pub fn listings(&self) -> usize {
         self.calls()
             .iter()
@@ -217,7 +205,6 @@ impl FakeServer {
             .count()
     }
 
-    /// Whether any command that changes the server was ever run.
     pub fn mutating_calls(&self) -> Vec<String> {
         self.calls()
             .into_iter()
@@ -233,7 +220,6 @@ impl FakeServer {
     }
 
     fn alive(pid: u32) -> bool {
-        // A reaped process has no /proc entry; a killed but unreaped one would be a zombie.
         fs::read_to_string(format!("/proc/{pid}/stat"))
             .map(|stat| {
                 !stat
@@ -246,7 +232,6 @@ impl FakeServer {
             .unwrap_or(false)
     }
 
-    /// `pactl subscribe` children that are still running.
     pub fn live_subscribers(&self) -> usize {
         self.pids("subscribe-start ")
             .into_iter()
@@ -254,7 +239,6 @@ impl FakeServer {
             .count()
     }
 
-    /// Hung commands that are still running.
     pub fn live_hung(&self) -> usize {
         self.pids("hang ")
             .into_iter()
@@ -262,7 +246,6 @@ impl FakeServer {
             .count()
     }
 
-    /// How many commands entered the injected hang.
     pub fn hangs_started(&self) -> usize {
         self.pids("hang ").len()
     }
@@ -278,7 +261,6 @@ impl Drop for FakeServer {
     }
 }
 
-/// Polls `condition` until it holds or `within` passes; returns whether it held.
 pub fn eventually(within: Duration, mut condition: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + within;
     loop {

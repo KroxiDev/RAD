@@ -70,7 +70,6 @@ fn supplied(
     NormalizedImage::validate(image.png_bytes()).map_err(|_| StoreError::Corrupt)?;
     Ok(image)
 }
-// Compare against SQLite in bounded chunks, never materialize a second source image.
 fn compare(
     connection: &Connection,
     hash: &[u8; 32],
@@ -128,7 +127,6 @@ pub(crate) fn prepare(
     if supplied_bytes > BYTES {
         return Err(StoreError::Capacity);
     }
-    // Entire first pass is read-only. Existing and supplied images are never retained together.
     let mut total = 0usize;
     for key in &refs {
         let hash = parse_key(key)?;
@@ -153,7 +151,6 @@ pub(crate) fn prepare(
             return Err(StoreError::Capacity);
         }
     }
-    // Second pass stays inside caller's transaction; a late failure rolls everything back.
     for entry in unique.values() {
         let image = supplied(source, entry, &catalog)?;
         let exists: bool = connection.query_row(

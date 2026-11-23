@@ -1,6 +1,3 @@
-//! Parsing of `pactl -f json` output. The documents are synthetic but have the shape the real
-//! command prints (pactl 17 on PipeWire's PulseAudio server): extra fields everywhere, `mute` a
-//! JSON boolean, and sources that are monitors naming the sink they follow in `monitor_source`.
 use rad_plugin_audio::{Kind, Selector, Snapshot, devices};
 
 const SINKS: &str = r#"[
@@ -55,11 +52,11 @@ fn monitors_are_recognised_however_the_client_marks_them() {
     assert_eq!(
         monitors,
         [
-            ("output.one.monitor", true), // names its sink in monitor_source (and ends in .monitor)
-            ("input.one", false),         // empty monitor_source
-            ("renamed-monitor", true),    // only monitor_of_sink says so
-            ("input.two", false),         // null markers
-            ("output.two.monitor", true), // only the name says so
+            ("output.one.monitor", true),
+            ("input.one", false),
+            ("renamed-monitor", true),
+            ("input.two", false),
+            ("output.two.monitor", true),
         ]
     );
     let snapshot = Snapshot {
@@ -124,7 +121,6 @@ fn the_default_is_resolved_among_the_devices_a_definition_can_pick() {
             .map(|d| d.muted),
         Some(true)
     );
-    // A default that is a monitor is not a microphone.
     snapshot.default_source = Some("output.one.monitor".into());
     assert!(
         snapshot

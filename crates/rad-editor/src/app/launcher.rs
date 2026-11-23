@@ -1,5 +1,3 @@
-//! Application choices stay in the editor until a real desktop entry is selected.
-//! Both lists use the main worker, with one tagged read so their searches cannot mix.
 use super::{App, Entry, Job, NewAction, Reply, SEARCH_DEBOUNCE_MS, look::Look, tr};
 use crate::{catalog::Catalog, session::Error};
 use eframe::egui;
@@ -19,7 +17,6 @@ pub(super) struct ApplicationPicker {
     loaded: bool,
     failed: bool,
     placement: Option<Placement>,
-    /// Names survive page replacement and clearing either search's visible results.
     names: BTreeMap<String, String>,
 }
 
@@ -55,7 +52,7 @@ impl App {
         if self.key_form_open() {
             self.leave_key_form();
             if self.key_form_open() {
-                return; // The existing form asks for Discard before it may be closed.
+                return;
             }
         }
         let Some(folder) = self.folder() else { return };
@@ -123,8 +120,6 @@ impl App {
         }
     }
 
-    /// Consume exactly the read that just finished, including errors. A failed picker
-    /// stays failed until Retry or a new query; stale replies cannot change its state.
     pub(super) fn finish_application_catalog(&mut self, reply: &Result<Reply, Error>) {
         let Some(read) = self.catalog_read.take() else {
             return;
@@ -149,7 +144,6 @@ impl App {
             if read.target == CatalogTarget::Picker {
                 self.app_picker.failed = true;
             }
-            // Transport errors are already explained by the main pump.
             if reply.is_ok() {
                 self.warn(crate::status::describe_failure(&error, self.es));
             }
@@ -182,8 +176,6 @@ impl App {
         }
     }
 
-    /// The provisional row does not create a key or action. Both happen only after a
-    /// choice, through the same launcher path used by direct application drops.
     pub(super) fn pending_application_row(&mut self, ui: &mut egui::Ui, look: &Look) -> bool {
         let Some(placement) = self.app_picker.placement.clone() else {
             return false;

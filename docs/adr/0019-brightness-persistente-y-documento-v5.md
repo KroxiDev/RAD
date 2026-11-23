@@ -50,3 +50,8 @@ La API local y CLI conservan framing v1. El tipo `brightness`, sus parámetros
 un cliente cerrado anterior debe actualizarse para configurarlas o mostrarlas.
 Editor y runtime se distribuyen juntos en el paquete; no cambia el contrato de
 plugins ni se introduce una autoridad de configuración en el editor.
+
+Las publicaciones nativas comparten la cola de persistencia y ceden el turno a las ediciones
+de clientes que ya esperan. Un solo bucle procesa las finalizaciones inmediatas para que
+encadenar ajustes en el límite no crezca en la pila. El permiso usado para preparar el cambio
+queda restringido a la operación nativa admitida.

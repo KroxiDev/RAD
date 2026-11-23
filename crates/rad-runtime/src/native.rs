@@ -16,7 +16,6 @@ pub struct Native {
     writable: bool,
     plugin_io: PluginIo,
     events: Vec<Occurrence>,
-    /// The launcher's end has been reported or was asked for: it is not reported (again).
     launcher_settled: bool,
 }
 impl Native {
@@ -155,7 +154,6 @@ impl Native {
         // Closing our reaped helper's pidfd removes its permanent exit readiness.
         if self.launcher.process_id().is_none() {
             self._exit.take();
-            // Gone without being asked to stop: the helper died on its own.
             self.report_launcher_lost();
         }
         if self.follow_launcher_interest(transport).is_err() {
@@ -169,7 +167,6 @@ impl Native {
     }
 }
 
-/// Descriptors of the plugin processes that the shared wait already watches.
 #[derive(Default)]
 struct PluginIo {
     registered: std::collections::BTreeSet<(u64, i32)>,
@@ -266,7 +263,6 @@ impl Native {
         self.plugin_io
             .sync(&mut self.plugins.host, transport, &mut self.events);
     }
-    /// What happened below the server since the last call, for it to record.
     pub(crate) fn take_events(&mut self) -> Vec<Occurrence> {
         let mut events = std::mem::take(&mut self.events);
         events.append(&mut self.plugins.events);

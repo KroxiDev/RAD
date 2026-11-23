@@ -1,4 +1,3 @@
-//! Application identity of MPRIS bus names and the choice among several instances.
 use rad_plugin_media::names::{app_identity, first_instance};
 
 const BRAVE: &str = "org.mpris.MediaPlayer2.brave.instance4242";
@@ -57,12 +56,10 @@ fn the_first_instance_is_the_first_name_in_lexicographic_order() {
         "org.mpris.MediaPlayer2.strawberry",
         "org.mpris.MediaPlayer2.brave.instance4242",
     ];
-    // Text order, not numeric: "instance10" < "instance2" < "instance4242".
     assert_eq!(
         first_instance(names, "brave"),
         Some("org.mpris.MediaPlayer2.brave.instance10")
     );
-    // The same answer whatever order the bus listed them in.
     let mut reversed = names;
     reversed.reverse();
     assert_eq!(

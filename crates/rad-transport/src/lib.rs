@@ -83,18 +83,11 @@ struct Connection {
     close_after_flush: bool,
     frame_started: Option<u64>,
 }
-/// How long a listener rests after running out of descriptors or memory before `accept`
-/// is tried again: the queued peers wait instead of the loop spinning on the error.
 const ACCEPT_RETRY_MS: u64 = 100;
-/// What a failed `accept` says about who is at fault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AcceptFault {
-    /// The one connection went away or was never complete: skip it and keep accepting.
     Peer,
-    /// The process is out of descriptors or memory: stop, and try again after
-    /// `ACCEPT_RETRY_MS`.
     Exhausted,
-    /// The listener itself is unusable, which nothing but a restart repairs.
     Listener,
 }
 fn accept_fault(error: &io::Error) -> AcceptFault {
@@ -123,9 +116,7 @@ pub struct Transport {
     now: u64,
     session: u128,
     listeners_ready: [bool; 2],
-    /// When a listener that ran out of descriptors or memory is tried again.
     accept_retry: [Option<u64>; 2],
-    /// A worker-owned source (token `usize::MAX`) fired during the poll inside `drive`.
     worker_edge: bool,
     connection_failures: u64,
 }
@@ -219,8 +210,6 @@ impl Transport {
             registry.register(stream, token, Interest::READABLE | Interest::WRITABLE)
         })
     }
-    /// `register` is the seam for a connection that cannot be watched: production always
-    /// registers the stream with the poller.
     fn accept_with(
         &mut self,
         origin: Origin,
@@ -245,8 +234,6 @@ impl Transport {
                     {
                         continue;
                     }
-                    // One reserved token wakes the owner for all trusted worker sources.
-                    // The owner drains each worker nonblocking; no socket can share it.
                     if self.next >= usize::MAX as u64 {
                         return Err(TransportError::TimeOverflow);
                     }
@@ -258,8 +245,6 @@ impl Transport {
                     let token =
                         Token(usize::try_from(id).map_err(|_| TransportError::TimeOverflow)?);
                     if register(self.poll.registry(), &mut stream, token).is_err() {
-                        // This one connection cannot be watched: closing it (the stream is
-                        // dropped) costs that peer a retry and nobody else anything.
                         self.connection_failures += 1;
                         continue;
                     }
@@ -298,14 +283,11 @@ impl Transport {
         }
         Ok(())
     }
-    /// Counts a failed `accept` on listener `index`; `true` when accepting must stop now.
     fn accept_fault(&mut self, index: usize, fault: AcceptFault) -> Result<bool, TransportError> {
         self.connection_failures += 1;
         match fault {
             AcceptFault::Peer => Ok(false),
             AcceptFault::Exhausted => {
-                // The queued peers stay queued. No new edge comes for them, so a deadline
-                // brings the listener back instead of a readiness that would spin.
                 self.listeners_ready[index] = false;
                 self.accept_retry[index] = Some(self.now.saturating_add(ACCEPT_RETRY_MS));
                 Ok(true)
@@ -355,9 +337,6 @@ impl Transport {
                                         }
                                         _ => rad_api::ErrorCode::InvalidRequest,
                                     };
-                                    // A correlated envelope rejection has not been admitted.
-                                    // Recover only an unambiguous operation through the same
-                                    // bounded, duplicate-rejecting JSON parser as rad-wire.
                                     let operation = rad_wire::parse_json(frame.payload())
                                         .ok()
                                         .and_then(|value| {
@@ -636,7 +615,6 @@ impl Transport {
             return Ok(());
         }
         self.poll_edges(self.wait_timeout(timeout))?;
-        // Every worker owner is pumped on the turn that follows a wait.
         self.worker_edge = false;
         Ok(())
     }
@@ -695,7 +673,6 @@ impl Transport {
 }
 
 impl Transport {
-    // Fixed key space and payload bound; pending frames coalesce before framing.
     fn queue_notice(c: &mut Connection, kind: u8, payload: &[u8]) -> bool {
         if kind >= 8 || payload.is_empty() || payload.len() > 4096 {
             return false;

@@ -1,5 +1,3 @@
-//! A scripted host: speaks the wire protocol with hand-written JSON and hand-written framing, so
-//! these tests do not depend on the SDK's own encoder.
 #![allow(dead_code)]
 use rad_plugin_sdk::{Config, Error, Plugin, Version, run};
 use serde_json::{Value, json};
@@ -33,7 +31,6 @@ pub struct Host {
 }
 
 impl Host {
-    /// Runs `plugin` on its own thread over a socket pair; the returned `Host` is the other end.
     pub fn start<P: Plugin>(config: Config, plugin: P) -> Host {
         let (host_end, plugin_end) = UnixStream::pair().unwrap();
         let input = plugin_end.try_clone().unwrap();
@@ -70,7 +67,6 @@ impl Host {
         );
     }
 
-    /// Hello with an API inside the plugin's range, then consumes the `ready` answer.
     pub fn handshake(&mut self, host_api: u32) {
         self.hello(host_api);
         let ready = self.recv();
@@ -80,7 +76,6 @@ impl Host {
         );
     }
 
-    /// The next frame, or `None` if nothing arrives within `wait`. Panics on end of stream.
     pub fn recv_within(&mut self, wait: Duration) -> Option<Value> {
         self.stream.set_read_timeout(Some(wait)).unwrap();
         let mut header = [0u8; 4];
@@ -119,7 +114,6 @@ impl Host {
             .expect("no frame from the plugin within 5 s")
     }
 
-    /// Asserts the plugin wrote nothing more and closed its end.
     pub fn expect_closed(&mut self) {
         self.stream
             .set_read_timeout(Some(Duration::from_secs(5)))
@@ -132,13 +126,11 @@ impl Host {
         }
     }
 
-    /// Closes the host's end of the pipes and returns what `run` returned.
     pub fn finish(mut self) -> Result<(), Error> {
         self.stream.shutdown(std::net::Shutdown::Write).ok();
         self.plugin.take().unwrap().join().expect("run panicked")
     }
 
-    /// Waits for `run` to return by itself (a protocol failure) without closing the pipe first.
     pub fn outcome(mut self) -> Result<(), Error> {
         let started = Instant::now();
         let handle = self.plugin.take().unwrap();

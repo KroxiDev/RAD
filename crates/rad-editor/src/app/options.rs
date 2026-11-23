@@ -16,15 +16,11 @@ use crate::{
 use eframe::egui;
 use rad_plugin_contract::ChoiceList;
 
-/// Id of the "ask again" control of a field, so that it can be found again whatever the layout.
 pub(super) fn ask_again_id(index: usize) -> egui::Id {
     egui::Id::new(("ask-again", index))
 }
 
 impl PluginUi {
-    /// One turn of the conversation about lists: takes the answer that arrived, then asks the
-    /// next list due. The worker holds one question at a time, so nothing queues behind a
-    /// slow plugin, and an answer for a context that has since changed finds no one waiting.
     pub(super) fn pump_options(
         &mut self,
         worker: &mut Worker<OptionsJob, OptionsEvent>,
@@ -42,7 +38,6 @@ impl PluginUi {
                 Pulse::Answered
             }
             Polled::Failed { .. } | Polled::Closed { .. } => {
-                // The question was a read: its list says so and can be asked again.
                 if let Some(form) = self
                     .form
                     .as_mut()
@@ -56,7 +51,6 @@ impl PluginUi {
                     };
                     form.accept_answer(self.tickets, Err(lost));
                 }
-                // The list failed; it is asked for again, on a replacement worker, when needed.
                 return Pulse::Lost;
             }
             Polled::Pending => Pulse::Quiet,
@@ -91,7 +85,6 @@ impl PluginUi {
             request: query.request,
         };
         if worker.submit(job).is_err() {
-            // The worker is gone: say so on the list rather than leave it loading forever.
             let lost = Error {
                 code: "runtime_unavailable".into(),
                 cause: None,
@@ -103,8 +96,6 @@ impl PluginUi {
     }
 }
 
-/// The control of a dynamic choice: a drop-down over the labels of its list, and a way to ask
-/// again. Returns whether the user picked another value (the caller stores it in the draft).
 pub(super) fn dynamic_choice(
     ui: &mut egui::Ui,
     look: &Look,
@@ -120,7 +111,6 @@ pub(super) fn dynamic_choice(
     };
     let unlisted = form.is_unavailable(index);
     let mark = |value: &str| format!("{value} — {}", tr(es, "unavailable"));
-    // A plugin may translate the fixed texts of its lists, such as its default device.
     let texts = form.texts.clone();
     let language = es.into();
     let shown = match options.iter().find(|option| option.value == *value) {
@@ -130,7 +120,6 @@ pub(super) fn dynamic_choice(
         None => value.clone(),
     };
     let before = value.clone();
-    // With nothing to pick from the control stays, quiet, and the line under it says why.
     ui.add_enabled_ui(!options.is_empty(), |ui| {
         egui::ComboBox::from_id_salt(("dynamic", index))
             .width(220.)
@@ -148,7 +137,6 @@ pub(super) fn dynamic_choice(
                 }
             });
     });
-    // A question in flight is not asked again: the control appears once it has an answer.
     if matches!(state, Some(ListState::Answered(_) | ListState::Failed(_)))
         && icon_button_with_id(
             ui,
@@ -164,8 +152,6 @@ pub(super) fn dynamic_choice(
     *value != before
 }
 
-/// What is known about the list of a dynamic choice, in one quiet line under its control,
-/// indented by `indent` points so that it lines up with the control.
 pub(super) fn list_status(
     ui: &mut egui::Ui,
     look: &Look,
@@ -180,7 +166,6 @@ pub(super) fn list_status(
             ui.label(text);
         });
     };
-    // A field that is not set has no control, so nothing to say about its list.
     let Some(value) = form.fields[index].as_deref() else {
         return;
     };
@@ -193,7 +178,6 @@ pub(super) fn list_status(
             text.to_owned()
         }
     };
-    // Before anything is asked, say what the list is waiting for: not a state to worry about.
     if let Some(dependency) = form.waiting_for(index) {
         let text = tr(es, "Choose {field} first")
             .replace("{field}", form.texts.get(es.into(), dependency));
@@ -277,8 +261,6 @@ mod conversation_tests {
         }
     }
 
-    /// An editor with the form of a saved action open, and a worker standing in for the
-    /// connection: it reports each question on `asked` and holds it until `release`.
     struct Conversation {
         ui: PluginUi,
         worker: Worker<OptionsJob, OptionsEvent>,
@@ -330,7 +312,6 @@ mod conversation_tests {
                 .recv_timeout(Duration::from_secs(5))
                 .expect("a question was sent")
         }
-        /// Pumps until the next question reaches the worker.
         fn pumped_question(&mut self) -> Request {
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
@@ -342,7 +323,6 @@ mod conversation_tests {
                 std::thread::sleep(Duration::from_millis(2));
             }
         }
-        /// Pumps until the list at `index` is answered: the worker answers on its own thread.
         fn until_answered(&mut self, index: usize) {
             let deadline = Instant::now() + Duration::from_secs(5);
             while !matches!(self.form().list(index), Some(ListState::Answered(_))) {
@@ -363,8 +343,8 @@ mod conversation_tests {
         talk.ui.pump_options(&mut talk.worker, true);
         assert_eq!(field_of(&talk.question()), "group");
 
-        talk.form().set(0, Some("empty".into())); // the user changes the scenario meanwhile
-        talk.release.send(()).unwrap(); // the old question is answered
+        talk.form().set(0, Some("empty".into()));
+        talk.release.send(()).unwrap();
         let again = talk.pumped_question();
         assert_eq!(field_of(&again), "group");
         assert_eq!(

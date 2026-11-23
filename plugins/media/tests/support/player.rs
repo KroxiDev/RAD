@@ -1,4 +1,3 @@
-//! Fake MPRIS players: the `fake_player` example, driven through its standard input and output.
 use super::{PrivateBus, example};
 use std::{
     io::{BufRead, BufReader, Write},
@@ -24,12 +23,10 @@ pub struct FakePlayer {
 }
 
 impl FakePlayer {
-    /// Starts a fake that owns `bus_name` on `bus`, once the name is owned.
     pub fn start(bus: &PrivateBus, bus_name: &str) -> Self {
         Self::start_owning(bus, &[bus_name])
     }
 
-    /// Starts one fake that owns all of `bus_names`: many players for the price of one process.
     pub fn start_owning(bus: &PrivateBus, bus_names: &[&str]) -> Self {
         let bus_name = bus_names.join(" ");
         let mut command = Command::new(example("fake_player"));
@@ -87,7 +84,6 @@ impl FakePlayer {
         }
     }
 
-    /// Sends one command line (see the `fake_player` example).
     pub fn command(&mut self, line: &str) -> &mut Self {
         let stdin = self.stdin.as_mut().expect("stdin is open");
         writeln!(stdin, "{line}").unwrap();
@@ -95,7 +91,6 @@ impl FakePlayer {
         self
     }
 
-    /// Waits until the fake has handled everything sent so far, and every call it logged is here.
     pub fn sync(&mut self) -> &mut Self {
         self.pings += 1;
         let token = format!("pong {}", self.pings);
@@ -107,7 +102,6 @@ impl FakePlayer {
         self
     }
 
-    /// The player methods called so far, in order (`Play`, `Next`, ...).
     pub fn calls(&mut self) -> Vec<String> {
         self.sync();
         self.lines
@@ -119,7 +113,6 @@ impl FakePlayer {
             .collect()
     }
 
-    /// How many times a Player property was read by anyone, `PlaybackStatus` for instance.
     pub fn reads_of(&mut self, property: &str) -> usize {
         self.sync();
         let wanted = format!("read org.mpris.MediaPlayer2.Player.{property}");
@@ -132,7 +125,6 @@ impl FakePlayer {
             .count()
     }
 
-    /// Freezes the whole process, as a hung player: it answers nothing until `thaw`.
     pub fn freeze(&self) {
         self.signal(libc::SIGSTOP);
     }
@@ -146,7 +138,6 @@ impl FakePlayer {
         unsafe { libc::kill(self.child.id() as i32, signal) };
     }
 
-    /// Ends the player, so its name leaves the bus.
     pub fn quit(mut self) {
         self.thaw();
         self.stdin = None;

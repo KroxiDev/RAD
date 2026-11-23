@@ -1,24 +1,3 @@
-//! How the runtime process ends, and what it leaves behind (ADR 0011).
-//!
-//! Every end of the process belongs to one class. systemd decides from the exit code
-//! (`packaging/rad-runtime.service`); the Editor never reads codes, it reads the unit's
-//! state and, after a restart, [`rad_api::PreviousExit`] from `overview` and `status`.
-//!
-//! | Code | Class | Examples | systemd |
-//! |---|---|---|---|
-//! | 0 | Clean | SIGTERM or SIGINT served | does not restart |
-//! | 75 | Blocking | another live instance, unusable socket, invalid environment or arguments, unsafe runtime directory | `RestartPreventExitStatus=75`: does not restart |
-//! | none | Recovery, does not exit | configuration without a valid revision, written by a newer version, or an unsafe data folder | the process stays up serving [`crate::recovery`] |
-//! | 1 | Unexpected | storage, clock, internal protocol, a failed startup | `Restart=on-failure` with growing delay, at most 5 starts in 300 s |
-//! | 101 | Unexpected | panic of the main thread (Rust's default code) | same as 1 |
-//!
-//! 75 is `EX_TEMPFAIL`, reserved for what keeps the runtime from serving requests and
-//! that a restart cannot fix. Anything bound to one request, plugin or job is contained
-//! where it happens and recorded as an event ([`crate::events`]); it never reaches this
-//! table.
-//!
-//! Only unexpected exits are recorded in `last-exit.json`; for the other classes the unit
-//! state already says what happened.
 use crate::{
     private_file::{read_bounded, write_atomic},
     server::RuntimeError,

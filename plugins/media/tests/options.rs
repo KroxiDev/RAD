@@ -1,4 +1,3 @@
-//! The options of the `player` field: which applications can be picked.
 mod support;
 use serde_json::json;
 use std::time::{Duration, Instant};
@@ -10,7 +9,6 @@ fn pair(value: &str, label: &str) -> (String, String) {
     (value.to_owned(), label.to_owned())
 }
 
-/// A fake that says it is called `identity`.
 fn player(bus: &PrivateBus, bus_name: &str, identity: &str) -> FakePlayer {
     let mut player = FakePlayer::start(bus, bus_name);
     player.command(&format!("identity {identity}")).sync();
@@ -54,7 +52,6 @@ fn the_initial_applications_can_be_chosen_while_closed() {
         "no player at all is still a real answer"
     );
 
-    // Applications that run come first, by name; the ones that do not run follow.
     let _vlc = player(&bus, "org.mpris.MediaPlayer2.vlc", "VLC media player");
     assert_eq!(
         host.choices("visual", "now_playing"),

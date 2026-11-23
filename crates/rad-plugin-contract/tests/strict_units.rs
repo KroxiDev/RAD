@@ -1,4 +1,3 @@
-//! Unit alternatives must retain the same closed schema as struct alternatives.
 use rad_plugin_contract::{ChoiceList, FieldKind, VisualState};
 #[test]
 fn unit_alternatives_reject_unknown_fields() {

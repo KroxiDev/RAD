@@ -1,5 +1,3 @@
-//! A plugin must not outlive the runtime that launched it, even when the runtime dies
-//! without running any cleanup (ADR 0013).
 use rad_plugin_contract::*;
 use rad_plugin_host::Host;
 use std::{
@@ -54,7 +52,6 @@ fn is_dead(pid: i32) -> bool {
     }
 }
 
-/// Kills whatever the test started, so a failing assertion leaks no process.
 struct Cleanup {
     parent: std::process::Child,
     plugin: Option<i32>,
@@ -73,7 +70,6 @@ impl Drop for Cleanup {
 #[test]
 fn plugin_dies_with_the_runtime_that_launched_it() {
     if std::env::var_os(PARENT).is_some() {
-        // Stand-in runtime: `sleep` never reads stdin nor answers the hello.
         let mut host = Host::default();
         host.activate(
             {
@@ -107,7 +103,6 @@ fn plugin_dies_with_the_runtime_that_launched_it() {
         parent,
         plugin: None,
     };
-    // Read on a thread so a stand-in that never reports cannot hang the test.
     let (sender, reported) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let pid = BufReader::new(stdout)

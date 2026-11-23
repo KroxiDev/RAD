@@ -1,5 +1,3 @@
-//! Settings screen: device, language, backup, plugins and global automation permissions,
-//! one section at a time, filling the window until Back or Esc (E4).
 use super::{
     App,
     inspector::permission_ui,
@@ -17,7 +15,6 @@ use std::path::PathBuf;
 
 /// Widest the settings grow: wider, the eye loses the line between a label and its value.
 const WIDTH: f32 = 640.;
-/// Width of the labels in the General section, so the values line up.
 const LABEL: f32 = 170.;
 
 impl App {
@@ -141,7 +138,6 @@ impl App {
             .frame(look.panel(look.background, 18))
             .show(ui, |ui| {
                 if section == Section::Plugins {
-                    // Two columns that scroll on their own, across the whole window.
                     ui.add_enabled_ui(self.connected, |ui| self.plugin_settings(ui, look));
                     return;
                 }
@@ -152,7 +148,6 @@ impl App {
                         self.settings_section(ui, look, section);
                     });
             });
-        // Plugin status is asked for only while its section is in view.
         self.plugins.section_open = section == Section::Plugins;
         if !matches!(section, Section::Plugins | Section::Updates)
             && self.plugins.dependency_credentials.take().is_some()
@@ -273,7 +268,6 @@ impl App {
             ));
         }
     }
-    /// A label in the General section's column, followed by its value.
     fn setting_label(ui: &mut egui::Ui, look: &Look, text: &str) {
         ui.allocate_ui_with_layout(
             egui::vec2(LABEL, ui.spacing().interact_size.y),
@@ -351,7 +345,6 @@ impl App {
                 }
             }
         });
-        // Shown only when there is something to save, as on a key.
         if self.general_unapplied() {
             ui.add_space(8.);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -431,7 +424,6 @@ impl App {
         });
         self.restore_confirmation(ui, look);
     }
-    /// Once a copy is uploaded: what it holds, and the choice to replace everything with it.
     pub(super) fn restore_confirmation(&mut self, ui: &mut egui::Ui, look: &Look) {
         if let Some(token) = self.restore_token.clone() {
             ui.add_space(4.);
@@ -459,7 +451,6 @@ impl App {
 mod backup_tests {
     use super::*;
 
-    // Rendering Updates must never read or maintain the real session's updater state.
     struct InMemoryUpdates;
     impl crate::updates::Backend for InMemoryUpdates {
         fn check(&self, _: &rad_update::Cancellation) -> Result<rad_update::CheckResult, String> {

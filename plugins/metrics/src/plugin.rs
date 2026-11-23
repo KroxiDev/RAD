@@ -97,7 +97,6 @@ impl MetricsPlugin {
                 let (lock, wake) = &*state;
                 let mut shared = lock.lock().unwrap_or_else(PoisonError::into_inner);
                 while !shared.stopped {
-                    // Serialize publication with demand changes so a released epoch cannot overtake a new one.
                     let now = shared.origin.elapsed();
                     shared.publish(now);
                     shared = match shared.poller.wake_after(now) {
@@ -132,12 +131,9 @@ impl Plugin for MetricsPlugin {
             return s.update(VisualState::Unavailable);
         };
         let mut shared = self.shared.0.lock().unwrap_or_else(PoisonError::into_inner);
-        // SDK also caps at 64; retain the same bound for direct trait callers.
         if shared.subscriptions.len() >= MAX_SUBSCRIPTIONS {
             return s.update(VisualState::Unavailable);
         }
-        // Adding a source starts a new demand epoch, so only an existing source can share
-        // a cached observation. The poller also checks for releases it has not seen yet.
         let initial = if shared.demand.sources[source as usize] {
             shared
                 .poller

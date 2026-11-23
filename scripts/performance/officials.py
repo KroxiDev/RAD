@@ -114,14 +114,13 @@ class World:
         self.rows, self.events, self.unobserved = [], [], set()
         self.epoch = time.monotonic()
         root.mkdir(mode=0o700)
-        # Seeding runs elsewhere: its executable/package buffers cannot inflate this PID.
         result = subprocess.run([str(REPO/'target/release/examples/official_profile_seed'), str(root), name],
                                 env={'PATH':'/usr/bin:/bin'}, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=log, text=True, timeout=30, check=True)
         self.events.append(json.loads(result.stdout))
         machine = root/'data/rad/machine.json'
         machine.write_text(json.dumps(dict(version=1,use_stream_deck=False,start_with_session=False)))
-        machine.chmod(0o600)  # Explicit before product startup, not merely a default or post-start assertion.
+        machine.chmod(0o600)
         self.env = dict(PATH='/usr/bin:/bin', LANG='C.UTF-8')
         for key, directory in (
                 ('HOME','home'), ('XDG_RUNTIME_DIR','runtime'), ('XDG_DATA_HOME','data'),
@@ -145,7 +144,7 @@ class World:
                     try:
                         child.lines.put_nowait(line.strip())
                     except queue.Full:
-                        pass  # Only bounded readiness/control responses are needed.
+                        pass
             child.reader = threading.Thread(target=consume, daemon=True)
             child.reader.start()
         return child
@@ -175,8 +174,6 @@ class World:
             try:
                 self.remember(pid,session)
             except ValueError:
-                # This identity must neither be sampled nor signalled. Its
-                # discovery must not prevent stopping/reaping the known roots.
                 self.note_unobserved(pid,session)
 
     def signal(self, pid, sig):
@@ -233,12 +230,9 @@ class World:
     def start_runtime(self):
         pidfile = self.root/'runtime.pid'
         if pidfile.exists():
-            # Only a file this World wrote in its new private root is retired.
             previous = self.root/f'runtime-{len(self.events)}.pid'
             pidfile.rename(previous)
         if self.name == 'audio':
-            # The first pactl search path is a readonly fake; network and personal
-            # home/run/config are absent. Environment alone is NOT the isolation.
             libraries = [part for path in ('/lib','/lib64') if os.path.exists(path)
                          for part in ('--ro-bind',path,path)]
             command = ['/usr/bin/bwrap','--die-with-parent','--unshare-net',
@@ -284,7 +278,6 @@ class World:
             for position in range(32):
                 peer.call('create_button', folder_id=folder, position=position, name=f'Private {position}')
             if self.name == 'obs':
-                # This is a fixed oracle credential, never a personal secret.
                 peer.call('credential_replace',plugin_id='org.rad.obs',slot='password',secret='correct')
             self.wait_host(peer, 'absent')
 
@@ -373,7 +366,6 @@ class World:
         self.events.append(dict(event='runtime_stopped',clean_shutdown=True))
 
     def close(self):
-        # Cleanup also covers exceptions during preparation or typed IPC startup.
         for child, _ in self.roots:
             if child.poll() is None:
                 self.remember_descendants(child.pid)
@@ -424,12 +416,11 @@ def run_case(out, name, repetition, seconds, interval):
          (out/f'{name}{repetition}.samples.jsonl').open('w') as raw:
         world = None
         try:
-            # __new__ lets finally clean children even if backend preparation raises.
             world = World.__new__(World)
             world.__init__(root,name,log)
             world.start_runtime()
             world.configure_buttons()
-            world.stop_runtime()  # Configuration editing history is outside every measured runtime.
+            world.stop_runtime()
             world.start_runtime()
             time.sleep(1)
             world.window('installed',seconds,interval,raw)

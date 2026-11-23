@@ -30,7 +30,6 @@ fn emit(e: Envelope) {
         }
     }
 }
-/// Bytes the host has not read yet from this fixture's output pipe.
 fn unread_output() -> usize {
     let mut queued: libc::c_int = 0;
     // SAFETY: FIONREAD writes one int for the pipe on fd 1.
@@ -39,7 +38,6 @@ fn unread_output() -> usize {
     }
     queued as usize
 }
-/// The reply a slow option query sends when it finishes: larger than a `busy` refusal.
 fn large_choices() -> Message {
     Message::Choices {
         list: ChoiceList::Available {
@@ -58,7 +56,6 @@ fn main() {
         libc::fcntl(0, libc::F_SETFL, libc::O_NONBLOCK);
         libc::fcntl(1, libc::F_SETFL, libc::O_NONBLOCK);
     }
-    // A child that lives until EOF, as a plugin's helper process does; it is ended on EOF.
     let mut helper = (mode == "child-until-eof").then(|| {
         std::process::Command::new("/bin/sleep")
             .arg("30")
@@ -234,7 +231,6 @@ fn main() {
         if let Some(slow) = slow_query
             && last_input.elapsed() > Duration::from_millis(20)
         {
-            // The host is waiting for this reply.
             slow_query = None;
             emit(Envelope {
                 protocol: 1,

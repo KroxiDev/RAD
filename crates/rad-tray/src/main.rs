@@ -1,4 +1,3 @@
-//! Session-only desktop companion. No GUI, GPU, runtime state or device access.
 mod actions;
 mod menu;
 use actions::{Action, Actions};
@@ -18,7 +17,6 @@ fn pixmaps() -> Pixmaps {
             let rgba = image
                 .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
                 .into_rgba8();
-            // SNI uses network-order ARGB, not the RGBA byte order of a PNG decoder.
             let argb = rgba
                 .pixels()
                 .flat_map(|p| [p[3], p[0], p[1], p[2]])
@@ -90,8 +88,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         WATCHER,
         gio::BusNameWatcherFlags::NONE,
         |connection, _, owner| {
-            // Advertise the name we own, preserving identity across connections and
-            // avoiding hosts that confuse prefixes of numeric connection names.
             connection.call(
                 Some(owner),
                 "/StatusNotifierWatcher",

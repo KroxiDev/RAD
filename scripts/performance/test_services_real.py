@@ -135,7 +135,6 @@ class CriticalReadOnlyServices(unittest.TestCase):
         self.assertEqual(S.availability_summary(rows)['status'], 'observed_current')
 
     def test_synthetic_filter_failure_prevents_real_launch_and_does_not_log_endpoint(self):
-        # Retained ignored fixtures are retired only by ROOT's coordinated trash pass.
         root = Path(tempfile.mkdtemp(dir=S.REPO/'target/performance', prefix='services-safety-'))
         out = root/'output'
         metadata = dict(source_sha256={}, executable_sha256={})

@@ -8,9 +8,7 @@
 use rad_api::{EventCode, RuntimeEvent, RuntimeLogView};
 use std::collections::VecDeque;
 
-/// Events kept; older ones are dropped and counted.
 pub const CAPACITY: usize = 128;
-/// Bytes of subject kept.
 pub const SUBJECT_LIMIT: usize = 128;
 
 struct Entry {
@@ -48,7 +46,6 @@ impl Events {
     pub fn new() -> Self {
         Self::with(|line| eprintln!("{line}"), crate::exit::now_unix_ms)
     }
-    /// The seam for tests: where lines go and what time it is.
     pub fn with(sink: impl FnMut(&str) + Send + 'static, clock: fn() -> u64) -> Self {
         Self {
             ring: VecDeque::new(),

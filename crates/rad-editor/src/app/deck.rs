@@ -1,4 +1,3 @@
-//! The runtime-described key grid. A click selects; a double click runs the key, exactly like Try.
 use super::{
     App, Drag,
     look::{KEY_RADIUS, Look},
@@ -9,7 +8,6 @@ use eframe::egui::{self, CornerRadius, Stroke, StrokeKind};
 use crate::session::{Grid, KeyView};
 const GAP: f32 = 12.;
 const KEY_RANGE: std::ops::RangeInclusive<f32> = 52.0..=104.;
-/// Room between the keys and the edge of the deck body drawn around them.
 const BEZEL: f32 = 14.;
 const MARGIN: f32 = BEZEL + 12.;
 fn height_for(key: f32, grid: Grid) -> f32 {
@@ -30,10 +28,6 @@ pub(super) fn native_icon(appearance: &serde_json::Value) -> Option<rad_api::Nat
     }
 }
 
-/// Paints one key face the way the deck does. Text at the top, in the middle or at the
-/// bottom lies over the picture, which is dimmed behind it; text above or below the
-/// picture gets a band of its own and the picture shrinks to make room. The picture comes
-/// with how far it has faded in, from 0 to 1.
 pub(super) fn paint_key(
     ui: &egui::Ui,
     look: &Look,
@@ -49,7 +43,6 @@ pub(super) fn paint_key(
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     let radius = CornerRadius::same(KEY_RADIUS);
     painter.rect_filled(rect, radius, look.key);
-    // Same proportions as the 96 px key the deck paints.
     let unit = rect.height() / 96.;
     let text_band = (32. * f32::from(text.size) / 13.).ceil();
     let picture_height = 96. - text_band - 2.;
@@ -95,7 +88,6 @@ pub(super) fn paint_key(
     let height = galley.size().y;
     // A small key has less room than two rows need: keep them inside it.
     let fit = |top: f32| top.min(rect.bottom() - height - 2. * unit).max(rect.top());
-    // Where the text starts and, when it lies over the picture, the rows dimmed behind it.
     let (top, band) = match text_position {
         "top" => {
             let top = fit(rect.top() + 2. * unit);
@@ -135,14 +127,10 @@ pub(super) fn paint_key(
     painter.galley(egui::pos2(rect.center().x, top), galley, text_color);
 }
 
-/// How much of a key shows at its place while it is dragged away.
 const LIFTED: f32 = 0.35;
-/// How much of a dragged key's face shows under the pointer.
 const CARRIED: f32 = 0.9;
 
 impl App {
-    /// Follows the pointer with whatever is being dragged: a key with its own face, held
-    /// where it was picked up; an action or a folder by its name.
     pub(super) fn drag_ghost(&self, ctx: &egui::Context, look: &Look) {
         let (Some(payload), Some(pointer)) = (
             egui::DragAndDrop::payload::<Drag>(ctx),
@@ -189,7 +177,6 @@ impl App {
             .iter()
             .find(|b| b.entity["id"] == id)
     }
-    /// Paints a key the way the deck shows it: its plugin's face, or its picture and text.
     fn key_face(&self, ui: &egui::Ui, look: &Look, view: &KeyView, rect: egui::Rect) {
         if self.plugin_face(ui, look, view.entity["id"].as_str().unwrap_or(""), rect) {
             return;

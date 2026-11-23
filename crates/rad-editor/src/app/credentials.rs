@@ -1,4 +1,3 @@
-//! Credential controls deliberately do not belong to the ordinary parameter draft.
 use super::tr;
 use crate::worker::{Polled, Pulse};
 use eframe::egui;
@@ -234,8 +233,6 @@ impl Panel {
         self.fields.clear();
         self.generation = self.generation.saturating_add(1);
     }
-    /// Takes the worker's answer. A thread that died lost whatever it was doing: a write in
-    /// flight is of unknown outcome, so the field reads the state again and never repeats it.
     pub(super) fn pump(&mut self, worker: &mut CredentialWorker) -> Pulse {
         match worker.poll() {
             Polled::Pending => Pulse::Quiet,
@@ -253,7 +250,6 @@ impl Panel {
                         Err(error) => {
                             if error.unknown {
                                 field.state = None;
-                                // Reconcile by a read; never replay the uncertain write.
                                 field.requested = false;
                             }
                             field.error = Some(error);
@@ -270,7 +266,6 @@ impl Panel {
                         field.checking = false;
                         field.state = None;
                         field.requested = false;
-                        // A lost read is simply asked again; a lost write is of unknown outcome.
                         field.error = wrote.then(|| crate::session::Error {
                             code: "worker_lost".into(),
                             cause: None,

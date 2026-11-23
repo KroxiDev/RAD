@@ -1,4 +1,3 @@
-//! Pure versioned plugin contracts; no processes, I/O, installation or permissions.
 /// Current contract major. The pre-release linear APIs 2/3 are not majors.
 pub const HOST_API: u32 = 1;
 /// First published major; there is no preceding published major yet.

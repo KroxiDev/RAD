@@ -252,7 +252,6 @@ fn v3_document_migration_preserves_separate_evidence_and_refuses_future_document
     .unwrap();
     drop(db);
     let before = std::fs::read(&path).unwrap();
-    // A former v2 backup must remain untouched when upgrading a v3 installation.
     let old_backup = PathBuf::from(format!("{}.document-v2-backup", path.display()));
     std::fs::write(&old_backup, b"previous migration evidence").unwrap();
     let store = Store::open(&path).unwrap();

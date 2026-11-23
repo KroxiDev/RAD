@@ -86,6 +86,34 @@ D-Bus privado y reproductores falsos; OBS, servidores loopback efímeros; métri
 archivos y NVML falsos. Si el sandbox no permite ejecutarlos, informar lo no
 verificado: una suite verde no certifica hardware real ni todas las distribuciones.
 
+## Comentarios
+
+El gate completo ejecuta `python3 -B scripts/comment_lint.py`. Compara cada
+comentario con los de la misma ruta en la base de Git y admite sus eliminaciones.
+Rechaza textos nuevos, sustituciones y repeticiones adicionales. Los renombres
+que Git reconoce conservan su procedencia. Un archivo nuevo parte de cero.
+Localmente usa el ancestro común de HEAD y `origin/beta`; para otra rama de
+destino, o un clon sin esa referencia, usa `--base <commit>` o exporta
+`RAD_COMMENT_BASE` al ejecutar el gate. La CI usa la base de la PR y, en un
+push, el estado anterior de la rama.
+
+Cubre Rust (incluido rustdoc), Python, Bash, Make, SQLite, TOML, YAML y los pasos
+Bash de los workflows, XML/SVG propios, unidades systemd, entradas de escritorio
+y reglas de Git. Cuenta también los archivos nuevos que Git mostraría al añadir.
+Los literales, los docstrings de Python, el shebang, las declaraciones de
+codificación y las rutas de ShellCheck tienen significado para sus consumidores.
+Los notices, iconos de terceros, fuentes históricas conservadas como texto y
+lockfiles generados quedan fuera del inventario.
+
+Requiere Pygments, PyYAML y shfmt (en Arch, `python-pygments`, `python-yaml`
+y `shfmt`). Se usa el shfmt del PATH o una copia local en
+`target/comment-tools/shfmt`. El gate funciona sin red. Para revisar deuda
+existente, `--inventory` imprime JSONL con ruta, línea, texto y si la línea es
+exclusiva. `--inventory --revision <commit>` usa los blobs de esa revisión.
+Contar una sola vez cada pareja de ruta y línea evita duplicar las líneas con
+varios comentarios. El [procedimiento de revisión](../.agentic/skills/delete-comment.md)
+describe cómo dejar trazabilidad de las decisiones.
+
 ## Integración continua
 
 [`.github/workflows/gate.yml`](../.github/workflows/gate.yml) ejecuta

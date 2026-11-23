@@ -18,7 +18,6 @@ PAGE_SIZE = os.sysconf('SC_PAGE_SIZE')
 CLK_TCK = os.sysconf('SC_CLK_TCK')
 REPO = Path(__file__).resolve().parents[2]
 
-# User-approved on 2026-10-23 after the real GPU baseline; plugin tree RSS only.
 METRICS_RSS_TARGET_BYTES = 30*1024*1024
 
 
@@ -156,17 +155,12 @@ def same_owned_process(pid, start, session):
     except FileNotFoundError:
         return False
     except ProcessLookupError as error:
-        # An already-open procfs stat FD can report ESRCH after the child exits,
-        # rather than ENOENT. Only that kernel disappearance means "not live".
-        # Deliberate identity errors (errno=None) and permissions still propagate.
         if error.errno == errno.ESRCH:
             return False
         raise
 
 
 def terminate_owned(pid, start, session):
-    # A pidfd keeps the signal tied to this process even if its PID is recycled
-    # after the identity check. Never fall back to signalling a bare descendant PID.
     try:
         fd = os.pidfd_open(pid)
     except ProcessLookupError:

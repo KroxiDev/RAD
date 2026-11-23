@@ -61,3 +61,24 @@ central de terceros y ejecución de scripts no nativos.
 - máximo de procesos, hilos y colas explícito, con el estado idle y la última baja
   observables;
 - `--licenses` sin conexiones, y fixtures que solo alcanzan servicios de prueba.
+
+El diagnóstico del host busca las credenciales activas incluso en bytes descartados por cuota,
+entre dos lecturas y en fragmentos de una credencial multilínea. Examina la línea original
+para reconocer coincidencias superpuestas y retiene el indicador antes de coalescer estados.
+
+La validación estructural del ELF comprueba que la entrada apunta a bytes presentes en un
+segmento ejecutable. La memoria que el cargador completaría con ceros no contiene
+instrucciones suministradas por el paquete. Las descargas resuelven DNS en el único worker
+acotado, aceptan sólo direcciones públicas admitidas y limitan la espera de cada lectura antes
+de TLS. Así, perder el plazo de la operación tampoco crea un segundo resolver mientras el
+primero sigue bloqueado. Reinstalar la versión seleccionada conserva la versión anterior que
+sigue sirviendo para rollback.
+
+Una operación administrativa sólo puede reconciliar su propio journal. Cuando se confirma el
+selector, Authority retira los tipos anteriores y mantiene la barrera mientras completa el
+cambio. El administrador usa un descriptor del directorio privado para operar sobre los
+archivos de la instalación. Incluso al enumerarlo por `/proc/self/fd`, sigue recorriendo el
+directorio abierto aunque cambie el nombre externo.
+
+El host envía cada línea apta a journald mediante un datagrama no bloqueante. Si el journal no
+puede recibirla, descarta esa línea para seguir atendiendo el protocolo.

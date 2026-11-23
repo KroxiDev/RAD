@@ -46,7 +46,6 @@ pub(crate) fn collect(
                     .map(|b| b.identity()),
             );
         }
-        // read() marks all rows retired; retained roots alone decide what can disappear.
         let mut pruned = registry.clone();
         pruned.retain_bindings(&retained);
         let bindings = ledger::bindings(&pruned);

@@ -1,4 +1,3 @@
-//! Right-hand list of what can be put on a key, grouped in categories that fold.
 use super::{
     App, Drag, NewAction, SEARCH_DEBOUNCE_MS,
     look::{Icon, Look, RADIUS, paint_icon},
@@ -9,7 +8,6 @@ use eframe::egui::{self, CornerRadius};
 const ROW_HEIGHT: f32 = 30.;
 const HEADER_HEIGHT: f32 = 24.;
 
-/// A group of actions in the list.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Category {
     Native,
@@ -17,7 +15,6 @@ pub(super) enum Category {
     Applications,
 }
 
-/// What a row shows before its name: a glyph of the font, or an icon drawn with strokes.
 enum Badge<'a> {
     Glyph(&'static str),
     Icon(Icon),
@@ -28,7 +25,6 @@ enum Badge<'a> {
     ),
 }
 
-/// Category title with a chevron: pointing down while its rows show, right while folded.
 fn header(
     ui: &mut egui::Ui,
     look: &Look,
@@ -67,7 +63,6 @@ fn header(
     response
 }
 
-/// One draggable, clickable row: its badge, then its name.
 fn row(ui: &mut egui::Ui, look: &Look, badge: Badge<'_>, name: &str, drag: Drag) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -159,7 +154,6 @@ impl App {
             _ => self.native_matches(&label),
         }
     }
-    /// Draws a category title and folds or unfolds it on click. Returns whether it is open.
     fn category(&mut self, ui: &mut egui::Ui, look: &Look, category: Category) -> bool {
         let title = match &category {
             Category::Native => tr(self.es, "RAD").to_owned(),
@@ -219,7 +213,6 @@ impl App {
             .auto_shrink(false)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 2.;
-                // None is the folder row; all other native entries become plan actions.
                 let natives: Vec<_> = [
                     (Badge::Glyph("🗀"), None),
                     (Badge::Glyph("⏱"), Some(NewAction::Wait)),
@@ -259,7 +252,6 @@ impl App {
             .unwrap_or_else(|| serde_json::json!({"id": id}));
         super::plugins::plugin_name(&item, self.es)
     }
-    /// Each installed plugin owns a separately collapsible group.
     fn plugin_rows(&mut self, ui: &mut egui::Ui, look: &Look) {
         if !self.connected {
             return;
@@ -274,7 +266,6 @@ impl App {
                 groups.entry(id.to_owned()).or_default().push(entry.clone());
             }
         }
-        // While a plugin form is being opened or saved, another one cannot start.
         let usable = !self.plugins.form_pending && !self.plugins.form_loading;
         for (id, entries) in groups {
             ui.add_space(6.);
@@ -292,7 +283,6 @@ impl App {
             }
         }
     }
-    /// A row that puts `action` on a key: dragged there, or double-clicked with one selected.
     fn list_action(&mut self, ui: &mut egui::Ui, look: &Look, badge: Badge<'_>, action: NewAction) {
         if !self.action_matches(&action) {
             return;

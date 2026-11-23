@@ -1,4 +1,3 @@
-// Curated Phosphor regular icons; upstream revision and hashes live beside the assets.
 use super::Entry;
 pub static ENTRIES: &[Entry] = &[
     Entry {

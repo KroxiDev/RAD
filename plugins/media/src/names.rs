@@ -1,6 +1,3 @@
-//! Which application a bus name belongs to, and which instance of it is used.
-
-/// Every MPRIS player owns a bus name that starts with this.
 pub const MPRIS_PREFIX: &str = "org.mpris.MediaPlayer2.";
 
 /// The application behind an MPRIS bus name, or `None` if it is not an MPRIS name.

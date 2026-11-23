@@ -1,4 +1,3 @@
-//! What is asked of one MPRIS player: its name, its abilities, its state, and the commands.
 use crate::bus::{Bus, Failure, Method};
 use glib::{Variant, prelude::ToVariant};
 use std::{collections::HashMap, time::Instant};
@@ -7,7 +6,6 @@ const PATH: &str = "/org/mpris/MediaPlayer2";
 const ROOT: &str = "org.mpris.MediaPlayer2";
 const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 
-/// A method of the MPRIS object of the player at `name`.
 fn method<'a>(name: &'a str, interface: &'a str, method: &'a str) -> Method<'a> {
     Method {
         destination: name,
@@ -17,7 +15,6 @@ fn method<'a>(name: &'a str, interface: &'a str, method: &'a str) -> Method<'a> 
     }
 }
 
-/// A property of one of the two MPRIS interfaces.
 fn property(
     bus: &Bus,
     name: &str,
@@ -35,14 +32,12 @@ fn property(
     Ok(value)
 }
 
-/// The name the player gives itself (`Identity`).
 pub(crate) fn identity(bus: &Bus, name: &str, deadline: Instant) -> Result<String, Failure> {
     property(bus, name, ROOT, "Identity", deadline)?
         .get::<String>()
         .ok_or(Failure::Failed)
 }
 
-/// Whether the player says it can do something (`CanPlay`, `CanPause`, ...).
 pub(crate) fn can(
     bus: &Bus,
     name: &str,
@@ -54,7 +49,6 @@ pub(crate) fn can(
         .ok_or(Failure::Failed)
 }
 
-/// Asks the player to do something (`Play`, `Next`, ...).
 pub(crate) fn command(
     bus: &Bus,
     name: &str,
@@ -65,7 +59,6 @@ pub(crate) fn command(
         .map(drop)
 }
 
-/// What a player is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Status {
     Playing,
@@ -84,16 +77,12 @@ impl Status {
     }
 }
 
-/// What a button shows of a player.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct State {
     pub(crate) status: Status,
-    /// The URL of the cover, as the player gives it.
     pub(crate) art_url: Option<String>,
 }
 
-/// The state of a player, read with one call. A player that does not say what it is doing
-/// (`PlaybackStatus` missing or not one of the three values) is reported as failed.
 pub(crate) fn state(bus: &Bus, name: &str, deadline: Instant) -> Result<State, Failure> {
     let reply = bus.call(
         &method(name, "org.freedesktop.DBus.Properties", "GetAll"),

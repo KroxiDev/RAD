@@ -1,5 +1,3 @@
-//! Bounded RADP packages; validation never executes package code.
-
 use rad_plugin_contract::{Document, Manifest};
 mod elf;
 
@@ -81,7 +79,6 @@ impl<'a> Candidate<'a> {
     }
 }
 
-/// Encode a previously validated candidate in the sole RADP wire representation.
 pub fn encode(candidate: &Candidate<'_>) -> Vec<u8> {
     let manifest = candidate.manifest_bytes();
     let executable = candidate.executable();

@@ -1,5 +1,3 @@
-//! A way to tell a worker thread that something changed, so that it looks again once the changes
-//! have settled.
 use std::{
     sync::{Condvar, Mutex, MutexGuard, PoisonError},
     time::{Duration, Instant},
@@ -7,14 +5,11 @@ use std::{
 
 enum Pending {
     Nothing,
-    /// Changes seen, from the first to the latest.
     Changes(Instant, Instant),
-    /// Look now, without waiting for the changes to settle.
     Now,
 }
 
 struct State {
-    /// Since when nobody wants the worker any more.
     stopped_since: Option<Instant>,
     pending: Pending,
 }
@@ -39,7 +34,6 @@ impl Wake {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Something changed.
     pub(crate) fn changed(&self) {
         let now = Instant::now();
         let mut state = self.lock();
@@ -51,27 +45,20 @@ impl Wake {
         self.wake.notify_all();
     }
 
-    /// Look straight away.
     pub(crate) fn now(&self) {
         self.lock().pending = Pending::Now;
         self.wake.notify_all();
     }
 
-    /// Nobody wants the worker any more. A worker that waits with [`Self::wait`] hears of it only
-    /// after its `linger`; one that looks at [`Self::is_stopped`] hears of it at once.
     pub(crate) fn stop(&self) {
         self.lock().stopped_since.get_or_insert_with(Instant::now);
         self.wake.notify_all();
     }
 
-    /// Somebody wants the worker after all.
     pub(crate) fn resume(&self) {
         self.lock().stopped_since = None;
     }
 
-    /// Blocks until there is something to look at: changes that were quiet for `quiet`, or whose
-    /// first is `most` old, or a request to look now, or nothing at all for `idle` (a look is
-    /// due even if nobody said anything). `false` once stopped for `linger`.
     pub(crate) fn wait(
         &self,
         quiet: Duration,
@@ -119,7 +106,6 @@ impl Wake {
         }
     }
 
-    /// Sleeps for `duration`, unless stopped first; `false` if stopped.
     pub(crate) fn sleep(&self, duration: Duration) -> bool {
         let end = Instant::now() + duration;
         let mut state = self.lock();

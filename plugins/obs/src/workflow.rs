@@ -1,5 +1,3 @@
-//! Each OBS control as a short sequence of requests. An action succeeds only once a read
-//! shows its effect: OBS accepting a request is not enough.
 use rad_plugin_sdk::{FailureCode, Parameters};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -11,28 +9,20 @@ struct Call {
     data: Value,
     step: Step,
 }
-/// What a request is for, beyond the checks every read of a target makes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Step {
     Plain,
-    /// Reads the state the change starts from, and decides the change.
     Read,
-    /// Changes the state as the read before it decided.
     Change,
-    /// Must show the effect; read again until it does or the action runs out of time.
     Confirm,
-    /// The output must be running: there is nothing to save from a stopped replay buffer.
     Active,
-    /// The last saved replay, if any: a failure means there is none yet.
     Previous,
 }
-/// How an action turns the state it read into the state it wants.
 #[derive(Clone, Copy)]
 enum Effect {
-    /// A `Set*` request whose boolean `data[key]` carries the wanted state.
-    Flag { key: &'static str },
-    /// Separate requests to turn an output on and off. Nothing is sent when it already is
-    /// as wanted: OBS refuses to start what runs or stop what is stopped.
+    Flag {
+        key: &'static str,
+    },
     Output {
         on: &'static str,
         off: &'static str,
@@ -41,7 +31,6 @@ enum Effect {
 }
 enum Expect {
     Is(Value),
-    /// A new saved replay: a path, other than the one before saving.
     Not(Value),
 }
 impl Expect {
@@ -55,9 +44,7 @@ impl Expect {
 pub(crate) struct Workflow {
     calls: VecDeque<Call>,
     target: Option<Target>,
-    /// Field that the read and the confirmation look at.
     field: &'static str,
-    /// The state the action asks for; `None` toggles the state read.
     want: Option<bool>,
     effect: Option<Effect>,
     expect: Option<Expect>,
@@ -73,7 +60,6 @@ fn call(name: &'static str, data: Value) -> Call {
 fn step(name: &'static str, data: Value, step: Step) -> Call {
     Call { name, data, step }
 }
-/// Status request and field of each output, and the requests that turn it on and off.
 fn output(name: &str) -> Option<(&'static str, &'static str, Effect)> {
     let effect = |on, off| Effect::Output {
         on,
@@ -113,7 +99,6 @@ fn output(name: &str) -> Option<(&'static str, &'static str, Effect)> {
         _ => return None,
     })
 }
-/// The wanted state an operation names; `None` for toggle.
 fn wanted(action: &str, operation: Option<&str>) -> Result<Option<bool>, FailureCode> {
     let (on, off) = match action {
         "filter" => ("on", "off"),
@@ -130,11 +115,9 @@ fn wanted(action: &str, operation: Option<&str>) -> Result<Option<bool>, Failure
         _ => Err(FailureCode::InvalidParameters),
     }
 }
-/// The source whose filter a control addresses: an input, a scene or a group.
 fn source(params: &Parameters, field: &str) -> Result<Target, FailureCode> {
     target(params.text(field).ok_or(FailureCode::InvalidParameters)?)
 }
-/// The input whose audio a control mutes.
 fn input(params: &Parameters) -> Result<Target, FailureCode> {
     let t = source(params, "input")?;
     if t.kind != "input" || t.item.is_some() {
@@ -142,7 +125,6 @@ fn input(params: &Parameters) -> Result<Target, FailureCode> {
     }
     Ok(t)
 }
-/// The scene item a control addresses, and the list that proves it still exists.
 fn item(params: &Parameters) -> Result<(Target, Call, Value), FailureCode> {
     let t = target(params.text("item").ok_or(FailureCode::InvalidParameters)?)?;
     if t.item.is_none() || t.kind == "input" {
@@ -178,7 +160,6 @@ impl Workflow {
             result: Value::Null,
         }
     }
-    /// Read-only requests whose last answer is the state a visual shows.
     pub fn visual(name: &str, params: &Parameters) -> Result<Self, FailureCode> {
         if let Some((status, field, _)) = output(name) {
             return Ok(Self::new(vec![call(status, json!({}))], None, field));
@@ -260,7 +241,6 @@ impl Workflow {
             let mut flow = Self::new(
                 vec![
                     step(status, json!({}), Step::Read),
-                    // Start or stop: decided once the state is read.
                     step(status, json!({}), Step::Change),
                     step(status, json!({}), Step::Confirm),
                 ],
@@ -316,7 +296,6 @@ impl Workflow {
         flow.want = want;
         Ok(flow)
     }
-    /// Only confirmation polls wait; prerequisites and the command can proceed immediately.
     pub fn confirming(&self) -> bool {
         self.calls
             .front()
@@ -325,8 +304,6 @@ impl Workflow {
     pub fn request(&self) -> Option<(&str, Value)> {
         self.calls.front().map(|c| (c.name, c.data.clone()))
     }
-    /// OBS refused the current request. Only the lookup of a previous replay may fail:
-    /// it means no replay has been saved yet.
     pub fn reject(&mut self) -> Result<(), FailureCode> {
         if self.calls.front().is_some_and(|c| c.step == Step::Previous) {
             self.accept(Value::Null)
@@ -352,7 +329,6 @@ impl Workflow {
                     .as_ref()
                     .is_some_and(|e| e.met(&data[self.field]))
                 {
-                    // Not yet: OBS applies some changes after acknowledging them.
                     self.calls.push_front(call);
                     return Ok(());
                 }
@@ -363,7 +339,6 @@ impl Workflow {
         }
         Ok(())
     }
-    /// The read state decides the change, or ends the action when nothing is left to do.
     fn decide(&mut self, data: &Value) -> Result<(), FailureCode> {
         let current = data[self.field].as_bool().ok_or(FailureCode::Failed)?;
         let want = self.want.unwrap_or(!current);
@@ -389,7 +364,6 @@ impl Workflow {
         }
         Ok(())
     }
-    /// The target must still be where it was chosen: same collection, scene or item.
     fn check(&self, call: &Call, data: &Value) -> Result<(), FailureCode> {
         let t = self.target.as_ref();
         match call.name {
@@ -423,7 +397,6 @@ impl Workflow {
         }
     }
 }
-/// The source and filter a filter control addresses, as OBS names them in requests.
 fn filter(params: &Parameters) -> Result<(Target, Value), FailureCode> {
     let t = source(params, "source")?;
     let filter = params
@@ -515,7 +488,6 @@ mod tests {
             ("SetCurrentProgramScene", json!({"sceneName":"Live"}))
         );
     }
-    /// Drives `flow` through scripted answers and returns the requests it made.
     fn run(flow: &mut Workflow, answers: &[Value]) -> Vec<String> {
         let mut made = vec![];
         for answer in answers {
@@ -540,7 +512,6 @@ mod tests {
                 Workflow::action(action, &params(json!({ "operation": operation }))).unwrap();
             let made = run(&mut flow, &[active(before), json!({})]);
             assert_eq!(made[1], request, "{action} {operation}");
-            // The acknowledgement alone is not success: the state must show the effect.
             flow.accept(active(before)).unwrap();
             assert!(flow.request().is_some(), "{action}: ACK without state");
             flow.accept(active(!before)).unwrap();
@@ -593,7 +564,6 @@ mod tests {
                 .unwrap();
             assert!(flow.request().is_none());
         }
-        // Only the lookup of the previous replay may fail.
         let mut flow = Workflow::action("replay", &save).unwrap();
         assert_eq!(flow.reject(), Err(FailureCode::Failed));
     }

@@ -19,7 +19,6 @@ SPEC.loader.exec_module(D)
 
 @contextmanager
 def fixture():
-    # Retain owned ignored fixtures, as the existing physical safety suite does.
     yield Path(tempfile.mkdtemp(dir=D.REPO/'target/performance',prefix='desktop-safety-'))
 
 

@@ -1,4 +1,3 @@
-// Critical live-entity ceiling; synthetic minimal valid folder tree.
 use rad_core::{configuration::*, identity::*};
 fn populated(count: usize) -> (Configuration, IdentityRegistry) {
     let mut c = Configuration::prepare_new(&IdentityRegistry::new(1).unwrap()).unwrap();

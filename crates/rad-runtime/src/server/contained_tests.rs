@@ -1,6 +1,3 @@
-//! Failures bound to one request, plugin or device are contained where they happen: the
-//! turn keeps going and what clients can see stays coherent (ADR 0011).
-
 use super::*;
 use std::{
     io::{Read, Write},
@@ -29,7 +26,6 @@ pub(super) fn runtime(name: &str, session: u128) -> (Directory, Server) {
     (root, server)
 }
 
-/// A client with its `hello` taken by the server: a started request, ready to be answered.
 pub(super) fn started_request(
     root: &Directory,
     server: &mut Server,

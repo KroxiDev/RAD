@@ -1,4 +1,3 @@
-//! Machine-local options. Phase 1 stores them without changing device/service policy.
 use crate::private_file::{invalid, read_bounded, write_atomic};
 use std::{io, path::Path};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

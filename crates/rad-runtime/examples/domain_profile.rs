@@ -134,7 +134,6 @@ fn run(root: &Path, count: usize, with_media: bool) {
         Vec::new()
     };
     let mut candidate = populated(count, &images);
-    // The small case has fewer buttons than images. Only install referenced media.
     let images: Vec<_> = images
         .into_iter()
         .filter(|image| {

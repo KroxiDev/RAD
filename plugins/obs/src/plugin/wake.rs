@@ -1,4 +1,3 @@
-//! One eventfd joins SDK demand and socket readiness in the worker's wait.
 use rad_plugin_sdk::FailureCode;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 

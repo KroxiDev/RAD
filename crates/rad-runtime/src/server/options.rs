@@ -191,7 +191,6 @@ impl Server {
             .as_mut()
             .and_then(|native| native.plugin_host_mut().take_options())
         {
-            // Not pending here: its client left, so nobody is waiting for the answer.
             let Some(pending) = self
                 .options
                 .remove(&(correlation.generation, correlation.request))
@@ -210,8 +209,6 @@ impl Server {
         Ok(())
     }
 
-    /// The client is gone: free its transport slots. The host still holds the question
-    /// until the plugin answers or the deadline passes; that result is then dropped.
     pub(super) fn abandon_options(&mut self, connection: u64) -> Result<(), RuntimeError> {
         for waiting in std::mem::take(&mut self.waiting_options) {
             if waiting.pending.context.connection == connection {

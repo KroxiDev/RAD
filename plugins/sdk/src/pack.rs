@@ -46,7 +46,6 @@ pub fn check_sizes(manifest: u64, executable: u64) -> Result<(), PackError> {
     Ok(())
 }
 
-/// The package bytes for `manifest` and `executable`, after checking both sizes.
 pub fn encode(manifest: &[u8], executable: &[u8]) -> Result<Vec<u8>, PackError> {
     check_sizes(manifest.len() as u64, executable.len() as u64)?;
     let mut package = Vec::with_capacity(20 + manifest.len() + executable.len());

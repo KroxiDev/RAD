@@ -1,4 +1,3 @@
-//! Running an action: one command for one player.
 use crate::{
     bus::{Bus, Failure},
     names::first_instance,
@@ -30,7 +29,6 @@ impl Operation {
         })
     }
 
-    /// The MPRIS method that does it.
     fn method(self) -> &'static str {
         match self {
             Self::PlayPause => "PlayPause",
@@ -42,15 +40,12 @@ impl Operation {
         }
     }
 
-    /// The property in which the player says whether it can do it. A player that says it cannot
-    /// is not asked to.
     fn ability(self) -> &'static str {
         match self {
             Self::Play => "CanPlay",
             Self::Pause | Self::PlayPause => "CanPause",
             Self::Next => "CanGoNext",
             Self::Previous => "CanGoPrevious",
-            // MPRIS has no property of its own for stopping.
             Self::Stop => "CanControl",
         }
     }
@@ -60,7 +55,6 @@ fn failure(code: FailureCode) -> Outcome {
     Outcome::Failure { code }
 }
 
-/// Runs `call` before `deadline` and reports how it went.
 pub(crate) fn perform(bus: &Bus, call: &Invoke, deadline: Instant) -> Outcome {
     let (true, Some(operation), Some(app)) = (
         call.action == "control",
@@ -75,8 +69,6 @@ pub(crate) fn perform(bus: &Bus, call: &Invoke, deadline: Instant) -> Outcome {
     }
 }
 
-/// Asks the player of the application `app` to do `operation`. The player is the chosen
-/// application's first instance on the bus, and no other: if there is none, nothing is sent.
 fn control(bus: &Bus, operation: Operation, app: &str, deadline: Instant) -> Result<(), Failure> {
     let _connection = bus.connection(deadline)?;
     let names = bus.player_names(deadline)?;

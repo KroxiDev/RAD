@@ -1,4 +1,3 @@
-//! Private execution credential ownership. No configuration, view or persistence DTOs.
 use crate::{Authority, plugins::PluginError};
 use rad_core::execution::DispatchId;
 use rad_plugin_contract::CredentialValues;

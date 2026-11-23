@@ -4,8 +4,6 @@ use std::{os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
 #[test]
 fn interrupted_transactions_are_not_success_and_reopen_ack_preserves_the_result() {
     if let Ok(mode) = std::env::var("RAD_UPDATE_RECOVERY_TEST_CHILD") {
-        // Check isolation before operation_result may run opportunistic IPC GC.
-        // A missing child override must never silently fall back to the session.
         let fixture = PathBuf::from(std::env::var_os("XDG_STATE_HOME").unwrap());
         let runtime = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
         assert_eq!(runtime, fixture.join("runtime"));

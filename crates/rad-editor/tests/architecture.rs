@@ -27,7 +27,6 @@ fn documented_dependencies(root: &Path) -> BTreeMap<String, Vec<String>> {
         } else if columns[4] == "ninguna" {
             Vec::new()
         } else {
-            // Parenthetical roadmap notes are not extra allowed dependencies.
             columns[4]
                 .split(" (")
                 .next()

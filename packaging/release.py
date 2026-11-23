@@ -17,7 +17,6 @@ import fcntl
 import shlex
 
 ROOT = Path(__file__).resolve().parents[1]
-# The updater trusts only this origin (ADR 0018); releases are created nowhere else.
 REPOSITORY = "KroxiDev/RAD"
 
 
@@ -311,8 +310,6 @@ def build(development=False, plan=False, reuse_build=False):
     shutil.copyfile(ROOT / "packaging/arch/rad.install", directory / "rad.install")
     make_env = env.copy()
     make_env["PKGDEST"] = str(directory)
-    # A neutral staging path avoids embedding a personal source-directory path in BUILDINFO.
-    # Cargo itself always builds on the repository disk, never in this temporary directory.
     with (tempfile.TemporaryDirectory(prefix="rad-package-") as package_build,
           tempfile.TemporaryDirectory(prefix="rad-recipe-") as recipe_directory):
         neutral = Path(recipe_directory)
@@ -329,7 +326,6 @@ def build(development=False, plan=False, reuse_build=False):
                         "--noconfirm", "--nosign", "--cleanbuild"], cwd=neutral,
                        env=makepkg_environment(make_env, overrides), check=True)
     package = directory / filename(source)
-    # Identity is checked even for a deliberately non-publishable development build.
     document = metadata(package, commit)
     (directory / "build-environment.txt").write_text(info)
     if not development:

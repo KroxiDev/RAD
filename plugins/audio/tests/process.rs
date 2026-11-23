@@ -1,7 +1,3 @@
-//! The plugin as a process, speaking the protocol over real pipes with a minimal environment.
-//!
-//! The real binary runs inside a private filesystem and network namespace. This requires
-//! bubblewrap and enabled Linux namespaces; setup failures fail the test, never skip it.
 mod support;
 use serde_json::{Value, json};
 use std::{
@@ -57,7 +53,6 @@ impl Process {
         );
     }
 
-    /// The next frame, or `None` at the end of the stream.
     fn recv(&mut self) -> Option<Value> {
         let mut header = [0u8; 4];
         self.stdout.read_exact(&mut header).ok()?;
@@ -78,7 +73,6 @@ impl Drop for Process {
     }
 }
 
-// All executables in the no-server tests go through this boundary.
 fn isolated_command(binary: &Path) -> Command {
     let mut command = Command::new("/usr/bin/bwrap");
     command.env_clear().args([
@@ -91,7 +85,6 @@ fn isolated_command(binary: &Path) -> Command {
         "/usr",
         "/usr",
     ]);
-    // Both merged-/usr and traditional Linux library layouts are supported.
     for path in ["/lib", "/lib64"] {
         if Path::new(path).exists() {
             command.args(["--ro-bind", path, path]);
@@ -193,7 +186,6 @@ fn the_real_binary_handshakes_and_reports_everything_unavailable_without_a_serve
         json!({"availability":"unavailable"})
     );
 
-    // A named device that cannot exist: unavailable, and nothing could have been touched.
     plugin.send(
         3,
         json!({"kind":"invoke","action":"output","parameters":{"schema_version":1,
@@ -217,7 +209,6 @@ fn the_real_binary_handshakes_and_reports_everything_unavailable_without_a_serve
         json!({"availability":"unavailable"})
     );
 
-    // The host leaving ends the plugin cleanly.
     plugin.close_input();
     let status = plugin.child.wait().unwrap();
     assert!(status.success(), "{status:?}");
@@ -258,7 +249,6 @@ fn the_event_child_dies_with_the_plugin_even_if_the_plugin_is_killed() {
         "the monitor's pactl is running"
     );
 
-    // SIGKILL: the plugin gets no chance to clean up after itself.
     plugin.child.kill().unwrap();
     plugin.child.wait().unwrap();
     assert!(

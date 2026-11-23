@@ -177,7 +177,6 @@ fn wait(control: &UnixDatagram, link: Option<&dyn Link>, timeout: i32) -> Result
     Ok(())
 }
 fn run(shared: Arc<Shared>, control: UnixDatagram, mut connect: Connector) {
-    // If a panic/kernel block prevents orderly completion LIVE stays set: no replacement.
     let mut link: Option<Box<dyn Link>> = None;
     let mut sent: [Option<KeyVisual>; 32] = std::array::from_fn(|_| None);
     let mut brightness = None;

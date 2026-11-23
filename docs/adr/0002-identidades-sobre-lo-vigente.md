@@ -24,3 +24,8 @@ Se decidió:
 **Consecuencias:** el guardado y la memoria pasan a ser proporcionales a lo vigente
 más el historial reciente, y desaparece el techo permanente. Podar sin contadores
 persistentes rompería la garantía.
+
+Los documentos históricos pueden contener hasta 10.000 entidades. La reconstrucción conserva
+todas sus entidades y la edición aplica el límite vigente cuando hace crecer el conjunto. En
+una duplicación con reemplazo se captura el subárbol fuente antes de retirar al ocupante, que
+podría contener el propio origen. [Duplicación y árbol](../domain.md)

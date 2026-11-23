@@ -356,14 +356,12 @@ fn physical_sleep_preserves_folder_and_brightness_and_consumes_the_whole_wake_pr
             e,
             Effect::Dispatch(_) | Effect::SelectionChanged { .. } | Effect::Persist { .. }
         )));
-        // Releasing the key that put the deck to sleep does not wake it.
         let release = a.input_report(30, [false; 32]).unwrap();
         assert!(
             !release
                 .iter()
                 .any(|e| matches!(e, Effect::Wake | Effect::Display { asleep: false, .. }))
         );
-        // Any key wakes: even an assigned launcher is consumed through its release.
         down[1] = false;
         down[2] = true;
         let wake = a.input_report(31, down).unwrap();
@@ -394,7 +392,6 @@ fn physical_sleep_preserves_folder_and_brightness_and_consumes_the_whole_wake_pr
             dispatch(&next).operation,
             Operation::Launcher(DesktopEntry::new("wake.desktop".into()).unwrap())
         );
-        // Timeout 0 never disables the explicit action and remains unchanged.
         assert_eq!(a.settings(Origin::Editor).unwrap().sleep_ms, 0);
     }
 }

@@ -1,4 +1,3 @@
-//! The real binary ends in the class ADR 0011 gives each cause (see `rad_runtime::exit`).
 use rad_client::connection::{Client, Endpoint};
 use serde_json::{Value, json};
 use std::{
@@ -11,7 +10,6 @@ use std::{
 
 const BINARY: &str = env!("CARGO_BIN_EXE_rad-runtime");
 
-/// Private directories under tmp; the environment of each run is built from scratch.
 struct Sandbox(PathBuf);
 impl Sandbox {
     fn new(name: &str) -> Self {
@@ -26,7 +24,6 @@ impl Sandbox {
     fn runtime(&self) -> PathBuf {
         self.0.join("runtime")
     }
-    /// Where the runtime keeps its data (`$XDG_DATA_HOME/rad`).
     fn data(&self) -> PathBuf {
         self.0.join("data/rad")
     }
@@ -96,7 +93,6 @@ mod serving {
     }
 
     fn stop(mut child: Running) -> Option<i32> {
-        // Only the child created by this test is signalled.
         assert_eq!(unsafe { libc::kill(child.0.id() as i32, libc::SIGTERM) }, 0);
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -114,7 +110,6 @@ mod serving {
         serde_json::to_value(&response.data).unwrap()
     }
 
-    /// `(code, subject)` of every event in a `runtime_log` answer, oldest first.
     fn event_codes(log: &Value) -> Vec<(String, Option<String>)> {
         log["entries"]
             .as_array()
@@ -135,7 +130,6 @@ mod serving {
         let (first, mut client) = start(&sandbox);
         let (code, stderr) = exit_code(&mut sandbox.command());
         assert_eq!(code, Some(75), "{stderr}");
-        // The refused instance neither disturbed the first nor left a record.
         view(&mut client, "status");
         assert!(!sandbox.data().join("last-exit.json").exists());
         drop(client);
@@ -189,9 +183,7 @@ mod serving {
         drop(client);
         assert_eq!(stop(first), Some(0));
         let database = sandbox.data().join("state.sqlite3");
-        // A clean start has nothing to report.
         assert!(!sandbox.data().join("last-exit.json").exists());
-        // Not a case for recovery: the database is fine, but someone else holds it.
         let locked = Locked::new(&database);
         let (code, stderr) = exit_code(&mut sandbox.command());
         assert_eq!(code, Some(1), "{stderr}");
@@ -207,7 +199,6 @@ mod serving {
             .unwrap()
             .as_millis() as u64;
         assert!(now - at < 60_000, "{at} vs {now}");
-        // Once the database is free the runtime starts and tells the Editor.
         drop(locked);
         let (running, mut client) = start(&sandbox);
         let overview = view(&mut client, "overview");
@@ -219,7 +210,6 @@ mod serving {
         );
         let status = view(&mut client, "status");
         assert_eq!(status["previous_exit"], overview["previous_exit"]);
-        // The Log says the same: why the last run ended comes right after this start.
         let log = event_codes(&view(&mut client, "runtime_log"));
         assert_eq!(
             log,
@@ -231,7 +221,6 @@ mod serving {
         assert!(!sandbox.data().join("last-exit.json").exists());
         drop(client);
         assert_eq!(stop(running), Some(0));
-        // The record was consumed: the next start exposes nothing.
         let (running, mut client) = start(&sandbox);
         assert!(view(&mut client, "overview").get("previous_exit").is_none());
         assert!(view(&mut client, "status").get("previous_exit").is_none());

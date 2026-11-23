@@ -4,8 +4,6 @@ pub(super) fn validate_data(
     data: &ConfigurationData,
     registry: &IdentityRegistry,
 ) -> Result<(), ConfigurationError> {
-    // Old valid documents can exceed the new assignment ceiling. Reconstruct them
-    // without truncation; only growing edits are subject to the smaller ceiling.
     if data.entity_count() > 10_000 {
         return Err(ConfigurationError::ResourceExhausted);
     }

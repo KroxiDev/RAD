@@ -1,4 +1,3 @@
-//! Cover art: any local picture a player offers becomes a small JPEG that fits the button.
 mod support;
 use image::{
     ExtendedColorType, ImageEncoder, Rgb, RgbImage, Rgba, RgbaImage,
@@ -12,7 +11,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// The most a JPEG may weigh for the host: 16384 hex characters.
 const MAX_BYTES: usize = 8192;
 
 fn dir() -> support::Scratch {
@@ -49,7 +47,6 @@ fn solid(width: u32, height: u32, colour: [u8; 4]) -> RgbaImage {
     RgbaImage::from_pixel(width, height, Rgba(colour))
 }
 
-/// Deterministic noise: the worst case for a JPEG.
 fn noise(width: u32, height: u32) -> RgbaImage {
     let mut state = 0x2545_f491_4f6c_dd1du64;
     RgbaImage::from_fn(width, height, |_, _| {
@@ -63,7 +60,6 @@ fn noise(width: u32, height: u32) -> RgbaImage {
     })
 }
 
-/// Decodes the hex a cover produced, checking it is a JPEG of the right size and weight.
 fn decoded(hex: &str) -> RgbImage {
     assert!(
         hex.len().is_multiple_of(2) && hex.len() <= 2 * MAX_BYTES,
@@ -112,7 +108,6 @@ fn a_png_cover_becomes_a_small_square_jpeg() {
 
 #[test]
 fn a_jpeg_cover_is_recognised_by_content_not_by_file_name() {
-    // Players often store covers with no extension, or the wrong one.
     let bytes = jpeg(&RgbImage::from_pixel(300, 300, Rgb([20, 160, 40])));
     let dir = dir();
     for name in ["cover", "cover.png", "cover.jpg"] {
@@ -125,8 +120,6 @@ fn a_jpeg_cover_is_recognised_by_content_not_by_file_name() {
 
 #[test]
 fn a_busy_picture_still_fits_in_the_size_the_host_allows() {
-    // Noise does not compress: the quality is lowered until it fits. At its own size the picture
-    // keeps all its noise (a larger one is averaged away when it is scaled down).
     decoded(&cover_of(&png(&noise(96, 96))).unwrap());
     decoded(&cover_of(&png(&noise(512, 512))).unwrap());
     decoded(
@@ -147,7 +140,6 @@ fn the_largest_accepted_picture_is_accepted_and_one_pixel_more_is_not() {
 
 #[test]
 fn a_picture_with_a_huge_size_is_refused_quickly_without_decoding_it() {
-    // 4000 x 4000 grey pixels are a few KiB in the file and 16 MB once decoded.
     let mut bytes = Vec::new();
     PngEncoder::new(&mut bytes)
         .write_image(&vec![0u8; 4000 * 4000], 4000, 4000, ExtendedColorType::L8)
@@ -167,7 +159,7 @@ fn a_file_over_eight_mebibytes_is_refused_unread() {
     let dir = dir();
     let file = dir.join("big");
     let handle = fs::File::create(&file).unwrap();
-    handle.set_len(8 * 1024 * 1024 + 1).unwrap(); // sparse: nothing is written
+    handle.set_len(8 * 1024 * 1024 + 1).unwrap();
     assert_eq!(jpeg_hex(&file), Err(CoverError::TooBig));
     handle.set_len(8 * 1024 * 1024).unwrap();
     assert_eq!(
@@ -200,7 +192,6 @@ fn files_that_are_not_regular_files_are_never_read() {
         Err(CoverError::Unreadable),
         "a device"
     );
-    // A named pipe nobody writes to would block a plain open or read for ever.
     let fifo = dir.join("pipe");
     let name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
     // SAFETY: `name` is a valid NUL-terminated path.
@@ -210,7 +201,6 @@ fn files_that_are_not_regular_files_are_never_read() {
     std::thread::spawn(move || sender.send(jpeg_hex(&path)));
     let answer = receiver.recv_timeout(Duration::from_secs(2));
     if answer.is_err() {
-        // Let the stuck reader go, so that nothing is left hanging.
         let _ = fs::OpenOptions::new().write(true).open(&fifo);
     }
     assert_eq!(

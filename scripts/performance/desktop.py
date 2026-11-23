@@ -48,7 +48,6 @@ def install_shutdown_signals():
     def cancel(signum, _frame):
         global _pending_signal
         if _spawn_depth:
-            # Do not change signal disposition before Popen execs its child.
             _pending_signal = signum
         else:
             raise_cancelled(signum)
@@ -71,8 +70,6 @@ def registered_spawn():
 
 @contextmanager
 def protected_cleanup():
-    # Finish reap before delivering a FIRST cancellation; do not silently lose it.
-    # Following an already-delivered cancellation the handler stays SIG_IGN.
     with registered_spawn():
         yield
 
@@ -139,8 +136,6 @@ class Peer(COMMON.Bridge):
 class DesktopWorld(COMMON.World):
     """Reuse audited owned-process lifecycle; never call official backend setup."""
     def spawn(self, *args, **kwargs):
-        # A requested cancellation is delivered only after Popen, roots and the
-        # PID/starttime/SID identity are registered, even before role assignment.
         with registered_spawn():
             return super().spawn(*args,**kwargs)
 
@@ -192,7 +187,6 @@ class DesktopWorld(COMMON.World):
                 self.guards.append(dict(elapsed_s=time.monotonic()-self.epoch,holders=count,unexpected=0))
             except Exception as error:
                 self.guard_errors.append(str(error))
-                # Kill the only own writer immediately. No graceful/logo writes on contention.
                 self.signal(self.runtime_pid,signal.SIGKILL)
                 return
             self.guard_stop.wait(1)
@@ -200,7 +194,6 @@ class DesktopWorld(COMMON.World):
     def start_product(self, physical):
         self.machine(physical)
         if physical:
-            # Repeat immediately before opening, with no own editor/runtime alive yet.
             pre = PHYSICAL.preflight()
             if pre['device'] != self.device:
                 raise RuntimeError('XL changed between preflights')
@@ -275,7 +268,6 @@ class DesktopWorld(COMMON.World):
         start, session = self.owned[child.pid]
         if not SAMPLER.same_owned_process(child.pid,start,session):
             raise RuntimeError('owned window identity changed')
-        # Never persist the complete desktop list or unrelated titles/clients.
         values = json.loads(self.hypr('-j','clients'))
         matches = [value for value in values if value.get('pid') == child.pid and value.get('mapped')]
         if len(matches) != 1:
@@ -381,8 +373,6 @@ class DesktopWorld(COMMON.World):
         self.events.append(dict(event='phase_end',phase=phase))
 
     def close(self):
-        # Normal completion has already used stop_product(). Exceptional teardown must
-        # not write a logo after a contender/observation error or leave a restart path.
         for child, role in self.roots:
             if role == 'runtime' and child.poll() is None:
                 self.remember_descendants(child.pid)
@@ -411,8 +401,6 @@ def run_case(out, binaries, wayland, physical, repeat, seconds):
             world.measure('editor_focused',seconds,world.editor)
             world.sink = world.spawn(['/usr/bin/foot','--hold','--app-id=rad-measurement-focus',
                 '--title=RAD measurement focus','--','/usr/bin/true'],'focus_sink')
-            # A terminal normally gives its child a new SID. Use an already-finished
-            # command, not a live foreign-session child that cannot be safely owned.
             COMMON.until(lambda:SAMPLER.descendants(world.sink.pid),
                          lambda pids:pids == [world.sink.pid],timeout=3)
             world.measure('editor_unfocused',seconds,world.sink)

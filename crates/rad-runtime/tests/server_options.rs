@@ -1,5 +1,3 @@
-// Dynamic options and JPEG visuals through the real runtime, the real IPC and a real plugin
-// process (`org.rad.test.options`, synthetic: no apps, audio, hardware, network or files).
 use rad_client::connection::{Client, Endpoint};
 use rad_launcher::Launcher;
 use rad_runtime::server::Server;
@@ -128,7 +126,6 @@ fn binaries() -> PathBuf {
         .to_path_buf()
 }
 
-/// The plugin store the runtime opens at start, with the test plugin already selected.
 fn seed(store: &Path) {
     let plugins = store.join("plugins");
     std::fs::DirBuilder::new()
@@ -164,7 +161,6 @@ fn seed(store: &Path) {
     ));
 }
 
-/// Tells the serving loop that the scenario is over, and wakes it with a connection.
 struct Announce(std::sync::Arc<std::sync::atomic::AtomicBool>, PathBuf);
 impl Drop for Announce {
     fn drop(&mut self) {
@@ -173,14 +169,10 @@ impl Drop for Announce {
     }
 }
 
-/// What the serving loop last saw as unanswered client requests (the worlds take turns).
 static OPEN_REQUESTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// One launcher helper may live per process, so runtimes of different tests take turns.
 static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Runs `scenario` on a client thread against a private runtime that owns the test plugin,
-/// serving the runtime on this thread until the scenario ends.
 fn world(name: &str, scenario: impl FnOnce(PathBuf) + Send + 'static) {
     let _turn = TURN
         .lock()
@@ -234,7 +226,6 @@ fn world(name: &str, scenario: impl FnOnce(PathBuf) + Send + 'static) {
             );
         command
     };
-    // The previous runtime's helper is reaped by the time its server stopped; allow a beat.
     let end = Instant::now() + Duration::from_secs(5);
     let launcher = loop {
         match Launcher::spawn(helper()) {
@@ -338,7 +329,6 @@ fn values(scenario: &str) -> Value {
     json!({"schema_version":1,"values":{"scenario":scenario,"group":"a","member":"a2"}})
 }
 
-/// Button `b1` in the active folder holding the `pick` action `a1`.
 fn pick_button(editor: &mut Client, parameters: Value) {
     let folder = call(editor, "status", json!({}))["active_folder_id"].clone();
     call(
@@ -429,7 +419,6 @@ fn normal_question() -> Value {
            "context":{"scenario":"normal"}})
 }
 
-/// Asks on its own connection and thread; reports the code (or "ok") and how long it took.
 fn ask_in_background(
     runtime: &Path,
     question: Value,
@@ -453,7 +442,6 @@ fn a_slow_plugin_times_out_near_two_seconds_while_the_runtime_keeps_serving() {
         pick_button(&mut editor, values("normal"));
         let waiting = ask_in_background(&runtime, slow_question());
         std::thread::sleep(Duration::from_millis(300));
-        // Pending, yet other requests, executions and even other questions are answered.
         let served = Instant::now();
         profile::timed("slow", "healthy_status", || {
             call(&mut editor, "status", json!({}))
@@ -484,7 +472,6 @@ fn a_slow_plugin_times_out_near_two_seconds_while_the_runtime_keeps_serving() {
             (Duration::from_millis(1900)..Duration::from_millis(3000)).contains(&elapsed),
             "{elapsed:?}"
         );
-        // The plugin is fine and the saved action untouched.
         assert_eq!(
             ask(&mut editor, normal_question())["availability"],
             "available"
@@ -583,7 +570,6 @@ fn asking_for_options_needs_no_execute_and_changes_nothing_anywhere() {
             counter(&next["execution_id"]),
             counter(&first["execution_id"]) + 1
         );
-        // The plugin was only asked, never told to act.
         let visual = await_visual(&mut editor, "b1", |v| v["availability"] == "current");
         assert_eq!(visual["text"], "invocations:0");
     });

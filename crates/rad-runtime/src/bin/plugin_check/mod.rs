@@ -137,7 +137,6 @@ impl Drop for Scratch {
     }
 }
 
-/// Subreaper ownership is local to this short-lived checker, not runtime lifecycle policy.
 struct Descendants;
 pub(super) fn children() -> Result<Vec<i32>> {
     let path = format!("/proc/self/task/{}/children", std::process::id());

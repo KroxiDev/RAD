@@ -1,4 +1,3 @@
-//! Publish a generated image and a captured key edit on the same client session.
 use crate::{
     Request,
     session::{Error, Port, Session},
@@ -14,7 +13,6 @@ pub struct Saved {
     pub image: String,
 }
 
-/// Only cleanup is retryable; the captured edit is never replayed.
 #[derive(Debug, Clone, Default)]
 pub struct Cleanup {
     pub released: Vec<String>,
@@ -34,8 +32,6 @@ impl From<Error> for Failed {
         }
     }
 }
-/// The runtime holds at most two transfers at once. With more tokens to drop, the
-/// editor cannot tell which are still live, so cleanup closes its own connection.
 pub(crate) const MAX_PREPARED_IMAGES: usize = 2;
 pub(crate) fn drop_images<P: Port>(session: &mut Session<P>, tokens: Vec<String>) -> Cleanup {
     let tokens: std::collections::BTreeSet<_> = tokens.into_iter().collect();
@@ -67,8 +63,6 @@ pub(crate) fn drop_images<P: Port>(session: &mut Session<P>, tokens: Vec<String>
     result
 }
 
-/// No preparation is held in the GUI: its 60-second lease starts only after Save.
-/// The captured edit owns its destination; a later UI selection cannot redirect it.
 pub fn save<P: Port>(
     session: &mut Session<P>,
     button: &str,

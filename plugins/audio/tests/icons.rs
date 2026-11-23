@@ -1,4 +1,3 @@
-//! Los iconos distribuidos deben cubrir toda la tecla y coincidir con el manifest.
 use serde_json::Value;
 
 #[test]

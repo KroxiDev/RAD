@@ -1,4 +1,3 @@
-//! Serialized, pure version reservations; never spawns or waits on a plugin.
 pub use crate::plugin_credentials::CredentialSnapshot;
 use crate::*;
 use rad_core::configuration::{ActionKind, ExternalType, VisualSource};
@@ -254,9 +253,6 @@ impl Authority {
         }
         Ok(())
     }
-    /// Guards a selection change only: an incompatible rollback cannot publish first.
-    /// A version that is already selected registers anyway, and `plugin_selection`
-    /// rejects just the buttons whose configuration it does not understand.
     fn check_published_configuration(&self, manifest: &Manifest) -> Result<(), PluginError> {
         for button in &self.published.configuration().data().buttons {
             for action in &button.actions {
@@ -678,7 +674,6 @@ impl Authority {
         if !std::sync::Arc::ptr_eq(barrier, &permit.0) || barrier.revision != self.revision {
             return Err(PluginError::InvalidPermit);
         }
-        // A KNOWN applied selector retires old logical types, while the barrier remains.
         let id = barrier.change.id();
         self.plugins.remove(id);
         self.installed.retain(|t| t.plugin() != id);

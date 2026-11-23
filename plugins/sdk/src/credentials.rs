@@ -1,4 +1,3 @@
-//! Immutable operation-scoped credentials. Keep sessions keyed by revision, not by a mutable map.
 use crate::Error;
 pub use rad_plugin_contract::{CredentialValue, MAX_CREDENTIAL_REVISIONS};
 use std::{collections::BTreeMap, sync::Arc};

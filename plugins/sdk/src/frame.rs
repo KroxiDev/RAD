@@ -9,11 +9,9 @@ pub const MAX_PAYLOAD: usize = 65_536;
 
 #[derive(Debug)]
 pub enum FrameError {
-    /// A zero-length payload.
     Empty,
     /// A payload longer than [`MAX_PAYLOAD`], with the length that was declared or offered.
     TooLarge(usize),
-    /// The stream ended inside a frame.
     Truncated,
     Io(io::Error),
 }

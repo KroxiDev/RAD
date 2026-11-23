@@ -1,4 +1,3 @@
-//! Shared pure domain rules for RAD.
 pub mod permissions;
 
 pub mod identity;

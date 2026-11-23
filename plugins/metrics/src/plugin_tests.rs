@@ -67,9 +67,6 @@ fn two_consumers_share_demand_and_last_release_reaches_reader_before_fresh_resub
     let (mut host, wire) = UnixStream::pair().unwrap();
     host.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
     let input = wire.try_clone().unwrap();
-    // This unit-test peer uses the plugin's no-op options handler as a dispatch
-    // barrier. Negotiate that test-only path explicitly; the production metrics
-    // manifest remains visual-only and does not claim dynamic options.
     let manifest: Value = serde_json::from_str(include_str!("../manifest.json")).unwrap();
     let peer = config().capabilities(vec!["dynamic_options".into(), "visual_freshness".into()]);
     let run = std::thread::spawn(move || rad_plugin_sdk::run(peer, plugin, input, wire));

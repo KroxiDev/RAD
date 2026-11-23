@@ -1,4 +1,3 @@
-//! Bounded option enumeration; values identify a container, never a label match.
 use crate::workflow::{Target, target};
 use rad_plugin_sdk::{ChoiceList, ChoiceOption, FailureCode, Parameters};
 use serde_json::{Value, json};
@@ -131,7 +130,6 @@ impl Catalog {
                         item: Some(id),
                         source: Some(source.into()),
                     },
-                    // A group's children say which group; an item of the scene is its source.
                     if q.name == "GetGroupSceneItemList" {
                         format!("{container} / {source}")
                     } else {
@@ -177,7 +175,6 @@ impl Catalog {
                         item: None,
                         source: None,
                     },
-                    // OBS names are unique across inputs, scenes and groups.
                     name.into(),
                 )?;
             }
@@ -188,7 +185,6 @@ impl Catalog {
         if !self.queue.is_empty() {
             return ChoiceList::Unavailable;
         }
-        // The same source added twice to a scene: only its number tells the two apart.
         let repeated = |label: &str| self.options.iter().filter(|o| o.label == label).count() > 1;
         let mut options = self.options.clone();
         for option in &mut options {

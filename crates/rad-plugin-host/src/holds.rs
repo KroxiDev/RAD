@@ -1,4 +1,3 @@
-//! Prepaid, generation-scoped release ownership. A Start never exists without an End credit.
 use crate::{
     Correlation, Diagnostic, Error, Host, InvokeContext, Parameters, State,
     worker::{Pending, Worker},
@@ -65,7 +64,6 @@ impl Host {
             revision: timing.1,
             context: context.clone(),
         };
-        // Single-threaded admission: no callback/pump can interleave the checked reservation.
         let start = self.invoke_context_inner(id, generation, action, params, timing, context)?;
         self.workers
             .get_mut(id)
@@ -94,7 +92,6 @@ impl Host {
             return Err(Error::Unavailable);
         }
         if deadline <= self.now {
-            // Consumed release authority cannot be retried. Stop the owner rather than strand it.
             w.fail(Diagnostic::Deadline);
             return Err(Error::Clock);
         }
@@ -136,7 +133,6 @@ impl Host {
         if w.state == State::Ready || w.state == State::Starting {
             return Err(Error::Residual);
         }
-        // Keep snapshot/credential ownership until reap, even if caller drops its authority.
         Ok(())
     }
 }

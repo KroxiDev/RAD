@@ -1,6 +1,3 @@
-//! Session-local exclusion between normal RAD processes and an installation handoff.
-//! A normal process holds a shared running lease for its whole lifetime. An updater
-//! first excludes new launches, then waits for every old lease before replacement.
 use crate::Error;
 use std::{
     fs::{File, OpenOptions},

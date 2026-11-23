@@ -25,7 +25,6 @@ pub enum Error {
     Clock,
     Exhausted,
 }
-/// Which dynamic field to list, given the values of the fields it depends on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OptionsQuery {
     pub scope: OptionsScope,
@@ -64,7 +63,6 @@ pub struct InvokeContext {
 }
 #[derive(Default)]
 pub struct Host {
-    // Tickets keep this allocation alive: address identity cannot ABA across Hosts.
     owner: Arc<()>,
     workers: BTreeMap<String, Worker>,
     next_generation: u64,
@@ -226,8 +224,6 @@ impl Host {
     }
     /// Ask a plugin to list the options of one dynamic field. Not a job: it takes no
     /// action slot, creates no execution or reservation, and never sends `invoke`.
-    /// Nothing is sent unless the plugin is ready on API 2 and the query is valid for
-    /// its manifest. The result arrives through `take_options`.
     pub fn options(
         &mut self,
         id: &str,
@@ -305,7 +301,6 @@ impl Host {
             .map_or(0, |worker| worker.queries.len())
     }
 
-    /// Next finished options query, once. See `OptionsOutcome`.
     pub fn take_options(&mut self) -> Option<(Correlation, OptionsOutcome)> {
         self.workers.values_mut().find_map(|w| {
             let generation = w.generation;

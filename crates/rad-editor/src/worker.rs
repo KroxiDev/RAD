@@ -1,5 +1,3 @@
-//! One in-flight job, including an unconsumed response, and at most one waiting command.
-//! Never runs on the GUI thread.
 use std::sync::{
     Arc, Mutex,
     mpsc::{self, Receiver, SyncSender},
@@ -17,17 +15,18 @@ pub struct Worker<J, R> {
     reported: bool,
     wake: Wake,
 }
-/// What a worker has to say this turn.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Polled<R> {
-    /// A result is ready.
     Ready(R),
-    /// Nothing yet.
     Pending,
     /// The thread died with a job in flight: that job's outcome is unknown.
-    Failed { unsent: bool },
+    Failed {
+        unsent: bool,
+    },
     /// The thread ended with no job in flight.
-    Closed { unsent: bool },
+    Closed {
+        unsent: bool,
+    },
 }
 impl<R> Polled<R> {
     pub fn ready(self) -> Option<R> {
@@ -53,7 +52,6 @@ impl<J: Send + 'static, R: Send + 'static> Worker<J, R> {
                 if results.send(run(job)).is_err() {
                     break;
                 }
-                // Released before the call, so a panicking callback poisons nothing.
                 let wake = notify.lock().unwrap().clone();
                 if let Some(wake) = wake {
                     wake();
@@ -79,7 +77,6 @@ impl<J: Send + 'static, R: Send + 'static> Worker<J, R> {
     pub fn busy(&self) -> bool {
         self.busy
     }
-    /// Background work: refused while a job is in flight, so callers simply retry later.
     pub fn submit(&mut self, job: J) -> Result<(), SubmitError> {
         if self.busy {
             return Err(SubmitError::Busy);
@@ -91,8 +88,6 @@ impl<J: Send + 'static, R: Send + 'static> Worker<J, R> {
         self.busy = true;
         Ok(())
     }
-    /// A user command: runs now, or right after the in-flight job and ahead of any later
-    /// `submit`, so background polling neither drops it nor has to disable the controls.
     pub fn enqueue(&mut self, job: J) -> Result<(), SubmitError> {
         if !self.busy {
             return self.submit(job);
@@ -122,7 +117,6 @@ impl<J: Send + 'static, R: Send + 'static> Worker<J, R> {
     fn consumed(&mut self, result: R) -> R {
         self.busy = false;
         if let Some(job) = self.waiting.take() {
-            // A dead thread cannot take it; the next poll reports it as unsent.
             self.unsent = self.submit(job).is_err();
         }
         result
@@ -144,15 +138,10 @@ impl<J: Send + 'static, R: Send + 'static> Worker<J, R> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pulse {
     Quiet,
-    /// The worker is alive and answered.
     Answered,
-    /// The worker's thread is gone and its owner should replace it.
     Lost,
 }
 
-/// Recreates a dead worker, at most [`Respawner::LIMIT`] times in a row without an answer
-/// in between. Nothing here polls or retries on a timer: the owner calls it on a death
-/// it has just seen, or on an explicit user action.
 pub struct Respawner<J, R> {
     make: Box<dyn Fn() -> Worker<J, R>>,
     deaths: u8,

@@ -1,6 +1,5 @@
 use super::ConfigurationError;
 /// Non-secret, opaque plugin-owned settings. Availability does not affect retention.
-/// The plugin contract will define their schema; credentials belong to the local vault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginSettings(Vec<u8>);
 impl PluginSettings {

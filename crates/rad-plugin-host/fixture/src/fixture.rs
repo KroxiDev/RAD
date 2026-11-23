@@ -1,4 +1,3 @@
-// Standalone synthetic fixture. No RAD dependency, apps, hardware, network or files.
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 fn send(v: Value) {
@@ -45,8 +44,7 @@ pub fn run(major: u32) {
                     std::process::exit(23);
                 }
                 if mode == "child" || mode == "child_exit" {
-                    // A long-lived descendant of the plugin; its pid goes where the test looks.
-                    #[allow(clippy::zombie_processes)] // left running on purpose
+                    #[allow(clippy::zombie_processes)]
                     let child = std::process::Command::new("/bin/sleep")
                         .arg("60")
                         .stdin(std::process::Stdio::null())

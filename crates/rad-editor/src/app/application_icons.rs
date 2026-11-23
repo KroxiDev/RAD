@@ -74,7 +74,6 @@ pub(super) struct ApplicationIcons {
 }
 impl ApplicationIcons {
     pub(super) fn begin(&mut self, ctx: &egui::Context, now: Duration) {
-        // Rows remained on screen between frames, even when the UI was idle.
         for key in self.visible.drain() {
             if let Some(entry) = self.cache.entries.get_mut(&key) {
                 entry.shown = now;

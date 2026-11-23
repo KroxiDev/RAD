@@ -62,7 +62,6 @@ impl Parameters {
                 FieldKind::Text { max_bytes } => {
                     value.as_str().is_some_and(|s| s.len() <= *max_bytes)
                 }
-                // The list is dynamic and may be unavailable: no membership check here.
                 FieldKind::DynamicChoice { .. } => {
                     value.as_str().is_some_and(crate::manifest::label)
                 }

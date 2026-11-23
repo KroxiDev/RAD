@@ -1,4 +1,3 @@
-//! Actual native worker/socket + GUI scheduling: cleanup owns its tokens until ACK.
 use super::*;
 use std::{
     io::{Read, Write},
@@ -294,7 +293,6 @@ fn terminal_cleanup_closes_only_its_socket_invalidates_prepared_images_and_recon
             let _ = app.pump_replies(&ctx);
             std::thread::yield_now();
         }
-        // A subsequent explicit Save cannot reference any lease of the closed socket.
         let (saved, edits) = std::sync::mpsc::channel();
         app.worker = super::reload_tests::worker(move |job| {
             if let Job::Request(request @ Request::Edit { .. }) = job {

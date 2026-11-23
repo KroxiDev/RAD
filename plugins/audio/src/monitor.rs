@@ -1,18 +1,3 @@
-//! The event monitor: keeps a `pactl subscribe` child while something is watching, and turns the
-//! server's events into refreshes of the device picture.
-//!
-//! Events only say "something about a sink, source or the defaults changed"; the picture is then
-//! read again (see [`server::snapshot`]). A burst of events is one refresh: it waits for a quiet
-//! moment, but never longer than a bound. If the event stream ends, the server went away: the
-//! watchers are told, and the monitor reconnects after a wait that grows while the server stays
-//! away. A failure inside the watching (a panic) ends only that session, and the watching starts
-//! over after the same kind of growing wait.
-//!
-//! There is at most one monitor thread, and so at most one event child. Stopping only asks the
-//! thread to wind down; if watching is wanted again before it has, the same thread starts over
-//! instead of a second one being added. Each time watching is wanted again is a new epoch, which
-//! tags the pictures the thread publishes, so a picture that began before the stop is never taken
-//! for a fresh one.
 use crate::{
     Pactl, Snapshot, Timing,
     server::{self, Failure},
@@ -26,17 +11,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Longest event line kept; real ones are about 30 bytes, anything longer is not an event.
 const MAX_LINE: usize = 256;
 
-/// Receives each new picture of the server, or why there is none, tagged with the epoch it was
-/// taken in. Called on the monitor's thread.
 pub(crate) type Publish = Box<dyn Fn(u64, Result<Snapshot, Failure>) + Send + Sync + 'static>;
 
-/// The shortest first wait: doubling zero would never get anywhere.
 const MIN_RETRY_WAIT: Duration = Duration::from_millis(1);
 
-/// The waits between tries: `first`, then doubling up to `most`, until the server answers.
 struct Backoff {
     first: Duration,
     most: Duration,
@@ -53,7 +33,6 @@ impl Backoff {
         }
     }
 
-    /// The wait to use now; the one after it is twice as long, within the limit.
     fn next(&mut self) -> Duration {
         let wait = self.next;
         self.next = wait.saturating_mul(2).min(self.most);
@@ -72,7 +51,6 @@ struct Shared {
     control: Control,
 }
 
-/// Watches the server while asked to. Cheap to create: the thread exists only while watching.
 pub(crate) struct Monitor {
     shared: Arc<Shared>,
 }
@@ -89,8 +67,6 @@ impl Monitor {
         }
     }
 
-    /// Starts watching, or resumes if a stop has not finished yet, and returns the new epoch.
-    /// `None` if the thread could not be started.
     pub(crate) fn start(&self) -> Option<u64> {
         let control = &self.shared.control;
         let mut state = control.lock();
@@ -114,21 +90,16 @@ impl Monitor {
         Some(state.epoch)
     }
 
-    /// Coalesces a request for a new observation with pending source events.
     pub(crate) fn refresh(&self) {
         self.shared.control.event();
     }
 
-    /// Asks the thread to wind down: it ends its event child and exits unless watching is wanted
-    /// again by then.
     pub(crate) fn stop(&self) {
         self.shared.control.lock().wanted = false;
         self.shared.control.wake.notify_all();
     }
 }
 
-/// What wakes the monitor: events from the reader thread, the end of the stream, a stop, or a
-/// change of epoch.
 #[derive(Default)]
 struct Control {
     state: Mutex<State>,
@@ -139,11 +110,8 @@ struct Control {
 struct State {
     wanted: bool,
     epoch: u64,
-    /// The monitor thread is alive and has not decided to exit.
     running: bool,
-    /// The event stream closed.
     ended: bool,
-    /// When the first and the latest unprocessed events arrived.
     pending: Option<(Instant, Instant)>,
 }
 
@@ -151,7 +119,6 @@ enum Wake {
     Stop,
     Events,
     Ended,
-    /// The time set for trying again has come.
     Retry,
 }
 
@@ -174,7 +141,6 @@ impl Control {
     }
 }
 
-/// One stretch of watching: it ends when watching is no longer wanted or a newer epoch began.
 struct Lease<'a> {
     control: &'a Control,
     epoch: u64,
@@ -189,15 +155,12 @@ impl Lease<'_> {
         self.over(&self.control.lock())
     }
 
-    /// Forgets the previous stream before a new one starts.
     fn reset(&self) {
         let mut state = self.control.lock();
         state.ended = false;
         state.pending = None;
     }
 
-    /// Blocks until there is something to do: the end of the lease, events (before the end of the
-    /// stream) or `retry_at`, if there is one.
     fn wait(&self, retry_at: Option<Instant>) -> Wake {
         let mut state = self.control.lock();
         loop {
@@ -231,8 +194,6 @@ impl Lease<'_> {
         }
     }
 
-    /// Waits until events have been quiet for `quiet`, or the first has waited `most`, then
-    /// takes them. `false` if the lease ended meanwhile.
     fn settle(&self, quiet: Duration, most: Duration) -> bool {
         let mut state = self.control.lock();
         loop {
@@ -257,8 +218,6 @@ impl Lease<'_> {
         }
     }
 
-    /// Sleeps for `duration` unless the lease ends first; `false` if it ended. A duration beyond
-    /// what the clock can add to now never runs out: the sleep lasts until the lease ends.
     fn sleep(&self, duration: Duration) -> bool {
         let end = Instant::now().checked_add(duration);
         let mut state = self.control.lock();
@@ -287,16 +246,11 @@ impl Lease<'_> {
 }
 
 fn thread_main(shared: &Arc<Shared>) {
-    // The wait before starting over after a panic. It grows while the panics keep coming, so a
-    // failure that always happens is not retried in a tight loop, and starts over once a lease
-    // has run its course (see also `follow`).
     let mut backoff = Backoff::new(&shared.timing);
     loop {
         let epoch = {
             let mut state = shared.control.lock();
             if !state.wanted {
-                // Deciding to exit and saying so happen under one lock, so a start that comes
-                // next sees no thread and makes a new one.
                 state.running = false;
                 return;
             }
@@ -306,9 +260,6 @@ fn thread_main(shared: &Arc<Shared>) {
             control: &shared.control,
             epoch,
         };
-        // A panic in the watching (a watcher that fails, say) must not leave the plugin
-        // believing it is watching when nothing is: the session's event child is ended on the
-        // way out, and the lease starts over after a wait.
         match catch_unwind(AssertUnwindSafe(|| watch(shared, &lease, &mut backoff))) {
             Ok(()) => backoff.reset(),
             Err(_) => {
@@ -318,8 +269,6 @@ fn thread_main(shared: &Arc<Shared>) {
     }
 }
 
-/// The `pactl subscribe` child and the thread reading it. Ends both when dropped, also while
-/// unwinding from a panic.
 struct EventStream {
     child: Child,
     reader: Option<thread::JoinHandle<()>>,
@@ -335,8 +284,6 @@ impl Drop for EventStream {
     }
 }
 
-/// Watches the server for one lease, reconnecting as often as it takes. `backoff` sets the waits
-/// between tries.
 fn watch(shared: &Arc<Shared>, lease: &Lease<'_>, backoff: &mut Backoff) {
     let Shared {
         pactl,
@@ -365,8 +312,6 @@ fn watch(shared: &Arc<Shared>, lease: &Lease<'_>, backoff: &mut Backoff) {
         if lease.is_over() {
             return;
         }
-        // The stream ended or never started: the server is away. Wait as long as the last failed
-        // refresh already said to, or one step further if nothing had failed yet.
         publish(Err(Failure::Unavailable));
         if !lease.sleep(scheduled.unwrap_or_else(|| backoff.next())) {
             return;
@@ -378,12 +323,6 @@ fn refresh(pactl: &Pactl, timing: &Timing) -> Result<Snapshot, Failure> {
     server::snapshot(pactl, Instant::now() + timing.refresh_deadline)
 }
 
-/// Keeps the picture current until the stream ends or the lease is over: a refresh at the start
-/// (after subscribing, so no change falls between the two), one after each burst of events, and,
-/// while the server cannot be read, another try after each wait. The wait ends early on an event,
-/// the end of the lease or the end of the stream.
-///
-/// If the stream ends while the last refresh had failed, returns the wait that refresh set.
 fn follow(
     pactl: &Pactl,
     timing: &Timing,
@@ -414,15 +353,12 @@ fn follow(
         }
         retry_at = Some(retry.map_or_else(|| Instant::now() + timing.recheck, |(at, _)| at));
         publish(picture);
-        // Only now: a picture whose publication panics does not make this a good session.
         if worked {
             backoff.reset();
         }
     }
 }
 
-/// Reads the event stream line by line, bounding the line length, and signals the events that
-/// can change a device or a default.
 fn read_events(mut stdout: ChildStdout, control: &Control) {
     let mut line = Vec::new();
     let mut too_long = false;
@@ -452,8 +388,6 @@ fn read_events(mut stdout: ChildStdout, control: &Control) {
     control.end();
 }
 
-/// `Event '<what>' on <facility> #<index>`, for the facilities that carry devices and defaults.
-/// Clients, streams, modules and cards are noise here: a refresh itself creates client events.
 fn is_device_event(line: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(line) else {
         return false;
@@ -518,14 +452,11 @@ mod tests {
         assert_eq!(waits, [30, 60, 120, 200, 200, 200]);
         backoff.reset();
         assert_eq!(ms(backoff.next()), 30);
-        // A limit below the first wait cannot make the wait shrink.
         let timing = timing.retry_max(Duration::from_millis(5));
         let mut backoff = Backoff::new(&timing);
         assert_eq!((ms(backoff.next()), ms(backoff.next())), (30, 30));
     }
 
-    /// A monitor whose watchers always fail: every picture it publishes panics. Returns it with
-    /// the times of those panics.
     fn always_panicking(dir: &Dir, timing: Timing) -> (Monitor, Arc<Mutex<Vec<Instant>>>) {
         let pactl = Pactl::new(fake(), Some(dir.0.clone().into_os_string()));
         let panics = Arc::new(Mutex::new(Vec::new()));
@@ -539,7 +470,6 @@ mod tests {
         (Monitor::new(pactl, timing, publish), panics)
     }
 
-    /// Stops the monitor and checks that every event child it ever started is gone for good.
     fn stop_and_check_no_child_is_left(monitor: &Monitor, dir: &Dir) {
         monitor.stop();
         assert!(
@@ -553,7 +483,6 @@ mod tests {
         panics.lock().unwrap().len()
     }
 
-    /// The time from each panic to the next one: at least the wait that came between them.
     fn gaps(panics: &Mutex<Vec<Instant>>) -> Vec<Duration> {
         let times = panics.lock().unwrap().clone();
         times.windows(2).map(|pair| pair[1] - pair[0]).collect()
@@ -577,7 +506,6 @@ mod tests {
             &panics
         ) >= 1));
         stop_and_check_no_child_is_left(&monitor, &dir);
-        // A thread that died on the wait would still be marked as running, and so never replaced.
         assert!(
             wait_until(Duration::from_secs(3), || !monitor
                 .shared
@@ -601,7 +529,6 @@ mod tests {
             panics_so_far(&panics)
         );
         stop_and_check_no_child_is_left(&monitor, &dir);
-        // Without a wait it would start over hundreds of times a second.
         for gap in gaps(&panics) {
             assert!(gap >= wait, "restarted after {gap:?}, wait is {wait:?}");
         }
@@ -659,7 +586,6 @@ mod tests {
         };
         let monitor = Monitor::new(pactl, timing, publish);
         monitor.start().unwrap();
-        // Two panics: the waits went 200 ms and 400 ms, and the next one would be 800 ms.
         assert!(wait_until(Duration::from_secs(5), || panics_so_far(
             &panics
         ) >= 2));
@@ -669,7 +595,6 @@ mod tests {
                 >= 1),
             "the monitor never recovered"
         );
-        // A change on the server makes the next picture fail again.
         failing.store(true, Ordering::SeqCst);
         emit_event(&dir, "Event 'change' on sink #1");
         assert!(wait_until(Duration::from_secs(5), || panics_so_far(
@@ -695,7 +620,6 @@ mod tests {
         let publish: Publish = {
             let (calls, pictures) = (Arc::clone(&calls), Arc::clone(&pictures));
             Box::new(move |_, picture| {
-                // The first picture makes whoever receives it fail.
                 if calls.fetch_add(1, Ordering::SeqCst) == 0 {
                     panic!("injected panic in a watcher");
                 }
@@ -711,8 +635,6 @@ mod tests {
                 >= 1),
             "no picture after the panic: the monitor gave up"
         );
-        // The session that panicked had its event child ended and waited for (not a zombie); the
-        // new session has its own.
         let panicked_session = pids(&dir, "subscribe-start ")[0];
         assert!(
             gone(panicked_session),

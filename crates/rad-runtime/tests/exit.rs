@@ -1,4 +1,3 @@
-//! Exit classes (ADR 0011): codes, the last unexpected exit, and the unit file that depends on them.
 use rad_runtime::exit::{self};
 use std::{fs, path::Path};
 

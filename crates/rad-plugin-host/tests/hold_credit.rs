@@ -153,7 +153,6 @@ fn hold_credits_bound_start_admission_and_end_residuals() {
     for ticket in tickets {
         host.release_hold(ticket, 5000).unwrap();
     }
-    // Undrained End ACKs still occupy their reserved credits.
     assert!(matches!(
         host.invoke_hold_start(
             "org.example.hold",

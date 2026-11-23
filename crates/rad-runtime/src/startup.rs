@@ -1,5 +1,3 @@
-//! Startup in two steps (ADR 0011). First the instance lock and the sockets, which both
-//! modes keep; then the data folder, which decides between serving and recovery mode.
 use crate::{
     bootstrap::{self, Diagnosis},
     events::Events,
@@ -26,7 +24,6 @@ impl Bound {
     /// The instance lock precedes opening the Store, so a second process cannot reaffirm it.
     pub fn bind(runtime: &Path, session: NonZeroU128) -> Result<Self, RuntimeError> {
         let transport = Transport::bind(runtime, session.get()).map_err(|error| match error {
-            // What keeps requests from being served, and no restart fixes.
             TransportError::InstanceBusy | TransportError::UnsafePath | TransportError::Io => {
                 RuntimeError::Blocked
             }

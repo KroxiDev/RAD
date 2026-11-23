@@ -85,7 +85,6 @@ fn deadline_wins_over_ready_final_byte_and_other_client_is_not_starved() {
     t.drive(1).unwrap();
     a.write_all(&[0]).unwrap();
     t.drive(100).unwrap();
-    // Completion was already ready when deadline-first drive runs: it must not be admitted.
     let body = r#"{"v":1,"id":"2","op":"run","args":{}}"#;
     let frame = [
         (body.len() as u32).to_be_bytes().as_slice(),

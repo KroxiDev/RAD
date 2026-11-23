@@ -1,4 +1,3 @@
-//! Contract major 1 range compatibility and capability-gated options/JPEG.
 use rad_plugin_contract::*;
 use serde_json::{Value, json};
 
@@ -171,7 +170,7 @@ fn parameters(values: Value) -> Parameters {
 fn dynamic_values_reject_non_strings_empty_oversized_and_control_characters() {
     let definition = picker();
     let long = "x".repeat(257);
-    let wide = "é".repeat(129); // 258 bytes
+    let wide = "é".repeat(129);
     for bad in [
         json!(7),
         json!(true),
@@ -198,7 +197,6 @@ fn options_context_carries_only_declared_dependencies_with_valid_values() {
     };
     assert_eq!(check("group", json!({})), Ok(()));
     assert_eq!(check("group", json!({"scenario":"normal"})), Ok(()));
-    // Dynamic dependencies are not membership-checked: their list is dynamic.
     assert_eq!(
         check("member", json!({"scenario":"empty","group":"not-listed"})),
         Ok(())
@@ -307,7 +305,6 @@ fn choice_lists_are_bounded_unique_and_closed() {
             "{message}"
         );
     }
-    // encode applies the same validation before anything is written.
     let too_many = Envelope {
         protocol: 1,
         correlation: key(),

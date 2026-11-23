@@ -1,4 +1,3 @@
-//! The plugin proper: the SDK's `Plugin` on top of options, actions and visual watching.
 use crate::{Timing, actions, bus::Bus, options, watch::Watch};
 use rad_plugin_sdk::{
     ChoiceList, Config, Invoke, OptionsQuery, Outcome, Plugin, Reply, Subscription, SubscriptionId,
@@ -6,7 +5,6 @@ use rad_plugin_sdk::{
 };
 use std::{sync::Arc, time::Instant};
 
-/// Identity of the plugin, as in `manifest.json`.
 pub fn config() -> Config {
     Config::new(
         "org.rad.media",
@@ -61,15 +59,12 @@ impl MediaPlugin {
     }
 }
 
-/// Runs `job` on its own thread. If the thread cannot start, the job is dropped, which answers
-/// whatever reply it holds with its failure.
 fn spawn(job: impl FnOnce() + Send + 'static) {
     let _ = std::thread::Builder::new()
         .name("media-job".into())
         .spawn(job);
 }
 
-/// Both the action and the visual choose a player; no other field has options.
 fn asks_for_player(query: &OptionsQuery) -> bool {
     matches!(query.definition.as_str(), "control" | "now_playing") && query.field == "player"
 }

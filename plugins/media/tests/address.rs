@@ -1,5 +1,3 @@
-//! Which session bus the plugin is pointed at: the one it was told about, otherwise the standard
-//! socket of the user's runtime directory.
 mod support;
 use rad_plugin_media::session_bus_address;
 use std::{fs, os::unix::net::UnixListener, path::Path};
@@ -49,8 +47,6 @@ fn there_is_no_default_when_there_is_no_bus_socket_to_point_at() {
 
 #[test]
 fn a_relative_runtime_directory_is_not_followed() {
-    // A runtime directory is an absolute path; a relative one would mean a different bus for
-    // every working directory. Here the relative path does lead to a socket called `bus`.
     let runtime = scratch_dir("rm", true);
     let _bus = UnixListener::bind(runtime.join("bus")).unwrap();
     let up = std::env::current_dir().unwrap().ancestors().count() - 1;

@@ -1,4 +1,3 @@
-//! Binary observed states and their action bindings are a negotiated public contract.
 use rad_plugin_contract::{Document, Manifest};
 use serde_json::{Value, json};
 fn fixture() -> Value {

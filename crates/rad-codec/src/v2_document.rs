@@ -72,7 +72,6 @@ pub(crate) struct Button {
 pub(crate) struct Appearance {
     pub text: String,
     pub image: Option<String>,
-    /// Absent while the position follows the image, as in every earlier document.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_position: Option<TextPosition>,
 }

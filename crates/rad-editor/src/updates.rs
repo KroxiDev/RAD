@@ -1,4 +1,3 @@
-//! Screen-scoped installation client. No network work starts without `check`.
 use crate::worker::{Polled, Worker};
 use rad_update::{Cancellation, Candidate, CheckResult, Prepared, Progress};
 use std::sync::{Arc, Mutex};
@@ -52,7 +51,6 @@ fn notify(wake: &Wake) {
     }
 }
 
-/// One controller survives visits. Its slot includes cancelled but still-live work.
 pub struct Controller {
     worker: Worker<Work, Envelope>,
     verification: Verification,
@@ -163,7 +161,6 @@ impl Controller {
     pub fn enter(&mut self) {
         self.visible = true;
     }
-    /// False only after the coordinator owns the operation; leaving cannot cancel pacman.
     pub fn leave(&mut self) -> bool {
         if self.relaying() {
             return false;
@@ -354,7 +351,6 @@ impl Drop for Controller {
     }
 }
 
-/// Production backend. Construction is inert; only its explicit operations do I/O.
 pub struct SystemBackend;
 impl Backend for SystemBackend {
     fn check(&self, cancel: &Cancellation) -> Result<CheckResult, String> {

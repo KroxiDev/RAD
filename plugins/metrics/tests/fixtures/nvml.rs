@@ -1,4 +1,3 @@
-// Controlled C ABI fixture, not NVIDIA's library. No hardware or system reads.
 use std::{
     ffi::{c_uint, c_void},
     sync::atomic::{AtomicU32, Ordering},

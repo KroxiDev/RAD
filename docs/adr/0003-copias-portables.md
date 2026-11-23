@@ -47,3 +47,13 @@ falten y marca los que necesitan contraseña. Fusionar copias queda fuera de alc
 **Consecuencias:** el formato pasa a RADPKG v2, que sigue leyendo v1
 ([ADR 0004](0004-evolucion-de-formatos.md)). Restaurar es la operación que valida
 una copia y se prueba en los tres destinos.
+
+Una copia extranjera puede traer identidades adoptadas anteriormente desde la propia
+instalación de destino. Al reservar los rangos se incluye también el mayor serial de esas
+identidades locales: el contador del exportador sólo cubre los seriales que asignó él.
+
+Al confirmar medios, el Store comprueba el catálogo completo en una primera pasada y compara
+los bytes por bloques. Después relee las imágenes necesarias dentro de la transacción que
+publica la configuración. Un fallo de la segunda lectura revierte todo el lote sin requerir
+dos copias completas de una imagen en memoria. Se valida también todo el inventario de staging
+antes de retirar archivos abandonados.

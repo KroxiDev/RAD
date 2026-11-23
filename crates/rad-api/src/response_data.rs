@@ -1,5 +1,3 @@
-//! Concrete v1 response payloads. Untagged encoding preserves the legacy wire
-//! representation; the operation and envelope status supply the discriminator.
 use crate::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -11,7 +9,6 @@ macro_rules! dto {
     }
 }
 dto!(Empty {});
-// What this machine is set to do (ADR 0005, 0006); never part of a copy of the configuration.
 dto!(MachineSettingsView {
     use_stream_deck: bool,
     start_with_session: bool

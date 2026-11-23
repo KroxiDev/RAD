@@ -23,11 +23,10 @@ fn nvml_abi_targets_only_index_zero_and_separates_gpu_from_memory_activity() {
     // SAFETY: our fixture implements precisely the NVML ABI used by this adapter.
     let nvml = unsafe { Nvml::load(&name) }.expect("load controlled library");
     let (gpu, ram) = nvml.read();
-    assert_eq!(gpu, Some(73)); // not the memory-controller activity value 9
+    assert_eq!(gpu, Some(73));
     let ram = ram.unwrap();
     assert_eq!((ram.used, ram.total), (2 * 1073741824, 8 * 1073741824));
     drop(nvml);
-    // A temporarily missing external library must recover on the same worker.
     let name_for_loader = name.clone();
     let mut attempts = 0;
     let mut reader = rad_plugin_metrics::reader::Reader::with_nvml_loader(dir.clone(), move || {

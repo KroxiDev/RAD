@@ -1,8 +1,3 @@
-//! Replacing a database that cannot be opened without ever erasing it.
-//!
-//! The damaged file is evidence: it ends up under a `.damaged-<stamp>` name beside the
-//! new base, together with its `-journal`/`-wal`/`-shm` sidecars. The swap is a single
-//! `renameat2(RENAME_EXCHANGE)`, so `path` always names a complete file.
 use crate::{Store, StoreError};
 use std::{
     ffi::{CString, OsStr},
@@ -94,7 +89,6 @@ impl Names {
         file.push(suffix);
         PathBuf::from(file)
     }
-    /// A leftover from an earlier attempt is never overwritten or reused.
     fn taken(&self) -> bool {
         exists(&self.temporary) != Some(false)
             || exists(&self.evidence) != Some(false)
@@ -102,9 +96,6 @@ impl Names {
                 .iter()
                 .any(|suffix| exists(&self.sidecar(&self.evidence, suffix)) != Some(false))
     }
-    /// With `journal_mode=DELETE` a hot journal left as `<path>-journal` would be
-    /// replayed into the new base on its first open, so every sidecar goes with the
-    /// damaged file. Sidecars already moved stay as evidence if a later one fails.
     fn move_sidecars(&self) -> Result<(), StoreError> {
         for suffix in SIDECARS {
             let sidecar = self.sidecar(&self.path, suffix);
@@ -123,7 +114,6 @@ impl Names {
     }
 }
 
-/// `None` when the answer is unknown (anything but "not found").
 fn exists(path: &Path) -> Option<bool> {
     match fs::symlink_metadata(path) {
         Ok(_) => Some(true),
@@ -131,7 +121,6 @@ fn exists(path: &Path) -> Option<bool> {
         Err(_) => None,
     }
 }
-/// Remove a file this call created and still owns (never the evidence).
 fn discard(temporary: &Path) {
     let _ = fs::remove_file(temporary);
     let mut journal = temporary.as_os_str().to_owned();

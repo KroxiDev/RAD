@@ -65,3 +65,8 @@ válidas en una transacción. La migración de Store v1 conserva su `.v1-backup`
 avanza directamente al documento actual. Registro, máximos, medios, historial,
 ajustes y dependencias conservan sus dueños y contratos. No hay downgrade y una
 versión futura exige actualizar RAD, nunca volver a valores iniciales.
+
+La reserva de fin se asocia al host y a la generación que admitieron el inicio. Una identidad
+compartida permanece viva mientras exista un ticket e impide confundirlo con la identidad de
+un host creado más tarde en la misma dirección. Si el ticket de fin ya se consumió y el plazo
+venció, el host cierra al dueño para que no quede un gesto pendiente sin vía de liberación.

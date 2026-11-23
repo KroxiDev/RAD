@@ -6,7 +6,6 @@ use std::fmt;
 pub enum Error {
     Frame(FrameError),
     Json(serde_json::Error),
-    /// The host broke the protocol (wrong first message, wrong protocol version, ...).
     Protocol(&'static str),
     /// The host's API is outside the range the plugin declared; nothing was answered.
     IncompatibleHost {

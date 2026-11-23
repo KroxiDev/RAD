@@ -1,5 +1,4 @@
 #![cfg(feature = "test-support")]
-// Critical regression originally reproduced independently in review-obs/backoff-red.log.
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
@@ -26,8 +25,6 @@ fn text(ws: &mut tungstenite::WebSocket<std::net::TcpStream>, v: Value) {
     ws.send(tungstenite::Message::Text(v.to_string().into()))
         .unwrap();
 }
-/// An action pressed while OBS is still opening waits for it and then runs exactly once.
-/// What is never repeated is a request that already reached OBS (see the plugin's tests).
 #[test]
 fn an_action_during_backoff_runs_once_when_obs_accepts() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -36,7 +33,6 @@ fn an_action_during_backoff_runs_once_when_obs_accepts() {
     };
     let (tx, rx) = std::sync::mpsc::channel();
     let server = std::thread::spawn(move || {
-        // First attempt: OBS hangs up during the handshake, which starts a backoff.
         let (stream, _) = listener.accept().unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
@@ -102,8 +98,6 @@ fn an_action_during_backoff_runs_once_when_obs_accepts() {
     let start = json!({"kind":"invoke","credential_revision":1,"action":"record","parameters":{"schema_version":1,"values":{"operation":"start"}}});
     send(&mut host, 3, start.clone());
     rx.recv_timeout(Duration::from_secs(3)).unwrap();
-    // Pressed again while the first connection fails: both wait, and the second finds the
-    // recording already started.
     std::thread::sleep(Duration::from_millis(80));
     send(&mut host, 4, start);
     let mut outcomes = std::collections::BTreeMap::new();

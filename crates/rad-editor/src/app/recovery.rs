@@ -1,5 +1,3 @@
-//! Recovery mode (ADR 0011): when the runtime cannot open the configuration the editor shows
-//! what happened and only the ways out the runtime offers, in place of the normal window.
 use super::{App, look::Look, tr};
 use crate::{
     native::{Job, TransferKind},
@@ -9,12 +7,9 @@ use eframe::egui;
 use serde_json::Value;
 use std::path::PathBuf;
 
-/// Width of the recovery screen's content.
 const WIDTH: f32 = 440.;
 
 impl App {
-    /// The runtime refused a request because it is in recovery mode: nothing else is read
-    /// until it has said why and the user has chosen a way out.
     pub(super) fn enter_recovery(&mut self) {
         if !self.recovery.is_normal() {
             return;
@@ -40,8 +35,6 @@ impl App {
         }
         self.say("");
     }
-    /// The runtime works normally again, on this same connection: read everything anew, as
-    /// after a reconnection.
     pub(super) fn leave_recovery(&mut self, message: &str) {
         self.recovery = Mode::Normal;
         self.recovery_due = false;
@@ -60,7 +53,6 @@ impl App {
         self.machine_due = true;
         self.say(message);
     }
-    /// Answers of the runtime that concern recovery mode; `true` when this was one of them.
     pub(super) fn recovery_response(
         &mut self,
         operation: &str,
@@ -83,7 +75,6 @@ impl App {
         }
         true
     }
-    /// The whole window while the runtime is in recovery mode.
     pub(super) fn recovery_view(&mut self, ui: &mut egui::Ui, look: &Look) {
         egui::Panel::top("bar")
             .frame(look.panel(look.surface, 10))

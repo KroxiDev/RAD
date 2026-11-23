@@ -1,4 +1,3 @@
-//! Sanitized typed views. JSON and transport encoding belong to the runtime adapter.
 use crate::*;
 use rad_core::{configuration::Mode, identity::Binding, permissions::Permissions};
 #[derive(Debug, Clone, PartialEq, Eq)]

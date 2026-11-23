@@ -1,13 +1,10 @@
-//! Closed UI request builders, matching rad-protocol API. Validation stays server-side.
 use crate::Request;
 use serde_json::{Value, json};
-/// Everything Save sends for one key; the runtime applies it as a single edit.
 pub struct KeySave<'a> {
     pub id: &'a str,
     pub name: &'a str,
     pub text: &'a str,
     pub image: Option<&'a str>,
-    /// `top`, `middle` or `bottom` when the user chose one; otherwise it is left as it is.
     pub text_position: Option<&'a str>,
     pub mode: &'a str,
     pub gesture: &'a str,
@@ -94,7 +91,6 @@ pub fn save_button(save: &KeySave) -> Request {
         expected_revision: None,
     }
 }
-/// Adds an action of a type the runtime knows to `button`, after the ones it has.
 pub fn add_action(button: &str, kind: &str, parameters: Value) -> Request {
     Request::AddAction {
         button_id: button.into(),
@@ -148,7 +144,6 @@ pub fn delete_selection(button: &str, actions: &[Value]) -> Request {
     }
 }
 
-/// Build a folder move only from a selected folder entrance.
 pub fn move_folder(actions: &[Value], parent: &str, position: usize) -> Option<Request> {
     let folder = folder_destination(actions)?;
     Some(Request::MoveFolder {

@@ -87,7 +87,6 @@ def run(name, out):
                 executable = BIN/'obs-fixture'
                 args = [str(port)]
                 settings = params(port=port)
-                # Manifest order: the recording starts before its pause toggles.
                 values = dict(scene=dict(scene=target('Live')),
                     filter=dict(source=target('Camera','input'), filter='Blur', operation='on'),
                     item=dict(scene=target('Root'), item=target('G','group',8,'Camera'), operation='show'),
@@ -111,7 +110,6 @@ def run(name, out):
                             args=args, actions=[], options=[], visuals=[])
             if settings is not None:
                 scenario['settings'] = settings
-            # Complete manifest-driven coverage with explicit fixture-only values; never guess an effect.
             for action in manifest['actions']:
                 for gesture in action['gestures']:
                     scenario['actions'].append(dict(id=action['id'], gesture=gesture, parameters=params(**values[action['id']])))
@@ -122,7 +120,6 @@ def run(name, out):
                     for field in definition['schema']['fields']:
                         if field['kind']['type'] == 'dynamic_choice':
                             scenario['options'].append(dict(scope=scope,definition=definition['id'],field=field['id'],context=params(**{key:contexts[definition['id']][key] for key in field['kind']['depends_on']})))
-            # No effectful action replay: options are read-only, metrics uses synthetic visual subscriptions.
             scenario['pressure'] = dict(kind='options' if scenario['options'] else 'visual', index=0, safe_to_repeat=True)
             package, vector = out/f'{name}.radp', out/f'{name}-scenario.json'
             subprocess.run([str(REPO/'target/release/examples/conformance_client'), 'pack', str(manifest_path), str(executable), str(package)], check=True, timeout=15)

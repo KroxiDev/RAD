@@ -1,4 +1,3 @@
-//! Per-process bounded diagnostic lines. No unbounded line or flood can retain memory.
 use std::collections::VecDeque;
 use zeroize::Zeroize;
 pub const MAX_LINES: usize = 32;
@@ -15,7 +14,6 @@ pub(super) struct Stderr {
 }
 impl Stderr {
     pub fn ingest(&mut self, bytes: &[u8], now: u64, secrets: &[&str]) -> Vec<String> {
-        // Scan even discarded/rate-limited bytes, including secrets split over read boundaries.
         let mut scan = zeroize::Zeroizing::new(self.scan_tail.clone());
         scan.extend_from_slice(bytes);
         self.credential_leak_detected |= secrets.iter().any(|secret| {
@@ -44,9 +42,6 @@ impl Stderr {
                             .filter(|c| !c.is_control())
                             .collect::<String>(),
                     );
-                    // Match the representation we publish, including each separately
-                    // emitted component of a multiline credential. Mark against the
-                    // original line so overlapping secrets cannot hide each other.
                     let mut masked = vec![false; raw.len()];
                     for secret in secrets {
                         for part in secret.split('\n') {
@@ -101,7 +96,6 @@ impl Stderr {
     }
 }
 
-/// Journald native datagram transport: never block the host on a stalled journal.
 pub(super) fn journal(id: &str, line: &str) {
     if let Ok(socket) = std::os::unix::net::UnixDatagram::unbound()
         && socket.set_nonblocking(true).is_ok()

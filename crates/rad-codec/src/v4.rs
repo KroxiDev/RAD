@@ -1,4 +1,3 @@
-//! Closed v4 importer: Brightness is never accepted under a v4 label.
 use crate::{CodecError, document, v4_document};
 pub(crate) fn import(bytes: &[u8]) -> Result<document::Document, CodecError> {
     let old: v4_document::Document =

@@ -35,6 +35,7 @@ claros.
 - Antes de trabajar en un pendiente: `docs/roadmap.md`.
 - Para pantallas o textos del editor: `docs/ux.md`.
 - Para comportamiento ejecutable: aplicar `.agentic/skills/tdd.md`.
+- Para clasificar o retirar comentarios de código: [.agentic/skills/delete-comment.md](.agentic/skills/delete-comment.md).
 - Para revisar estándares y requisitos: `.agentic/skills/code-review.md`.
 - Para recuperar o guardar contexto: `.agentic/skills/usar-engram.md`.
 - Para seguir un flujo, las relaciones de un símbolo o el impacto de un cambio:

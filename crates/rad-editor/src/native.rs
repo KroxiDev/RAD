@@ -43,16 +43,12 @@ pub enum Job {
     Refresh {
         board: bool,
         overview: bool,
-        /// Read with a board of a newer revision, so both change together.
         selected: Option<Selected>,
     },
     Inspect(String),
-    /// A key's inspector read before it is selected.
     InspectAhead(String),
-    /// A folder one press away from the one on show.
     FolderBoard(String),
     Request(Request),
-    /// A key Save whose captured draft must be matched to this exact result.
     Save {
         ticket: u64,
         request: Request,
@@ -92,7 +88,6 @@ pub enum Reply {
         ticket: u64,
         result: Box<Result<Reply, Error>>,
     },
-    /// Correlate failed machine reads/writes so an autostart change can be reconciled.
     MachineFailed(Error),
     PluginApplied(Response),
     PluginCatalog(Vec<crate::plugins::CatalogEntry>),
@@ -185,7 +180,6 @@ pub struct Event {
     pub plugin_dependencies: bool,
     pub plugin_form: bool,
     pub plugin_visual: bool,
-    /// A read ahead or a picture: its failure is not the user's business.
     pub background: bool,
     pub connected: bool,
     pub transfer_job: bool,
@@ -359,9 +353,6 @@ pub(crate) fn request_reply<P: crate::session::Port>(
         if error.code == "not_found" && !error.unknown
             && let Some(id) = paste_source
         {
-            // The failed paste is never retried. One read in the same worker job
-            // distinguishes a missing source from a missing destination; an
-            // inconclusive read must not claim either one is missing.
             error.cause = match session.request(Request::Get { id: id.clone() }) {
                 Ok(response) if response.status == rad_api::Status::Ok
                     && matches!(&response.data, rad_api::ResponseData::Entity(entity) if entity.id == id) =>
@@ -382,7 +373,6 @@ pub(crate) fn request_reply<P: crate::session::Port>(
 pub fn start(runtime: PathBuf, theme: PathBuf) -> Worker<Job, Event> {
     start_with_clock(runtime, theme, Instant::now)
 }
-/// Replace an idle RPC connection only when admitting new work; never replay a request.
 pub fn start_with_clock(
     runtime: PathBuf,
     theme: PathBuf,
@@ -436,8 +426,6 @@ pub fn start_with_clock(
             _ => false,
         };
         palette.read(&theme);
-        // Transfers belong to their original session and must never be resumed on a new one.
-        // Local theme work neither renews nor keeps the RPC alive.
         let uses_rpc = !matches!(job, Job::Theme);
         let ready = if uses_rpc
             && !matches!(job, Job::Connect)
@@ -445,7 +433,7 @@ pub fn start_with_clock(
             && session.is_some()
             && now().saturating_duration_since(last_rpc) >= Duration::from_secs(30)
         {
-            session = None; // release the old slot before opening its replacement
+            session = None;
             Client::connect(&runtime, Endpoint::Editor)
                 .map(|client| {
                     session = Some(Session::new(client));
@@ -466,7 +454,6 @@ pub fn start_with_clock(
             Job::Theme => Ok(Reply::Theme),
             Job::Connect => {
                 active = None;
-                // A disconnected UI discarded its textures, even if runtime revisions survive.
                 visual_epoch.clear();
                 visual_revisions.clear();
                 match Client::connect(&runtime, Endpoint::Editor) {
@@ -645,7 +632,6 @@ pub fn start_with_clock(
                         }
                     }
                     Job::TransferStep => step(&mut active, s),
-                    // An import under way owns the transfer; the icon can be asked for later.
                     Job::AppIcon { .. } if active.is_some() => Ok(Reply::NoAppIcon),
                     Job::AppIcon {
                         button,
@@ -655,8 +641,6 @@ pub fn start_with_clock(
                 },
             },
         });
-        // Every call above has returned: the worker's single-flight socket has no
-        // pending request. Dropping only this session delegates lease cleanup to Disconnect.
         let cleanup_disconnect = match &result {
             Ok(Reply::ImagesDropped(cleanup)) | Ok(Reply::IconSaved { cleanup, .. }) => {
                 cleanup.disconnect
@@ -698,19 +682,8 @@ pub fn start_with_clock(
     })
 }
 
-/// The runtime closes a connection after 60 s without requests, and only options questions
-/// use this one, so one idle for half of that is replaced before it is trusted.
 const OPTIONS_IDLE: Duration = Duration::from_secs(30);
 
-/// Worker for the option lists of plugin forms. A plugin may take its whole time limit to
-/// answer; this worker holds its own connection to the runtime, so that wait delays neither
-/// Apply nor polling, which stay with the worker of [`start`]. The connection is made when a
-/// question needs it and again after it is lost or has gone idle: a failed question is
-/// reported to the form, never replayed.
-///
-/// An idle connection is not closed on a timer: the worker only runs when a question arrives,
-/// so it stays open until the next question replaces it or the runtime closes it (60 s without
-/// requests). It takes one of the runtime's eight connection slots meanwhile.
 pub fn start_options(runtime: PathBuf) -> Worker<OptionsJob, OptionsEvent> {
     start_options_idle(runtime, OPTIONS_IDLE)
 }
@@ -738,8 +711,6 @@ fn options_session<'a>(
         .as_ref()
         .is_none_or(|(session, used)| !session.is_open() || used.elapsed() >= idle)
     {
-        // Close the old connection first: the runtime counts it until then, and the editor
-        // would briefly hold three of the eight slots (this, the new one and the main worker's).
         *connection = None;
         let client = Client::connect(runtime, Endpoint::Editor).map_err(|e| Error {
             code: e.code.into(),

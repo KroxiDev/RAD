@@ -155,7 +155,6 @@ impl Manager {
         source: Option<&crate::GithubSource>,
         replaces: Option<&crate::GithubSource>,
     ) -> Result<PreparedChange, Error> {
-        // Only recover failures caused by this admitted operation, never older work.
         if self.state() != ManagerState::Ready {
             return Err(Error::Busy);
         }
@@ -180,8 +179,6 @@ impl Manager {
     ) -> Result<PreparedChange, Error> {
         self.prepare_inner(operation, package, None, None)
     }
-    /// A source from another repository than the registered one replaces it only when the
-    /// caller confirms that same registered origin; nothing is written before this check.
     fn confirm_source_change(
         old: Option<&crate::ledger::Versions>,
         source: Option<&crate::GithubSource>,
@@ -255,7 +252,6 @@ impl Manager {
                 if old.is_none() && after.plugins.len() >= rad_plugin_contract::MAX_PLUGINS {
                     return Err(Error::PluginLimit);
                 }
-                // Replacing the selected version with itself must not evict the real previous one.
                 let same_version = match &old {
                     Some(v) => self.load(v.current, &id)?.version == c.manifest().version,
                     None => false,
@@ -351,7 +347,6 @@ impl Manager {
         })
     }
     pub fn commit_recovering(&mut self, change: &mut Option<PreparedChange>) -> CommitOutcome {
-        // A rejected token cannot authorize reconciliation of another operation.
         if let Err(error) = self.check(change) {
             return CommitOutcome::Uncertain(error);
         }
@@ -567,8 +562,6 @@ impl Journal {
         let before = self.before.plugins.get(id);
         let after = self.after.plugins.get(id);
         let valid = match (self.new_slot, before, after) {
-            // A new slot demotes the replaced version, or keeps its predecessor when the
-            // selected version was reinstalled over itself.
             (Some(n), b, Some(a)) => {
                 n == self.after.revision
                     && a.current == n

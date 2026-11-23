@@ -1,4 +1,3 @@
-//! Trusted, embedded SVGs and their bounded raster cache. No filesystem or runtime state.
 use crate::preview::Pixels;
 use image::ImageEncoder;
 use std::collections::BTreeMap;

@@ -1,4 +1,3 @@
-//! Closed v5 importer: per-state faces cannot be smuggled under an older version.
 use crate::{CodecError, document, v5_document};
 pub(crate) fn import(bytes: &[u8]) -> Result<document::Document, CodecError> {
     let old: v5_document::Document =

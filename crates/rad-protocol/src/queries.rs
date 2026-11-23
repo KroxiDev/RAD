@@ -31,7 +31,6 @@ pub(super) fn read(
                 return Err("invalid_request");
             };
             let cursor = cursor(cursor_value.as_deref())?;
-            // Reserve envelope/cursor overhead once, not a second unbounded page buffer.
             let mut first = true;
             let page = a
                 .list(c.connection, c.origin, cursor.as_ref(), |e| {
@@ -135,7 +134,6 @@ fn action(v: &ActionView, rev: &str) -> Value {
     };
     json!({"visibility":"visible","id":short(v.binding.short()),"kind":"action","fields":{"type":kind,"permissions":local(v.local_permissions),"effective_permissions":permissions(v.permissions),"parent_id":v.parent_binding.map(|b|short(b.short())),"parameters":parameters(v),"folder_id":v.destination.map(|b|short(b.short()))},"view_revision":rev,"sections":[]})
 }
-/// The action's own configuration, for the kinds whose parameters are not opaque.
 fn parameters(v: &ActionView) -> Value {
     if let ActionType::Brightness(direction) = v.kind {
         return json!({"direction": match direction {rad_core::configuration::BrightnessDirection::Increase=>"increase",rad_core::configuration::BrightnessDirection::Decrease=>"decrease"}});

@@ -188,8 +188,6 @@ fn first_dispatch_captures_full_relevant_snapshot_not_future_edits_or_visual_ava
     assert_eq!(snapshot.trigger(), Trigger::Hardware);
 }
 
-/// One button running `count` launchers in `mode`. With `wait_ms`, a wait of that length
-/// sits between each pair, so launcher `k` is action `2 * k`; without, it is action `k`.
 fn spaced(count: usize, mode: Mode, wait_ms: Option<u64>) -> Candidate {
     let mut c = empty_button();
     let b = button(&c);
@@ -347,7 +345,6 @@ fn timeout_frees_button_but_not_external_resource_and_late_result_cannot_complet
 
 #[test]
 fn unrepresentable_response_and_wait_horizons_reject_before_effects_and_counters_never_wrap() {
-    // Two responses and the wait between them need 610 000 ms: one less is left.
     let long = spaced(2, Mode::Sequential, Some(600_000));
     let mut e = Engine::new(1, 1).unwrap();
     e.advance(u64::MAX - 609_999).unwrap();
@@ -425,7 +422,6 @@ fn unrepresentable_response_and_wait_horizons_reject_before_effects_and_counters
         ExecutionError::TimeOverflow
     );
     assert_eq!(e.next_deadline(), Some(100));
-    // The wait in flight and the launcher behind it are both still reserved.
     assert_eq!(e.usage().jobs, 2);
     assert_eq!(e.advance(100).unwrap().len(), 1);
     assert_eq!(e.advance(99).unwrap_err(), ExecutionError::TimeReversed);
@@ -527,7 +523,6 @@ fn adapter_reported_timeout_ends_the_execution_once_in_either_order_and_frees_cr
         )
         .unwrap()
     };
-    // The adapter reports first: Engine has not processed its own deadline yet.
     let mut e = Engine::new(1, 1).unwrap();
     let run = started(&mut e);
     assert!(
@@ -556,7 +551,6 @@ fn adapter_reported_timeout_ends_the_execution_once_in_either_order_and_frees_cr
             .unwrap_err(),
         ExecutionError::UnknownDispatch
     );
-    // Engine processes its deadline first: the report only frees the credit.
     let mut e = Engine::new(1, 1).unwrap();
     let run = started(&mut e);
     e.advance(5000).unwrap();

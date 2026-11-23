@@ -1,4 +1,3 @@
-//! Pin and renew published configuration snapshots while an export is in progress.
 use super::{Authority, ExportLease, ExportPin, Origin, Rejection, StorageState};
 
 impl Authority {

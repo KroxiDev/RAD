@@ -38,25 +38,21 @@ impl Fetcher {
             stage: None,
         }
     }
-    /// An operation is downloading or waiting for the worker to take its result.
     pub fn active(&self) -> bool {
         self.stage.is_some()
     }
-    /// How much of the package has arrived, while it is downloading and its size is known.
     pub fn percent(&self) -> Option<u8> {
         match &self.stage {
             Some(Stage::Downloading { progress, .. }) => progress.percent(),
             _ => None,
         }
     }
-    /// False once no download thread is left running.
     pub fn stopped(&self) -> bool {
         match &self.stage {
             Some(Stage::Downloading { ended, .. }) => ended.get(),
             _ => true,
         }
     }
-    /// Requests without a source (or with an invalid one) need no thread.
     pub fn start(
         &mut self,
         request: PluginAdmin,
@@ -82,7 +78,6 @@ impl Fetcher {
         let (tx, done) = mpsc::sync_channel(1);
         let (download, wake, cancel) = (self.download.clone(), self.wake.clone(), cancel.clone());
         let url = request.source.clone().unwrap_or_default();
-        // Each new percent wakes the loop, so the editor hears of it.
         let progress = Progress::new({
             let wake = self.wake.clone();
             move || wake()
@@ -125,7 +120,6 @@ impl Fetcher {
     fn finished(&mut self, request: PluginAdmin, fetched: Fetched) {
         self.stage = Some(Stage::Done { request, fetched });
     }
-    /// Moves a returned download to `Done`; a thread that died without a result is an I/O error.
     pub fn collect(&mut self) {
         let Some(Stage::Downloading { done, .. }) = &self.stage else {
             return;
@@ -145,7 +139,6 @@ impl Fetcher {
         let _ = thread.join();
         self.finished(request, fetched);
     }
-    /// The finished operation, if any; the fetcher is idle afterwards.
     pub fn take_done(&mut self) -> Option<(PluginAdmin, Fetched)> {
         match self.stage.take() {
             Some(Stage::Done { request, fetched }) => Some((request, fetched)),

@@ -1,4 +1,3 @@
-//! Mute, unmute and toggle of the output and the microphone, against the fake sound server.
 mod support;
 use rad_plugin_audio::{AudioPlugin, Kind};
 use serde_json::{Value, json};
@@ -86,7 +85,6 @@ fn a_chosen_device_that_is_missing_is_unavailable_and_nothing_else_changes() {
     let server = FakeServer::new();
     let mut host = Host::start(&server, quick());
     let before = server.state();
-    // Missing, a monitor (not a microphone), a sink named as a source and the other way round.
     for (action, device) in [
         ("output", "sink-gone"),
         ("microphone", "mic-gone"),
@@ -109,7 +107,6 @@ fn a_chosen_device_that_is_missing_is_unavailable_and_nothing_else_changes() {
     );
     assert_eq!(server.state().sinks, before.sinks);
     assert_eq!(server.state().sources, before.sources);
-    // A device that was there and then went away behaves the same.
     assert_eq!(host.invoke("output", "mute", "sink-b"), success());
     server.remove_device(Kind::Output, "sink-b");
     assert_eq!(
@@ -152,7 +149,6 @@ fn an_unreachable_server_is_unavailable_for_the_default_and_for_a_chosen_device(
     server.up();
     assert_eq!(host.invoke("output", "mute", "@default"), success());
     host.finish().unwrap();
-    // No pactl installed at all.
     let mut host = Host::with_plugin(AudioPlugin::new(None, quick()));
     assert_eq!(
         host.invoke("output", "mute", "@default"),
@@ -171,7 +167,6 @@ fn a_failure_with_the_server_up_is_failed_not_unavailable() {
         host.invoke("microphone", "mute", "@default"),
         failure("failed")
     );
-    // Garbage where a listing should be is a failure too, not a missing device.
     server.fail_mutations(false);
     server.garbage(true);
     assert_eq!(host.invoke("output", "mute", "sink-a"), failure("failed"));
@@ -197,7 +192,6 @@ fn a_hung_pactl_times_out_without_blocking_other_actions() {
     let mut host = Host::start(&server, quick());
     let started = Instant::now();
     let hung = host.ask_invoke("output", "mute", "sink-a");
-    // While that one hangs, another action completes at once and the loop keeps answering.
     assert_eq!(host.invoke("microphone", "mute", "@default"), success());
     assert_eq!(host.invoke("output", "mute", "sink-b"), success());
     assert_eq!(
@@ -283,7 +277,6 @@ fn children_get_a_minimal_environment_and_nothing_else() {
         runs.len() >= 5,
         "listings, a command and the monitor all ran: {runs:?}"
     );
-    // The test process has a full environment; the plugin hands on only the runtime directory.
     assert!(
         runs.iter().all(|names| names == "XDG_RUNTIME_DIR"),
         "{runs:?}"
@@ -315,7 +308,6 @@ fn output_beyond_the_cap_is_refused_and_the_child_ended() {
 fn a_microphone_default_that_is_a_monitor_or_missing_is_unavailable_and_nothing_is_muted() {
     let server = FakeServer::new();
     let mut host = Host::start(&server, quick());
-    // The default source points at what a sink plays: not a microphone, and the visual says so.
     server.set_default(Kind::Microphone, "sink-a.monitor");
     for operation in ["toggle", "mute", "unmute"] {
         assert_eq!(
@@ -333,7 +325,6 @@ fn a_microphone_default_that_is_a_monitor_or_missing_is_unavailable_and_nothing_
         !server.is_muted(Kind::Output, "sink-a"),
         "the sink behind the monitor is untouched"
     );
-    // No default source at all.
     server.set_default(Kind::Microphone, "");
     assert_eq!(
         host.invoke("microphone", "mute", "@default"),
@@ -352,7 +343,6 @@ fn a_microphone_default_is_resolved_to_its_name_before_acting() {
     assert!(server.is_muted(Kind::Microphone, "mic-b"));
     assert!(!server.is_muted(Kind::Microphone, "mic-a"));
     assert_eq!(server.mutating_calls(), ["set-source-mute mic-b 1"]);
-    // The output keeps asking the server for its default, which cannot be a monitor.
     assert_eq!(host.invoke("output", "mute", "@default"), success());
     assert_eq!(
         server.mutating_calls().last().unwrap(),

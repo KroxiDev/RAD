@@ -1,7 +1,5 @@
-//! Only importer for prerelease v1, shared by Store and portable packages.
 use crate::{CodecError, document, v1_document};
 pub(crate) fn import(bytes: &[u8]) -> Result<document::Document, CodecError> {
-    // Decode the original closed schema first: Value alone would erase duplicate fields.
     let old: v1_document::Document =
         serde_json::from_slice(bytes).map_err(|_| CodecError::InvalidDocument)?;
     if !matches!(old.settings.gui_language.as_str(), "en" | "es") {

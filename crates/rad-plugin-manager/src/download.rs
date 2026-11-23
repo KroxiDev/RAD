@@ -14,7 +14,6 @@ impl Cancellation {
 pub struct Progress(std::sync::Arc<ProgressState>);
 #[derive(Default)]
 struct ProgressState {
-    /// `u8::MAX` while unknown.
     percent: std::sync::atomic::AtomicU8,
     known: std::sync::atomic::AtomicBool,
     notify: Option<Box<dyn Fn() + Send + Sync>>,
@@ -33,7 +32,6 @@ impl Progress {
             .load(Ordering::Acquire)
             .then(|| self.0.percent.load(Ordering::Acquire))
     }
-    /// `received` of `total` bytes; a total of zero says nothing.
     pub fn report(&self, received: u64, total: u64) {
         use std::sync::atomic::Ordering;
         if total == 0 {
@@ -105,7 +103,6 @@ impl Downloader {
 fn asset(bytes: &[u8]) -> Result<String, Error> {
     asset_for_target(bytes, "x86_64-unknown-linux-gnu").map(|(url, _)| url)
 }
-/// The package for `target` and its size as the release declares it (zero when it does not).
 fn asset_for_target(bytes: &[u8], target: &str) -> Result<(String, u64), Error> {
     if bytes.len() > 1048576 {
         return Err(Error::LimitExceeded);
@@ -128,8 +125,6 @@ fn asset_for_target(bytes: &[u8], target: &str) -> Result<(String, u64), Error> 
     let mut matches = release
         .assets
         .iter()
-        // `rad-plugin-<target>.radp`, or `<id>-<version>-<target>.radp` as the official
-        // releases publish it: exactly one package for this target.
         .filter(|a| a.name.ends_with(&format!("-{target}.radp")));
     let found = matches.next().ok_or(Error::AmbiguousAsset)?;
     if matches.next().is_some() {
@@ -154,7 +149,6 @@ mod tests {
         assert_eq!(asset(br#"{"assets":[]}"#), Err(Error::AmbiguousAsset));
         let duplicate=br#"{"assets":[{"name":"rad-plugin-x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/a"},{"name":"rad-plugin-x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/b"}]}"#;
         assert_eq!(asset(duplicate), Err(Error::AmbiguousAsset));
-        // The official releases name the package after the plugin and its version.
         let published=br#"{"assets":[{"name":"manifest.json","browser_download_url":"https://github.com/m"},{"name":"org.rad.audio-0.2.0-x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/p"},{"name":"org.rad.audio-0.2.0-aarch64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/q"}]}"#;
         assert_eq!(asset(published).unwrap(), "https://github.com/p");
         let two=br#"{"assets":[{"name":"rad-plugin-x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/a"},{"name":"org.rad.audio-0.2.0-x86_64-unknown-linux-gnu.radp","browser_download_url":"https://github.com/b"}]}"#;
@@ -373,8 +367,6 @@ fn public_ip(ip: std::net::IpAddr) -> bool {
         }
         std::net::IpAddr::V6(ip) => {
             let s = ip.segments();
-            // Conservative global unicast only; reject special-use 2001::/23,
-            // documentation, 6to4 and IPv4-mapped/translation ranges.
             (s[0] & 0xe000) == 0x2000
                 && !(s[0] == 0x2001 && (s[1] < 0x200 || s[1] == 0xdb8)
                     || s[0] == 0x2002
@@ -505,7 +497,6 @@ impl ureq::unversioned::resolver::Resolver for PublicResolver {
         use std::net::ToSocketAddrs;
         let host = uri.host().ok_or(ureq::Error::HostNotFound)?;
         let mut result = self.empty();
-        // Runs on our sole bounded worker, not ureq's detached DNS threads.
         for address in (host, 443)
             .to_socket_addrs()
             .map_err(|_| ureq::Error::HostNotFound)?
@@ -745,8 +736,6 @@ mod cancellation_tests {
     }
 }
 
-// Bound each socket read, not the total response body: progressing downloads retain
-// the broad global budget. Installed before TLS so every network wait is bounded.
 fn inactivity_connector() -> impl ureq::unversioned::transport::Connector {
     use ureq::unversioned::transport::{Connector, RustlsConnector, TcpConnector};
     ().chain(TcpConnector::default())

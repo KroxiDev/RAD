@@ -138,7 +138,6 @@ fn subscribed_editor_receives_coalesced_invalidation_then_reads_atomic_views() {
             .subscribe()
             .unwrap();
         let cancel = subscription.cancellation().unwrap();
-        // Initial notices close the subscribe/snapshot race without polling.
         let mut initial = std::collections::BTreeSet::new();
         while initial.len() < NoticeKind::ALL.len() {
             initial.insert(subscription.recv().unwrap().kind);

@@ -1,7 +1,6 @@
 use crate::{polling::Sample, readings::Memory};
 use rad_plugin_sdk::{Parameters, VisualContent};
 
-/// The metric a visual shows, declared in the order of `Demand::sources`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Source {
     Cpu,
@@ -13,7 +12,6 @@ pub(crate) enum Source {
 impl Source {
     pub(crate) const ALL: [Self; 4] = [Self::Cpu, Self::Ram, Self::Gpu, Self::Vram];
 
-    /// The source of a visual by its manifest id.
     pub(crate) fn from_visual(id: &str) -> Option<Self> {
         match id {
             "cpu" => Some(Self::Cpu),

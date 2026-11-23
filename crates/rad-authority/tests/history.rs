@@ -102,7 +102,6 @@ fn confirmed_restore_is_revalidated_at_fifo_turn_and_keeps_retired_ids() {
             name: "a".into(),
         }]),
     ));
-    // Restore arrives against the old screen; it must use the ledger after create commits.
     assert!(
         submit(
             &mut a,

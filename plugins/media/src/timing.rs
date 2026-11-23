@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-/// Time limits of the plugin. The defaults are for production; tests shorten them.
 #[derive(Debug, Clone)]
 pub struct Timing {
     /// Longest an action may take in total, bus calls included. The host gives up at 5 s, so
@@ -26,7 +25,6 @@ pub struct Timing {
     /// comes back: a burst of buttons coming and going then reuses the reader instead of
     /// starting a new one each time.
     pub linger: Duration,
-    /// Wait before reconnecting to the bus after losing it.
     pub retry_wait: Duration,
 }
 

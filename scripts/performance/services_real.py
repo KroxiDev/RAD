@@ -105,7 +105,7 @@ def write_pactl_guard(root, elf):
     config.write_text('autospawn=no\ndaemon-binary=/usr/bin/false\n'
                       'auto-connect-localhost=no\nauto-connect-display=no\n'
                       'cookie-file='+str(cookie)+'\n')
-    cookie.write_bytes(bytes(256))  # Public deterministic dummy; never read a personal authentication cookie.
+    cookie.write_bytes(bytes(256))
     cookie.chmod(0o600)
     branches = []
     for args in READ_QUERIES:
@@ -192,7 +192,7 @@ class ServicesWorld(COMMON.World):
         self.roots, self.owned, self.backends = [], {}, []
         self.runtime = self.runtime_pid = None
         self.rows, self.events, self.unobserved, self.observations = [], [], set(), []
-        self.log = subprocess.DEVNULL  # Never retain raw service/runtime stderr.
+        self.log = subprocess.DEVNULL
         self.epoch, self.visual_count = time.monotonic(), 0
         self.roles, self.pulse, self.app = {}, pulse, app
         root.mkdir(mode=0o700)
@@ -246,7 +246,6 @@ class ServicesWorld(COMMON.World):
             for name, candidate in by_path.items():
                 if path == self.elf/name:
                     role, binary = candidate, name
-            # The guard's absolute /bin/sh interpreter is the same frozen shell ELF.
             if path == Path('/bin/sh').resolve():
                 role, binary = 'read_guard', 'sh'
             if path.is_relative_to(self.root/'data/rad/plugins'):
@@ -325,7 +324,7 @@ class ServicesWorld(COMMON.World):
             self.check_disabled(peer)
         self.visual_count = count
         self.events.append(dict(event='transition', visuals=count))
-        time.sleep(2)  # A missing real endpoint/player remains unavailable, not a fake timeout PASS.
+        time.sleep(2)
 
     def capture(self, phase):
         if self.runtime is None or self.runtime.poll() is not None:

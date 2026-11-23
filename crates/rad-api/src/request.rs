@@ -213,8 +213,6 @@ pub enum Section {
     Actions,
 }
 
-// One declaration generates operation names, mutation classification, and payload
-// variants. No client has to maintain a second string-operation table.
 macro_rules! requests {
     ($( $variant:ident => $wire:literal, $mutating:literal { $( $(#[$attr:meta])* $field:ident : $ty:ty ),* $(,)? } ),* $(,)?) => {
         #[derive(Clone,PartialEq,Serialize,Deserialize)]

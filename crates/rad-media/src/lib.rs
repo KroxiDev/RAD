@@ -1,4 +1,3 @@
-//! In-memory static image normalization. No filesystem or Store responsibilities.
 mod source;
 pub use source::{MediaEntry, MediaReadError, MediaSource};
 
@@ -98,7 +97,6 @@ fn decode_error(error: image::ImageError) -> MediaError {
     }
 }
 
-// Inspect actual chunk boundaries, never arbitrary byte substrings.
 fn check_static_png(input: &[u8]) -> Result<(), MediaError> {
     let mut offset = 8usize;
     while let Some(header) = input.get(offset..).and_then(|tail| tail.get(..8)) {
@@ -138,8 +136,6 @@ fn check_static_png(input: &[u8]) -> Result<(), MediaError> {
     Err(MediaError::DecodeFailed)
 }
 
-// Check the envelope only; pixel/scan correctness remains the JPEG decoder's job.
-// Segment payloads are skipped so embedded marker bytes cannot terminate a file.
 fn check_single_jpeg(input: &[u8]) -> Result<(), MediaError> {
     let mut offset = 2usize;
     let mut scan = false;

@@ -1,4 +1,3 @@
-//! Choose the next read for the main worker, preserving its rotating order.
 use super::{App, ahead, launcher};
 use crate::{Request, native::Job};
 use std::time::Instant;
@@ -92,7 +91,6 @@ impl App {
                     let overview = std::mem::take(&mut self.overview_due)
                         || self.status.is_null()
                         || self.resolving_unknown;
-                    // A board of a newer revision brings the selected key's inspector along.
                     let selected = force.then(|| self.selected()).flatten().map(|id| {
                         crate::session::Selected {
                             id,

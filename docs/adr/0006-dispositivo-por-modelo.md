@@ -20,3 +20,9 @@ iniciarse: un conflicto con otra aplicación es responsabilidad del usuario. El
 consentimiento para controlar el dispositivo es un ajuste de la máquina, «Usar el
 Stream Deck con RAD», que reemplaza al argumento `--xl-exclusive`. RAD nunca lee,
 importa ni modifica datos de otras aplicaciones.
+
+Si hay varios XL, la elección usa el menor serial válido. Un empate en ese serial impide
+identificar un único dispositivo. El hilo propietario conserva la reserva del deck hasta
+terminar ordenadamente: un bloqueo del kernel o un panic no permite iniciar otro escritor.
+[Detección](../../crates/rad-deck/src/hidraw.rs) y [hilo del
+deck](../../crates/rad-deck/src/worker.rs).

@@ -255,8 +255,6 @@ fn foreign_session_ticket_and_completion_cannot_alias_local_work() {
     assert_eq!(b.editor_view(Origin::Editor).unwrap().brightness, 55);
 }
 
-// Publication assertions isolate persistence responses; display effects are
-// independently asserted by runtime::sleep_publication_projects_brightness_and_wake_consumes_press.
 trait PublicationEffects {
     fn complete_without_display(
         &mut self,

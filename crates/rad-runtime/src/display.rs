@@ -1,4 +1,3 @@
-//! A render projection only. Authority owns navigation, input and execution.
 use rad_authority::{ActionType, Authority, EntityView, Visible, VisualView};
 use rad_core::configuration::{Origin, TextPosition};
 use rad_deck::{Desired, KeyVisual, TextPlacement};

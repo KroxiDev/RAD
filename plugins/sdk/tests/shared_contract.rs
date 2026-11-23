@@ -26,7 +26,6 @@ fn sdk_rejects_host_negative_vectors_as_identical_types() {
     ))
     .unwrap();
     for value in vectors {
-        // The shared wire decoder also checks semantic identifiers after serde.
         let payload = serde_json::to_vec(&value).unwrap();
         let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
         frame.extend(payload);

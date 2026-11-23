@@ -1,4 +1,3 @@
-//! Atomic projections: no I/O or authority mutation between component reads.
 use super::*;
 use rad_api::{
     AppearanceView, BoardView, EntityFields, EntityView, Grid, InspectorView, KeyView, Slot,

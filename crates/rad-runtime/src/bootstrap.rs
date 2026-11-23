@@ -1,7 +1,3 @@
-//! Startup never substitutes defaults for an existing invalid Store. When the Store
-//! cannot be opened, [`StartupError::diagnosis`] says whether that is a case for recovery
-//! mode (ADR 0011); [`start_again`] is the way out that does not need a copy, and
-//! [`restored_candidate`] the one that starts from one.
 use rad_api::{RecoveryCause, RecoveryDetailCode};
 use rad_authority::Authority;
 use rad_core::{

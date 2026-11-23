@@ -146,7 +146,6 @@ fn simultaneous_vram_styles_follow_their_own_values_and_reject_invalid_parameter
     expect_unavailable(&mut host, 3);
     subscribe(&mut host, 4, "cpu", json!({}));
     expect_unavailable(&mut host, 4);
-    // An in-flight read from the first demand epoch may still need to finish.
     let gib = 1 << 30;
     let sample = Sample {
         cpu: Some(24),
@@ -185,7 +184,6 @@ fn simultaneous_vram_styles_follow_their_own_values_and_reject_invalid_parameter
         }
         seen[(id - 2) as usize] = true;
     }
-    // Both sources are already current: accepting either bad choice would return Current.
     for (id, source, values) in [
         (5, "vram", json!({"style":"x"})),
         (6, "cpu", json!({"value":"used"})),

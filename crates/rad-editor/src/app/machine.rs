@@ -1,25 +1,17 @@
-//! This computer's settings (ADR 0012): using the Stream Deck with RAD and starting RAD with
-//! the session. The runtime keeps the truth; the switches only show what it last said.
 use super::{App, look::Look, tr};
 use crate::{machine::Change, service::Failure};
 use eframe::egui;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Pending {
-    /// The service worker is changing enablement before publication.
     Autostart(Change),
-    /// The one machine mutation is queued or awaiting its answer.
     Saving(Change),
-    /// Read the runtime after failure, including after reconnection.
     Reading,
-    /// The service worker is applying the runtime's observed setting.
     Restoring,
-    /// Terminal failure, awaiting an explicit retry; no operation is in flight.
     Unresolved,
 }
 
 impl App {
-    /// The «This computer» section of General: only while connected and out of recovery.
     pub(super) fn machine_section(&mut self, ui: &mut egui::Ui, look: &Look) {
         if !self.connected
             || !self.recovery.is_normal()
@@ -63,7 +55,6 @@ impl App {
             self.change_machine(Change::start_with_session(start));
         }
     }
-    /// Starting with the session goes through systemd first, when the editor has it.
     fn change_machine(&mut self, change: Change) {
         if self.machine_pending.is_some() {
             return;
@@ -93,7 +84,6 @@ impl App {
             self.machine_pending = None;
         }
     }
-    /// systemd has answered the autostart step of a change.
     pub(super) fn machine_autostart_done(&mut self, failure: Option<Failure>) {
         let Some(pending) = self.machine_pending else {
             return;
@@ -106,7 +96,6 @@ impl App {
                         self.reconcile_machine();
                     }
                 } else {
-                    // A failed systemctl may already have changed enablement.
                     self.reconcile_machine();
                 }
             }
@@ -123,7 +112,6 @@ impl App {
             self.message_code = failure.details;
         }
     }
-    /// Resolve against the runtime before repairing systemd; never replay the mutation.
     pub(super) fn reconcile_machine(&mut self) {
         self.machine_pending = Some(Pending::Reading);
         self.machine_due = true;
@@ -138,11 +126,9 @@ impl App {
         }
         self.reconcile_machine();
     }
-    /// A failed mutation needs a read; a failed read waits for Retry or reconnect.
     pub(super) fn machine_request_failed(&mut self) {
         match self.machine_pending {
             Some(Pending::Saving(change)) if change.autostart().is_none() => {
-                // A deck-only change never touched systemd; only its runtime view is stale.
                 self.machine_pending = None;
                 self.machine_due = true;
             }
@@ -151,7 +137,6 @@ impl App {
             _ => {}
         }
     }
-    /// Answers about this computer's settings and RAD's own log; `true` when it was one.
     pub(super) fn machine_response(
         &mut self,
         operation: &str,

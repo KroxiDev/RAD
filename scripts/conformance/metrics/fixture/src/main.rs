@@ -1,4 +1,3 @@
-//! Separate integration fixture. Same plugin/SDK; never the system reader.
 use rad_plugin_metrics::{MetricsPlugin, config, polling::Sample, readings::Memory};
 use std::{fs, io::Read, path::PathBuf, sync::mpsc};
 
@@ -49,7 +48,6 @@ fn main() {
         match mode.as_str() {
             "healthy" => healthy(),
             "block" => {
-                // The same single reader waits forever; no replacement/retry worker.
                 let _keep_sender_alive = &keep_blocked;
                 let _ = blocked.recv();
                 Sample::default()

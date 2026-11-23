@@ -1,4 +1,3 @@
-//! Pure IPC adapter; trusted endpoint origin, no I/O or second authority.
 mod external;
 mod plugins;
 pub use external::{Capabilities, External, TransferKind, parse_transfer};
@@ -590,8 +589,6 @@ impl Protocol {
         ops
     }
 }
-/// The data of `hello`: the same session and limits whatever the mode, with the operations
-/// the endpoint announces.
 fn hello_data(session: NonZeroU128, operations: &[&str]) -> Value {
     json!({"protocol":1,"session_id":format!("{:032x}",session),"capabilities":operations,"limits":{"frame_bytes":65536,"page_items":32,"page_bytes":49152,"value_bytes":8192,
     "json_depth":16,"string_bytes":16384,"array_items":256,
@@ -622,7 +619,6 @@ pub fn recovery_operations(origin: Origin) -> &'static [rad_api::Operation] {
     }
 }
 
-/// The answer to `hello` in recovery mode: no Authority exists, so none is consulted.
 pub fn recovery_hello(session: NonZeroU128, origin: Origin) -> rad_api::Hello {
     let operations: Vec<_> = recovery_operations(origin)
         .iter()

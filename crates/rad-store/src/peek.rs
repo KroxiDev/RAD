@@ -1,11 +1,3 @@
-//! Best-effort, read-only reading of the identity counters of an unreadable database.
-//!
-//! `Store::open` cannot serve here: it writes (barrier, hold, migrations) and SQLite
-//! replays a hot journal when a read-write connection opens. This module opens the
-//! file `immutable=1`, so SQLite takes no locks, ignores `-journal`/`-wal`, and writes
-//! nothing at all. Each source is read independently and an error keeps whatever was
-//! read before it; the integrity digests are deliberately not checked, because a
-//! reservation that is too high is harmless and one that is too low reuses IDs.
 use rad_core::identity::IdentityCounters;
 use rusqlite::{Connection, OpenFlags};
 use std::{os::unix::ffi::OsStrExt, path::Path};

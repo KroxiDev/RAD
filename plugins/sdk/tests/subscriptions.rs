@@ -1,4 +1,3 @@
-//! Visual subscriptions: handles, validation, source renewal and the subscription cap.
 mod support;
 use rad_plugin_sdk::{
     ChoiceList, Error, Invoke, OptionsQuery, Outcome, Plugin, Reply, Subscription, SubscriptionId,
@@ -173,7 +172,6 @@ fn a_visual_the_host_would_reject_is_replaced_by_unavailable() {
             "case {n}"
         );
     }
-    // The largest legal image and a colour-only state pass.
     sub.update(VisualState::Current {
         content: VisualContent {
             png_hex: Some("ab".repeat(8192)),
@@ -273,8 +271,6 @@ fn unsubscribe_stops_renewals_and_silences_the_handle() {
     assert_eq!(probe.unsubscribed.recv_timeout(wait()).unwrap().request, 2);
     assert!(!first.is_active());
     assert!(second.is_active());
-    // Everything written before this options answer was already in flight when the plugin
-    // dropped the subscription; nothing of the first one may follow it.
     host.send(
         6,
         json!({"kind":"options","scope":"visual","definition":"d","field":"f",
@@ -300,7 +296,6 @@ fn unsubscribe_stops_renewals_and_silences_the_handle() {
         seen >= 3,
         "the live subscription kept its renewals ({seen})"
     );
-    // Unknown subscriptions are ignored.
     host.send(
         7,
         json!({"kind":"unsubscribe","subscription":{"generation":GENERATION,"request":99}}),
@@ -354,7 +349,6 @@ fn at_most_32_subscriptions_are_tracked_and_the_extra_one_is_answered_unavailabl
         probe.handles.try_recv().is_err(),
         "the extra subscription is not handed to the plugin"
     );
-    // Freeing one makes room again.
     host.send(
         35,
         json!({"kind":"unsubscribe","subscription":{"generation":GENERATION,"request":2}}),
@@ -377,7 +371,6 @@ fn reusing_a_subscription_correlation_is_a_protocol_violation() {
     assert!(matches!(result, Err(Error::Protocol(_))), "{result:?}");
 }
 
-/// Source renewals interleave with updates; the host must never see an older state.
 #[test]
 fn source_renewals_never_retransmit_an_older_update() {
     let (plugin, probe) = hub();

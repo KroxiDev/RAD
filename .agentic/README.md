@@ -14,6 +14,7 @@ su organización y escritura siguen el [estándar documental](../docs/documentat
 |---|---|
 | [Golden rules](golden-rules.md) | Antes de planificar o editar |
 | [TDD](skills/tdd.md) | Cambios de comportamiento ejecutable; aplica la [política de tests](../docs/testing.md#ciclo-de-vida-de-los-tests) |
+| [Comentarios](skills/delete-comment.md) | Clasificar y retirar comentarios de código |
 | [Revisión](skills/code-review.md) | Contrastar estándares y especificación sobre commits, cambios locales y archivos nuevos |
 | [Orquestación](skills/orquestar.md) | Tareas complejas que ya tienen una especificación |
 | [Engram](skills/usar-engram.md) | Recuperar o guardar contexto mediante la integración disponible |

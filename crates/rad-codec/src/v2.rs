@@ -1,4 +1,3 @@
-//! Closed v2 importer; never accepts fields introduced by v3.
 use crate::{CodecError, document, v2_document};
 pub(crate) fn import(bytes: &[u8]) -> Result<document::Document, CodecError> {
     let old: v2_document::Document =

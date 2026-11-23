@@ -1,6 +1,5 @@
 use rad_editor::icon_library::{Choice, Renderer};
 
-// Critical: the bytes sent to the runtime and the preview must agree, with solid colors.
 #[test]
 fn icon_colors_are_opaque_with_antialiased_edges_and_matching_png() {
     let choice = Choice {

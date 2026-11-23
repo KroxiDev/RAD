@@ -1,4 +1,3 @@
-//! Shared, bounded metrics for RAD visual sources.
 mod bar;
 pub mod nvml;
 mod plugin;

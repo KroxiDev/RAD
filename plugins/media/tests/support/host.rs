@@ -1,4 +1,3 @@
-//! A scripted host: speaks the plugin protocol over a socket pair to a plugin run in-process.
 use rad_plugin_media::{MediaPlugin, Timing, config};
 use rad_plugin_sdk::Error;
 use serde_json::{Value, json};
@@ -11,7 +10,6 @@ use std::{
 
 pub const GENERATION: u64 = 11;
 
-/// Timings short enough for tests: the production values only matter against a real player.
 pub fn quick() -> Timing {
     Timing {
         action_deadline: Duration::from_millis(900),
@@ -20,14 +18,12 @@ pub fn quick() -> Timing {
         refresh_deadline: Duration::from_millis(600),
         settle: Duration::from_millis(15),
         max_settle: Duration::from_millis(60),
-        // Long: the tests that look at the quiet of an idle plugin must not be broken by it.
         recheck: Duration::from_secs(60),
         linger: Duration::from_millis(100),
         retry_wait: Duration::from_millis(60),
     }
 }
 
-/// What a `visual` frame carried.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Visual {
     pub availability: String,
@@ -54,7 +50,6 @@ impl Visual {
         self.availability == availability && self.text.as_deref() == text
     }
 
-    /// The image bytes, if the visual carries a cover.
     pub fn jpeg(&self) -> Option<Vec<u8>> {
         let hex = self.jpeg_hex.as_ref()?;
         Some(
@@ -147,7 +142,6 @@ impl Host {
         Some(serde_json::from_slice(&payload).unwrap())
     }
 
-    /// The first frame, buffered or newly read, that satisfies `wanted`. Others stay buffered.
     pub fn take(&mut self, wanted: impl Fn(&Value) -> bool, within: Duration) -> Option<Value> {
         if let Some(at) = self.inbox.iter().position(&wanted) {
             return Some(self.inbox.remove(at));
@@ -174,7 +168,6 @@ impl Host {
         )
     }
 
-    /// The `list` of the choices answer.
     pub fn options(&mut self, scope: &str, definition: &str, field: &str) -> Value {
         let request = self.ask_options(scope, definition, field);
         let frame = self
@@ -184,7 +177,6 @@ impl Host {
         frame["message"]["list"].clone()
     }
 
-    /// The `(value, label)` pairs of an available list; panics if it is unavailable.
     pub fn choices(&mut self, scope: &str, definition: &str) -> Vec<(String, String)> {
         let list = self.options(scope, definition, "player");
         assert_eq!(list["availability"], "available", "{list}");
@@ -218,7 +210,6 @@ impl Host {
         })
     }
 
-    /// Runs the `control` action and returns its outcome JSON.
     pub fn invoke(&mut self, operation: &str, player: &str) -> Value {
         let request = self.ask_invoke(operation, player);
         self.outcome_of(request, Duration::from_secs(5))
@@ -239,7 +230,6 @@ impl Host {
             "subscription":{"generation":GENERATION,"request":subscription}}));
     }
 
-    /// The next visual of `subscription`.
     pub fn next_visual(&mut self, subscription: u64, within: Duration) -> Option<Visual> {
         let frame = self.take(
             |f| f["correlation"]["request"] == subscription && f["message"]["kind"] == "visual",
@@ -248,8 +238,6 @@ impl Host {
         Some(Visual::from_frame(&frame))
     }
 
-    /// Waits until a visual of `subscription` satisfies `wanted`; returns how long that took, or
-    /// every visual seen meanwhile.
     pub fn wait_visual(
         &mut self,
         subscription: u64,
@@ -268,7 +256,6 @@ impl Host {
         Err(seen)
     }
 
-    /// `wait_visual` for a state described by its availability and text.
     pub fn wait_state(
         &mut self,
         subscription: u64,
@@ -280,7 +267,6 @@ impl Host {
             .map(|(took, _)| took)
     }
 
-    /// Drops everything buffered or already sent, so the next read sees only what happens next.
     pub fn discard_pending(&mut self) {
         self.inbox.clear();
         while self.read_frame(Duration::from_millis(30)).is_some() {}

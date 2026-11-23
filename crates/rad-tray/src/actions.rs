@@ -81,7 +81,6 @@ impl Actions {
     }
 }
 fn open_editor(bus: &gio::DBusConnection, editor: &std::path::Path, launch: &mut Option<Child>) {
-    // A menu click must not race the installation coordinator into a new editor.
     if !matches!(rad_update::gate::startup_allowed(), Ok(true)) {
         return;
     }
@@ -106,8 +105,6 @@ fn open_editor(bus: &gio::DBusConnection, editor: &std::path::Path, launch: &mut
             return;
         }
     }
-    // Another click during editor startup must not launch another process. The editor's
-    // atomic GApplication registration also covers launches outside this tray.
     if launch.is_some() {
         return;
     }
@@ -122,7 +119,6 @@ fn open_editor(bus: &gio::DBusConnection, editor: &std::path::Path, launch: &mut
         Err(error) => eprintln!("RAD editor launch: {error}"),
     }
 }
-/// Quitting RAD closes an open editor too; without one there is nothing to close.
 fn close_editor(bus: &gio::DBusConnection) {
     let platform = std::collections::BTreeMap::<String, gio::glib::Variant>::new();
     match bus.call_sync(

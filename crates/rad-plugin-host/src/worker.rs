@@ -12,8 +12,6 @@ fn carries_jpeg(state: &VisualState) -> bool {
     matches!(state, VisualState::Current { content } | VisualState::Stale { content }
         if content.jpeg_hex.is_some())
 }
-/// A request awaiting its correlated reply. `residual`: the deadline passed and the
-/// reply may still arrive; `delivered`: the caller already consumed that timeout.
 pub(super) struct Pending<T = Outcome> {
     pub reserved_end: bool,
     pub credential_revision: Option<u64>,
@@ -39,14 +37,11 @@ impl<T> Pending<T> {
     }
 }
 pub(super) type Table<T = Outcome> = BTreeMap<u64, Pending<T>>;
-/// Complete `request` with its reply. False when no reply is due: unknown request,
-/// repeated reply, or one that missed its deadline without being a drained residual.
 fn answer<T>(table: &mut Table<T>, request: u64, now: u64, value: T) -> bool {
     let Some(p) = table.get_mut(&request) else {
         return false;
     };
     if p.residual {
-        // The late reply of an already reported timeout: drained, never reported again.
         p.residual = false;
         p.credential_revision = None;
         if p.delivered {
@@ -61,9 +56,6 @@ fn answer<T>(table: &mut Table<T>, request: u64, now: u64, value: T) -> bool {
         false
     }
 }
-/// Report every request past its deadline as `value`, once. The request stays as a
-/// residual (counted, holding its credential revision) until its late reply is drained
-/// or `settle` runs; neither reports it again.
 fn expire<T: Clone>(table: &mut Table<T>, now: u64, value: T) -> bool {
     let mut expired = false;
     for p in table.values_mut() {
@@ -75,8 +67,6 @@ fn expire<T: Clone>(table: &mut Table<T>, now: u64, value: T) -> bool {
     }
     expired
 }
-/// The process is gone, so no reply can arrive: finish what is waiting as `value`
-/// and forget timeouts that were already reported.
 fn settle<T: Clone>(table: &mut Table<T>, value: T) {
     table.retain(|_, p| !p.delivered);
     for p in table.values_mut() {
@@ -87,7 +77,6 @@ fn settle<T: Clone>(table: &mut Table<T>, value: T) {
         }
     }
 }
-/// Hand out one finished entry. A residual stays, marked delivered, until its late reply.
 pub(super) fn take<T: Clone>(table: &mut Table<T>) -> Option<(u64, T)> {
     let request = table
         .iter()
@@ -118,7 +107,6 @@ pub(super) struct Worker {
     pub credentials: BTreeMap<u64, crate::credentials::Installed>,
     pub last_revision: u64,
     pub manifest: Manifest,
-    /// Host API agreed with this plugin; gates every API 2 feature in both directions.
     pub api: u32,
     pub capabilities: Vec<String>,
     pub generation: u64,
@@ -154,7 +142,6 @@ fn nonblocking(fd: i32) -> std::io::Result<()> {
     Ok(())
 }
 fn configure_command(command: &mut Command, id: &str) {
-    // Explicit caller values override inherited values, including explicit removals.
     let allowed: Vec<_> = ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]
         .into_iter()
         .filter_map(|key| {
@@ -165,8 +152,6 @@ fn configure_command(command: &mut Command, id: &str) {
             value.map(|value| (key, value))
         })
         .collect();
-    // The plugin leads its own process group (pgid == pid), so the Host can kill
-    // everything the plugin started with one `kill(-pid)`.
     command.env_clear().envs(allowed).arg0(id).process_group(0);
     let parent = std::process::id();
     // The runtime blocks its shutdown signals before spawning threads; a plugin
@@ -176,10 +161,6 @@ fn configure_command(command: &mut Command, id: &str) {
     // on failure.
     unsafe {
         command.pre_exec(move || {
-            // Linux death signal, a backstop for a runtime that dies without cleanup.
-            // It fires when the *thread* that spawned the plugin exits, and it is not
-            // inherited by forks, so group kill remains the primary mechanism. The
-            // parent check closes the race where the runtime died before the prctl.
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
@@ -197,8 +178,6 @@ fn configure_command(command: &mut Command, id: &str) {
         });
     }
 }
-/// Whether the plugin process (the group leader) has terminated, reaped or not.
-/// An unexpected `waitid` error counts as exited so the caller falls back to `try_wait`.
 fn leader_exited(child: &Child) -> bool {
     // SAFETY: zeroed siginfo_t is a valid out-parameter; WNOWAIT leaves the child unreaped.
     unsafe {
@@ -212,12 +191,6 @@ fn leader_exited(child: &Child) -> bool {
         r != 0 || info.si_pid() != 0
     }
 }
-/// SIGKILL the plugin's whole process group, then the leader itself (which covers a
-/// leader that moved to another group). The group is only signalled while the leader
-/// is unreaped: a zombie leader's pid cannot be reused, so `-pid` cannot hit a stranger.
-/// A descendant that left the group (setsid/setpgid) is out of reach until the service
-/// stops and systemd empties the cgroup (ADR 0013); the Host neither adopts nor reaps
-/// grandchildren, whoever inherits them does.
 fn kill_group(child: &mut Child) {
     // SAFETY: zeroed siginfo_t is a valid out-parameter; WNOWAIT leaves the child unreaped.
     let unreaped = unsafe {
@@ -286,9 +259,6 @@ impl Worker {
             diagnostics: VecDeque::new(),
         }
     }
-    /// Spawns the plugin as leader of its own process group, with `PR_SET_PDEATHSIG`
-    /// SIGKILL. The death signal fires when the *calling thread* exits, so call this
-    /// from a thread that lives as long as the plugins it launches.
     pub fn spawn(
         command: Command,
         manifest: Manifest,
@@ -314,7 +284,6 @@ impl Worker {
         let input = child.stdin.take().expect("configured stdin pipe");
         let output = child.stdout.take().expect("configured stdout pipe");
         let error_output = child.stderr.take().expect("configured stderr pipe");
-        // Only the owned runtime/child are inspected. Prefer the plugin under OOM pressure.
         let oom = std::fs::read_to_string("/proc/self/oom_score_adj")
             .ok()
             .and_then(|s| s.trim().parse::<i32>().ok())
@@ -505,8 +474,6 @@ impl Worker {
         for v in self.visuals.values_mut() {
             v.state = VisualState::Unavailable;
         }
-        // A list is not tied to execution state, so it does not wait for the reap.
-        // Failure closes admission, but kill is not proof that credential users stopped.
         for p in self.queries.values_mut() {
             if p.outcome.is_none() {
                 p.outcome = Some(OptionsOutcome::Choices(ChoiceList::Unavailable));
@@ -518,7 +485,6 @@ impl Worker {
         }
     }
     fn receive(&mut self, envelope: Envelope, now: u64) {
-        // Latch before projection/coalescing: a later clean visual must not hide a leak.
         if !self.protocol_credential_leak
             && !self.credentials.is_empty()
             && let Ok(json) = serde_json::to_string(&envelope)
@@ -573,7 +539,6 @@ impl Worker {
                     self.fail(Diagnostic::Protocol);
                 }
             }
-            // API 1 plugins never get a query, so any `choices` from them is unsolicited.
             Message::Choices { list }
                 if self.state == State::Ready
                     && rad_plugin_contract::supports(
@@ -591,7 +556,6 @@ impl Worker {
                     self.fail(Diagnostic::Protocol);
                 }
             }
-            // JPEG frames exist from API 2; an API 1 plugin sending one broke the contract.
             Message::Visual {
                 state,
                 valid_for_ms,
@@ -618,7 +582,7 @@ impl Worker {
                     v.state = state;
                     v.expires = now.saturating_add(valid_for_ms);
                     v.ttl = valid_for_ms;
-                } // A queued visual after unsubscribe is harmless and never an action result.
+                }
             }
             Message::VisualRenew { valid_for_ms }
                 if self.state == State::Ready && supports(&self.capabilities, VISUAL_FRESHNESS) =>
@@ -688,7 +652,6 @@ impl Worker {
         if expire(&mut self.pending, now, timed_out) {
             self.record(Diagnostic::Deadline);
         }
-        // A late list is harmless: unlike a late action it records nothing and never kills.
         expire(&mut self.queries, now, OptionsOutcome::TimedOut);
         if self.pending.values().filter(|p| p.residual).count() >= crate::MAX_PLUGIN_JOBS {
             self.fail(Diagnostic::Deadline);
@@ -715,7 +678,6 @@ impl Worker {
             }
         }
         let mut write_blocked = false;
-        // Hard per-turn budgets; a flooding worker cannot own the loop.
         for _ in 0..8 {
             let Some(bytes) = self.tx.front() else {
                 break;
@@ -794,11 +756,8 @@ impl Worker {
             }
         }
         self.immediate |= read_continuation;
-        // Only unavailable pidfd monitoring uses a bounded exceptional reap retry.
         self.reap_retry =
             (self.child.is_some() && self.exit.is_none()).then_some(now.saturating_add(100));
-        // Kill the group before reaping the leader: while it is a zombie its pid is not
-        // reusable, so what the plugin left behind dies even if it exited by itself.
         if let Some(child) = &mut self.child
             && leader_exited(child)
             && {
@@ -886,7 +845,6 @@ mod exit_watch_tests {
         assert_eq!(worker.state, State::Failed);
         assert!(worker.child.is_some(), "kill is not reap");
         assert_eq!(worker.diagnostics.back(), Some(&Diagnostic::Pipe));
-        // Simulate the scheduled retry epoch before polling; killed child remains owned.
         worker.immediate = false;
         worker.reap_retry = Some(100);
         assert_eq!(worker.next_deadline(0), Some(100));

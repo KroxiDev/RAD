@@ -1,4 +1,3 @@
-//! Descriptor-relative private files; no recursive deletion or package paths.
 use crate::Error;
 use std::{
     ffi::CString,
@@ -93,8 +92,6 @@ impl Directory {
         self.child(s)
     }
     pub fn names(&self) -> Result<Vec<String>, Error> {
-        // /proc/self/fd is a kernel reference to our already-owned directory,
-        // never a supplied path or a second resolution of the destination.
         let mut result = Vec::new();
         for entry in fs::read_dir(format!("/proc/self/fd/{}", self.0.as_raw_fd()))? {
             if result.len() >= 70 {

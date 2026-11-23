@@ -1,4 +1,3 @@
-//! Pure publication actor. Persistence effects are trusted internal ports, not IPC views.
 use rad_core::configuration::{
     Candidate, Configuration, ConfigurationData, ConfigurationError, Edit, Origin,
 };
@@ -176,7 +175,6 @@ pub enum Command {
 }
 impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Internal preparation closures and configuration payloads are not diagnostics.
         f.write_str(match self {
             Self::PrepareEdits(_) | Self::CheckedEdits { .. } => "Command::PrepareEdits",
             Self::Edits(_) => "Command::Edits",
@@ -250,7 +248,6 @@ pub struct Authority {
     draining: bool,
 }
 impl Authority {
-    /// Convenience constructor for deterministic epoch-zero callers.
     pub fn new(published: Candidate, revision: i64, session: std::num::NonZeroU128) -> Self {
         Self::new_at(published, revision, session, 0)
     }

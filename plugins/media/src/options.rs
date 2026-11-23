@@ -1,14 +1,9 @@
-//! The options of the `player` field: the applications that can be picked.
 use crate::{Timing, bus::Bus, names::app_identity, player};
 use rad_plugin_sdk::{ChoiceList, ChoiceOption, MAX_CHOICES, MAX_LABEL};
 use std::{collections::BTreeMap, time::Instant};
 
-/// The applications the product is expected to be used with. They are offered while closed too, so
-/// a button can be set up before the player is started.
 const EXPECTED: [(&str, &str); 2] = [("brave", "Brave"), ("strawberry", "Strawberry")];
 
-/// A label the host accepts: control characters become spaces, runs of spaces collapse, and the
-/// text is cut at a character boundary. `None` if nothing is left.
 fn clean_label(text: &str) -> Option<String> {
     let spaced: String = text
         .chars()
@@ -26,8 +21,6 @@ fn clean_label(text: &str) -> Option<String> {
     (!label.is_empty()).then_some(label)
 }
 
-/// The applications that are running, then the expected ones that are not, at most
-/// [`MAX_CHOICES`] in all. `Unavailable` if the bus cannot be asked.
 pub(crate) fn player_options(bus: &Bus, timing: &Timing, deadline: Instant) -> ChoiceList {
     let Ok(_connection) = bus.connection(deadline) else {
         return ChoiceList::Unavailable;
@@ -36,7 +29,6 @@ pub(crate) fn player_options(bus: &Bus, timing: &Timing, deadline: Instant) -> C
         Ok(names) => names,
         Err(_) => return ChoiceList::Unavailable,
     };
-    // Per application, the instance the plugin would use.
     let mut running: BTreeMap<&str, &str> = BTreeMap::new();
     for name in names.iter().map(String::as_str) {
         if let Some(identity) = app_identity(name) {

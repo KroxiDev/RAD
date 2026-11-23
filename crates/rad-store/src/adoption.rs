@@ -1,4 +1,3 @@
-//! The sole rebinding exception: portable restore into an untouched installation.
 use crate::{Store, StoreError, digest, ledger};
 use rad_core::{configuration::Candidate, identity::*};
 use rusqlite::{Connection, params};
@@ -72,6 +71,5 @@ pub(crate) fn prepare(
         )?;
     }
     connection.execute("DELETE FROM identities", [])?;
-    // All old snapshots now refer to the explicit replacement, which is inserted with the delta.
     Ok(Vec::new())
 }

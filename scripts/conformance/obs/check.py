@@ -15,7 +15,7 @@ def until(read, predicate, timeout=12):
         value=read()
         if predicate(value): return value
         assert time.monotonic()<end, value
-        time.sleep(.025) # observations only; never retries effects
+        time.sleep(.025)
 
 class Peer:
     """Scenario vectors only; Rust owns canonical validation, framing and response decode."""
@@ -82,8 +82,6 @@ class World:
                 p.terminate()
                 try:p.wait(timeout=8)
                 except subprocess.TimeoutExpired:p.kill();p.wait(timeout=3)
-            # The runtime's event lines (`rad-runtime: <code>[ <subject>]`, ADR 0011) are its
-            # journal; anything else on stderr is a failure.
             error=[l for l in p.stderr.read().splitlines() if not EVENT.fullmatch(l)]
             assert not error, ('child stderr',error)
 
@@ -139,8 +137,6 @@ def scenario(w):
     equal('reconnect never replays prior actions',w.control('snapshot')['effects'],effects)
     w.control('offline')
     until(lambda:e.call('plugin_visual',id='b1'),lambda v:v['availability']=='unavailable')
-    # An ordinary action waits for OBS to come back, beyond the former 5s budget.
-    # Repeated operations below are observations, never retries of run/effects.
     admitted=e.call('run',id='b6'); started=time.monotonic()
     while time.monotonic()-started<5.25:
         equal('action remains running during controlled outage',e.call('result',execution_id=admitted['execution_id'])['state'],'running')

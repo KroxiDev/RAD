@@ -32,8 +32,6 @@ impl Configuration {
         if source_installation == registry.installation() {
             let mut reserved = registry.clone();
             reserved.reserve_counters(counters);
-            // Adoption displaced the installation's original empty root. Even after
-            // its foreign replacement is pruned, f1 must not acquire another owner.
             if is_initial_root(&data, source_installation, counters)?
                 && !registry
                     .records()
@@ -72,8 +70,6 @@ impl Configuration {
         };
         next.reserve_counters(registry.counters());
         next.reserve_counters(counters);
-        // A portable document can contain identities adopted from this destination earlier.
-        // Its local serial is not necessarily covered by the source installation's counter.
         let local_serial = bindings
             .iter()
             .filter(|b| b.identity().installation() == registry.installation())

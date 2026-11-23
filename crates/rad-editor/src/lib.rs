@@ -1,4 +1,3 @@
-//! Editor presentation and bounded client worker; no authoritative domain state.
 pub use rad_api::Request;
 #[derive(Default)]
 pub struct Controller {

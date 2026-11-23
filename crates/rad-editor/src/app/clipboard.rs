@@ -1,4 +1,3 @@
-//! Key clipboard state belongs to this editor; the runtime remains the source of the copy.
 use super::{App, Job, Request, tr};
 use eframe::egui;
 
@@ -59,7 +58,6 @@ impl App {
         }
     }
 
-    /// A poll already in flight before the paste must not consume its destination.
     pub(super) fn follow_paste(&mut self) {
         if self
             .pending_paste

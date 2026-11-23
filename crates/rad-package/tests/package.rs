@@ -197,7 +197,6 @@ fn confirmation_uses_current_ledger_including_retired_and_old_backup_never_reuse
             .number()
             > later.short().number()
     );
-    // A package may be valid in isolation but conflict with a retired current short ID.
     let mut data = added.configuration().data().clone();
     data.buttons[0].binding = Binding::new(
         ShortId::new(EntityKind::Button, later.short().number()).unwrap(),

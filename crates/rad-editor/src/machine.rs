@@ -1,10 +1,6 @@
-//! What this computer is set to do with RAD (ADR 0006, 0012): two switches that move
-//! together. The runtime stores them; starting with the session also needs the user's
-//! service manager, which only the editor reaches, so a change may have two steps.
 use crate::Request;
 use serde_json::Value;
 
-/// The runtime's answer to `machine_settings`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Settings {
     pub use_stream_deck: bool,
@@ -27,8 +23,6 @@ pub struct Change {
     start_with_session: Option<bool>,
 }
 impl Change {
-    /// Using the Stream Deck with RAD turns on starting with the computer, since RAD must
-    /// be running to own the deck; turning it off leaves the other switch alone.
     pub fn use_stream_deck(on: bool) -> Self {
         Self {
             autostart: on.then_some(true),
@@ -43,7 +37,6 @@ impl Change {
             start_with_session: Some(on),
         }
     }
-    /// Enable or disable the unit first; the runtime stores nothing until that worked.
     pub fn autostart(&self) -> Option<bool> {
         self.autostart
     }

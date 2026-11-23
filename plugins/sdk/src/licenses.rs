@@ -1,4 +1,3 @@
-//! Embedded distribution notices; keep this list in sync with `notices/`.
 use std::{
     io::{self, Write},
     process::ExitCode,

@@ -1,20 +1,15 @@
-//! Key pictures held for the deck: those of the folder on show and, within a byte budget,
-//! those of folders it may show next, so a change of folder rarely waits for a load.
 use rad_media::NormalizedImage;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
 
-/// Room for pictures beyond the folder on show: about forty 256 px icons.
 pub(crate) const SPARE_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) struct Pictures {
     spare: usize,
     held: BTreeMap<String, Held>,
-    /// Pictures that could not be loaded, and whether they may be tried again.
     failed: BTreeMap<String, bool>,
-    /// Counts the times the wanted pictures were stated; the lowest mark goes first.
     tick: u64,
 }
 struct Held {
@@ -38,19 +33,14 @@ impl Pictures {
     pub(crate) fn get(&self, key: &str) -> Option<Arc<NormalizedImage>> {
         self.held.get(key).map(|held| held.image.clone())
     }
-    /// The picture could not be loaded: the deck marks its key unavailable.
     pub(crate) fn failed(&self, key: &str) -> bool {
         self.failed.contains_key(key)
     }
-    /// Some picture of the folder on show has not arrived yet.
     pub(crate) fn loading(&self, shown: &BTreeSet<String>) -> bool {
         shown
             .iter()
             .any(|key| !self.held.contains_key(key) && !self.failed.contains_key(key))
     }
-    /// States what the deck shows and may show next, and names the next picture to load:
-    /// one on show first, then one nearby while the spare room lasts. Pictures on show are
-    /// never let go; past visits go before nearby ones, the least recently wanted first.
     pub(crate) fn next(
         &mut self,
         shown: &BTreeSet<String>,
@@ -84,7 +74,6 @@ impl Pictures {
         }
         Some(key)
     }
-    /// Lets go of past visits while the pictures off show exceed the spare room.
     fn let_go(&mut self, shown: &BTreeSet<String>, nearby: &BTreeSet<String>) {
         let mut spare: usize = self
             .held
@@ -118,7 +107,6 @@ impl Pictures {
     pub(crate) fn fail(&mut self, key: String) {
         self.failed.insert(key, false);
     }
-    /// After a change a failed picture may load again; it keeps its mark until it does.
     pub(crate) fn retry_failed(&mut self) {
         self.failed.values_mut().for_each(|retry| *retry = true);
     }

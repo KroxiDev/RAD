@@ -479,7 +479,6 @@ fn content(state: &VisualState) -> Option<&VisualContent> {
         VisualState::Unavailable => None,
     }
 }
-/// The plugin's image, PNG or JPEG: the contract allows at most one of them.
 fn image_hex(content: &VisualContent) -> Option<&String> {
     content.png_hex.as_ref().or(content.jpeg_hex.as_ref())
 }

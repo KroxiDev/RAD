@@ -95,7 +95,6 @@ fn answer_options(correlation: Correlation, field: &str, context: &Parameters) {
     let delay = match context.values.get("scenario").and_then(Value::as_str) {
         Some("crash") => std::process::exit(29),
         Some("invalid") => {
-            // Deliberately outside the contract: 65 options. Raw JSON bypasses `encode`.
             let options: Vec<_> = (0..=MAX_CHOICES)
                 .map(|n| json!({"value":format!("v{n}"),"label":format!("Option {n}")}))
                 .collect();
@@ -112,7 +111,6 @@ fn answer_options(correlation: Correlation, field: &str, context: &Parameters) {
         list: list(field, context),
     };
     match delay {
-        // A thread keeps the plugin serving other frames while the reply is pending.
         Some(ms) => {
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(ms));
@@ -185,7 +183,6 @@ fn handle(envelope: Envelope, shared: &Arc<Shared>) {
 fn main() {
     let shared = Arc::new(Shared::default());
     let ticker = Arc::clone(&shared);
-    // The runtime expires visuals after 1000 ms: refresh well inside that.
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_millis(250));

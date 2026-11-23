@@ -1,4 +1,3 @@
-//! RAD Action Deck audio plugin: mute, unmute and toggle the microphone and the audio output.
 mod actions;
 pub mod devices;
 mod monitor;

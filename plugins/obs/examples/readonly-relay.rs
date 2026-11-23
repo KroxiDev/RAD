@@ -1,4 +1,3 @@
-//! Experimental read-only OBS guard. Real operation belongs to the explicit controller.
 use serde_json::{Value, json};
 
 const READS: [&str; 3] = ["GetVersion", "GetRecordStatus", "GetStreamStatus"];
@@ -105,14 +104,12 @@ fn authentication(password: &str, salt: &str, challenge: &str) -> Zeroizing<Stri
     first_hash.update(salt.as_bytes());
     let first = Zeroizing::new(first_hash.finalize().to_vec());
     let secret = Zeroizing::new(STANDARD.encode(&*first));
-    // Do not concatenate the real password into any ordinary temporary buffer.
     let mut hash = Sha256::new();
     hash.update(secret.as_bytes());
     hash.update(challenge.as_bytes());
     Zeroizing::new(STANDARD.encode(hash.finalize()))
 }
 fn text(ws: &mut WebSocket<TcpStream>, value: Value) -> Result<()> {
-    // Fail closed on backpressure; never retry an accepted frame or replay a request.
     ws.send(Message::Text(value.to_string().into()))
         .map_err(|_| "socket_write")
 }
@@ -258,7 +255,6 @@ impl Session {
             add(&mut counts.front_auth_failures)?;
             return Err("front_auth_failed");
         }
-        // No connection to the protected endpoint exists before downstream authentication.
         let upstream = upstream(port, password, counts)?;
         text(&mut front, json!({"op":2,"d":{"negotiatedRpcVersion":1}}))?;
         front
@@ -539,20 +535,18 @@ fn relay(
         }
         match listener.accept() {
             Ok((stream, address)) => {
-                if session.is_none() && address.ip() == Ipv4Addr::LOCALHOST {
-                    // Per-step500ms limits bound handshake/controller cancellation latency.
-                    if deadline.saturating_duration_since(Instant::now()) >= Duration::from_secs(5)
-                    {
-                        let before = counts.upstream_connections_opened;
-                        match Session::accept(stream, &token, port, &password, &mut counts) {
-                            Ok(accepted) => session = Some(accepted),
-                            Err(
-                                "front_handshake" | "handshake_read" | "invalid_frame"
-                                | "front_auth_failed",
-                            ) if counts.upstream_connections_opened == before => {}
-                            // Includes auth rejection/closure during upstream Identify: never retry a real password.
-                            Err(_) => return Err("upstream_terminal"),
-                        }
+                if session.is_none()
+                    && address.ip() == Ipv4Addr::LOCALHOST
+                    && deadline.saturating_duration_since(Instant::now()) >= Duration::from_secs(5)
+                {
+                    let before = counts.upstream_connections_opened;
+                    match Session::accept(stream, &token, port, &password, &mut counts) {
+                        Ok(accepted) => session = Some(accepted),
+                        Err(
+                            "front_handshake" | "handshake_read" | "invalid_frame"
+                            | "front_auth_failed",
+                        ) if counts.upstream_connections_opened == before => {}
+                        Err(_) => return Err("upstream_terminal"),
                     }
                 }
             }
@@ -591,7 +585,6 @@ struct Prompt {
 }
 impl Drop for Prompt {
     fn drop(&mut self) {
-        // Child remembers a collected status, so kill() cannot signal a reused PID.
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -652,7 +645,6 @@ fn capture_prompt(
             Err(_) => return Err("prompt_failed"),
         }
         if let Some(status) = prompt.child.try_wait().map_err(|_| "prompt_failed")? {
-            // Drain a final already-written pipe fragment before examining the password.
             loop {
                 let mut bytes = Zeroizing::new([0u8; 512]);
                 match stdout.read(&mut *bytes) {
@@ -712,7 +704,6 @@ fn harden(parent: u32) -> Result<()> {
     {
         return Err("hardening_failed");
     }
-    // stdout is an owned controller pipe, never a destination for personal frames.
     let flags = unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_GETFL) };
     if flags < 0
         || unsafe { libc::fcntl(libc::STDOUT_FILENO, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
@@ -812,7 +803,6 @@ fn main() {
     }
 }
 
-// The standalone gate exercises the same relay on an owned ephemeral fake only.
 mod gate {
     use super::*;
     use std::{
@@ -1204,7 +1194,6 @@ mod gate {
             && finished["owned_fds_closed"] == true
             && finished["ui_child_reaped"] == true
             && state.connections == state.closed;
-        // A separate EOF path proves the controller lifeline without any endpoint connection.
         let mut eof_service = Relay::start(fake.port)?;
         let eof = eof_service.finish(true)?;
         let synthetic_only = fake.port != 4455 && service.port != 4455 && eof_service.port != 4455;
@@ -1316,7 +1305,6 @@ mod tests {
             .spawn()
             .unwrap();
         let id = child.id();
-        // Closing only this owned controller pipe must cancel and reap the owned mock UI.
         drop(writer);
         assert!(
             capture_prompt(

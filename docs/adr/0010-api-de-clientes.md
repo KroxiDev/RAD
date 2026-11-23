@@ -29,3 +29,25 @@ asume 32 teclas. Se decidió:
 
 **Consecuencias:** las pantallas nuevas que necesiten datos nuevos se construyen
 sobre `rad-api`. La especificación vivirá en `docs/client-api.md`.
+
+Las operaciones salen de una sola declaración con su nombre y clase de mutación. Las
+respuestas v1 se decodifican según la petición y el estado del envelope porque dos listas de
+tipos distintos pueden estar vacías. El control de forma contrasta el JSON con su
+representación tipada: rechaza arrays posicionales para estructuras, acepta la omisión de
+campos opcionales y usa variantes de estructura vacías para que Serde también rechace los
+campos extra de una alternativa sin datos.
+
+El transporte reanuda por plazo la aceptación después de agotar recursos del proceso: una
+conexión que ya está en la cola puede no producir otra señal de disponibilidad. Un error al
+registrar un solo par se contiene en ese par. El transporte reserva un token para los avisos
+de workers y retiene una señal consumida durante `drive` para que la espera posterior no
+pierda el despertar. Una operación rechazada al leer su envelope sólo recibe un resultado
+correlacionado si el parser acotado puede identificarla de forma inequívoca.
+
+Las opciones dinámicas pueden revelar el estado de aplicaciones externas. Consultarlas por
+tipo requiere Consulta global. La consulta por entidad aplica los permisos de esa entidad y
+combina las dependencias guardadas que aún acepta el esquema con los valores válidos del
+borrador. La consulta captura la identidad de la selección instalada para detectar un
+reemplazo antes del despacho. El runtime resuelve además la generación del proceso que
+atenderá la petición. Un reinicio con el mismo paquete y un cambio de paquete invalidan
+identificadores distintos.

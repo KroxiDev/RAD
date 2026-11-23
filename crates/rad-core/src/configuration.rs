@@ -139,7 +139,6 @@ impl Configuration {
     }
 }
 
-/// Origin is assigned by the future authority, never trusted from a client field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
     Editor,
@@ -196,9 +195,7 @@ impl Appearance {
 }
 /// Most actions one button holds. A product decision, not a hardware bound.
 pub const MAX_ACTIONS: usize = 20;
-/// Fixed live-entity ceiling measured against the 1 MiB document budget.
 pub const MAX_LIVE_IDENTITIES: usize = 7000;
-/// The physical gesture selected for the whole button plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Gesture {
     #[default]
@@ -369,7 +366,6 @@ impl Wait {
         self.0
     }
 }
-/// Namespaced external type; availability and schema belong to a later adapter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalType {
     plugin: String,

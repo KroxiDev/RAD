@@ -9,7 +9,6 @@ use rad_core::{
     identity::ShortId,
 };
 
-/// The folder on show and the revision it was read at.
 pub(super) type Shown = (
     Option<rad_authority::ViewRevision>,
     rad_core::identity::Binding,
@@ -254,7 +253,6 @@ impl Server {
                     self.persistence
                         .release_unbound(token)
                         .map_err(|_| RuntimeError::Storage)?;
-                    // Release the reserved credit through the actor's normal rejected-command path.
                     let effects = self.actor.submit(
                         ticket,
                         Command::PrepareEdits(vec![Box::new(|_| {
@@ -487,8 +485,6 @@ impl Server {
         }
         Ok(())
     }
-    /// A picture arrived, or could not be loaded. The folder on show is repainted once its
-    /// pictures are all in, so they appear together; one for later repaints nothing.
     fn picture_arrived(&mut self, key: String, image: Option<Arc<rad_media::NormalizedImage>>) {
         let shown = self.visual_keys();
         let on_show = shown.contains(&key);
@@ -505,8 +501,6 @@ impl Server {
             .map(|active| self.folder_pictures(active))
             .unwrap_or_default()
     }
-    /// Pictures of the folders one press away from the one on show: its parent and the
-    /// folders its keys enter. Worked out again only when the folder or revision changes.
     fn follow_nearby_pictures(&mut self) {
         let status = self.actor.status(Origin::Editor);
         let Some(active) = status.active else {
