@@ -45,10 +45,8 @@ def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 
 class World(C.World):
     def __init__(self,root,log):
+        super().__init__()
         self.root,self.log=root,log
-        self.roots,self.owned=[],{}
-        self.runtime=self.runtime_pid=None
-        self.events,self.unobserved=[],set()
         root.mkdir(mode=0o700)
         self.env=S.clean_environment(root/'env')
 

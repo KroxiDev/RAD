@@ -58,7 +58,7 @@ class CriticalObs(unittest.TestCase):
                     consumed = True
                     return handle
                 return original(p, *a, **kw)
-            world = OBS.ObsWorld.__new__(OBS.ObsWorld)
+            world = OBS.ObsWorld()
             world.runtime = SimpleNamespace(pid=child.pid, wait=wait,
                 stdin=MagicMock(), stdout=MagicMock(), reader=MagicMock())
             world.runtime_pid, world.owned, world.events = child.pid, {child.pid:(stat['start_ticks'],child.pid)}, []
@@ -79,7 +79,7 @@ class CriticalObs(unittest.TestCase):
              patch.object(OBS.SAMPLER, 'parse_stat', return_value=value):
             self.assertFalse(OBS.SAMPLER.same_owned_process(999998, 20, 999998))
             self.assertFalse(OBS.SAMPLER.same_owned_process(999998, 19, 30))
-            world = OBS.ObsWorld.__new__(OBS.ObsWorld)
+            world = OBS.ObsWorld()
             world.owned = {999998:(20,999998)}
             with patch.object(OBS.COMMON.os, 'pidfd_open', return_value=42), \
                  patch.object(OBS.COMMON.os, 'close'), \

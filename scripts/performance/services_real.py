@@ -187,13 +187,11 @@ class ServicesWorld(COMMON.World):
         with DESKTOP.registered_spawn():
             return super().spawn(*args, **kwargs)
 
-    def __init__(self, root, elf, hashes, name, pulse=None, bus=None, app=None):
+    def prepare(self, root, elf, hashes, name, pulse=None, bus=None, app=None):
         self.root, self.name, self.elf, self.hashes = root, name, elf, hashes
-        self.roots, self.owned, self.backends = [], {}, []
-        self.runtime = self.runtime_pid = None
-        self.rows, self.events, self.unobserved, self.observations = [], [], set(), []
+        self.observations = []
         self.log = subprocess.DEVNULL
-        self.epoch, self.visual_count = time.monotonic(), 0
+        self.visual_count = 0
         self.roles, self.pulse, self.app = {}, pulse, app
         root.mkdir(mode=0o700)
         with DESKTOP.registered_spawn():
@@ -405,9 +403,8 @@ def bounded_probe(world, command):
 
 def validate_filters(out, elf):
     """ROOT runs this owned fixture gate BEFORE any real endpoint is connected."""
-    world = ServicesWorld.__new__(ServicesWorld)
+    world = ServicesWorld()
     world.root, world.elf, world.log = out/'validation', elf, subprocess.DEVNULL
-    world.roots, world.owned, world.events, world.unobserved = [], {}, [], set()
     world.root.mkdir(mode=0o700)
     world.env = METRICS.private_environment(world.root)
     world.env['RAD_READONLY_PROXY_PRIVATE_GATE'] = '1'
@@ -496,11 +493,11 @@ def summarize(world, repetition):
 
 
 def run_case(out, elf, hashes, name, repetition, seconds, interval, pulse=None, bus=None, app=None):
-    world = ServicesWorld.__new__(ServicesWorld)
     stem = f'{name}{repetition}'
     with (out/(stem+'.samples.jsonl')).open('w') as raw:
+        world = ServicesWorld()
         try:
-            world.__init__(out/stem, elf, hashes, name, pulse, bus, app)
+            world.prepare(out/stem, elf, hashes, name, pulse, bus, app)
             world.start_runtime()
             world.configure_buttons()
             world.stop_runtime()
@@ -526,17 +523,16 @@ def run_case(out, elf, hashes, name, repetition, seconds, interval, pulse=None, 
             return summarize(world, repetition), dict(plugin=name, repetition=repetition,
                                                       **availability_summary(world.observations))
         finally:
-            if hasattr(world, 'roots'):
-                with DESKTOP.protected_cleanup():
-                    try:
-                        world.close()
-                    except BaseException:
-                        world.events = [event for event in world.events if event.get('event') != 'complete']
-                        world.events.append(dict(event='cleanup_failed'))
-                        raise
-                    finally:
-                        (out/(stem+'.events.jsonl')).write_text(
-                            ''.join(json.dumps(event)+'\n' for event in world.events))
+            with DESKTOP.protected_cleanup():
+                try:
+                    world.close()
+                except BaseException:
+                    world.events = [event for event in world.events if event.get('event') != 'complete']
+                    world.events.append(dict(event='cleanup_failed'))
+                    raise
+                finally:
+                    (out/(stem+'.events.jsonl')).write_text(
+                        ''.join(json.dumps(event)+'\n' for event in world.events))
 
 
 def provenance():
