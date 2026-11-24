@@ -1,5 +1,7 @@
+#[path = "support/launcher.rs"]
+mod launcher;
+
 use rad_client::connection::{Client, Endpoint};
-use rad_launcher::Launcher;
 use rad_runtime::server::Server;
 use serde_json::{Value, json};
 use std::{
@@ -207,38 +209,7 @@ fn world(name: &str, scenario: impl FnOnce(PathBuf) + Send + 'static) {
     )
     .unwrap();
     seed(&root.0.join("store"));
-    let helper = || {
-        let mut command = std::process::Command::new(
-            std::env::var("RAD_TEST_LAUNCHER_HELPER").expect("runner builds the private helper"),
-        );
-        command
-            .env_clear()
-            .env("HOME", root.0.join("home"))
-            .env("XDG_DATA_HOME", root.0.join("data"))
-            .env("XDG_DATA_DIRS", root.0.join("system"))
-            .env("XDG_CONFIG_HOME", root.0.join("config"))
-            .env("XDG_CACHE_HOME", root.0.join("cache"))
-            .env("XDG_RUNTIME_DIR", root.0.join("runtime"))
-            .env("PATH", "/nonexistent-rad-private-bin")
-            .env(
-                "DBUS_SESSION_BUS_ADDRESS",
-                "unix:path=/nonexistent-rad-private-bus",
-            );
-        command
-    };
-    let end = Instant::now() + Duration::from_secs(5);
-    let launcher = loop {
-        match Launcher::spawn(helper()) {
-            Ok(launcher) => break launcher,
-            Err(error) => {
-                assert!(
-                    Instant::now() < end,
-                    "launcher helper unavailable: {error:?}"
-                );
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        }
-    };
+    let launcher = launcher::spawn(&root.0).expect("start private launcher helper");
     server.attach_launcher(launcher).unwrap();
     let runtime = root.0.join("runtime");
     let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
