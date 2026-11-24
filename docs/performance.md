@@ -66,6 +66,9 @@ corridas válidas, pilotos, intentos incompletos y fixtures sintéticos.
   las lecturas no son atómicas. RSS sumada cuenta páginas compartidas varias veces.
   Los perfiles base, XL y servicios solicitan intervalos de 200 ms; escritorio,
   250 ms. Están sujetos al coste del observador; mandan sus timestamps reales.
+- En la comparación de variantes de compilación, el muestreo de recursos empieza
+  tras una espera fija de 200 ms desde la salida del cliente. La ventana puede
+  incluir trabajo que el runtime aún tenga pendiente al procesar la desconexión.
 - CPU usa un núcleo = 100 % y ticks con resolución `1/CLK_TCK`. Cero observado
   no significa coste nulo. Los cambios de contexto son otra medida, no wakeups
   exactos; estos últimos solo los aporta el perfil de contadores del kernel.
