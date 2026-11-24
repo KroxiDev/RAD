@@ -177,15 +177,20 @@ fn a_player_that_starts_or_quits_is_followed() {
         .unwrap();
 
     host.discard_pending();
-    let _again = FakePlayer::start(&bus, BRAVE);
+    let mut again = FakePlayer::start(&bus, BRAVE);
     host.wait_state(subscription, "current", Some("Stopped"), HEARTBEAT)
+        .unwrap();
+    again.command("status Paused");
+    host.wait_state(subscription, "current", Some("Paused"), HEARTBEAT)
         .unwrap();
     host.finish().unwrap();
 }
 
 #[test]
 fn only_the_chosen_application_is_shown() {
-    let bus = PrivateBus::start();
+    let bus = PrivateBus::start_with_policy(
+        r#"<deny send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus" send_member="GetNameOwner"/>"#,
+    );
     let mut strawberry = FakePlayer::start(&bus, STRAWBERRY);
     strawberry.command("status Playing").sync();
     let mut host = Host::start(Some(bus.address()), quick());
@@ -196,10 +201,20 @@ fn only_the_chosen_application_is_shown() {
     host.wait_state(brave, "unavailable", None, secs(5))
         .unwrap();
 
-    let mut brave_player = FakePlayer::start(&bus, BRAVE);
+    let mut brave_player = FakePlayer::start_owning(
+        &bus,
+        &[
+            BRAVE,
+            "org.mpris.MediaPlayer2.alias",
+            "org.mpris.MediaPlayer2.strawberry.instance2",
+        ],
+    );
+    host.wait_state(brave, "current", Some("Stopped"), HEARTBEAT)
+        .unwrap();
     brave_player.command("status Paused").sync();
     host.wait_state(brave, "current", Some("Paused"), HEARTBEAT)
         .unwrap();
+    let brave_reads = brave_player.reads_of("PlaybackStatus");
     host.discard_pending();
     strawberry.command("status Stopped");
     host.wait_state(berry, "current", Some("Stopped"), HEARTBEAT)
@@ -210,6 +225,22 @@ fn only_the_chosen_application_is_shown() {
     {
         assert!(visual.is("current", Some("Paused")), "{visual:?}");
     }
+    assert_eq!(brave_player.reads_of("PlaybackStatus"), brave_reads);
+    let alias = host.subscribe("alias");
+    host.wait_state(alias, "current", Some("Paused"), HEARTBEAT)
+        .unwrap();
+    let berry_reads = strawberry.reads_of("PlaybackStatus");
+    brave_player.command("status Playing");
+    for sub in [brave, alias] {
+        host.wait_state(sub, "current", Some("Playing"), HEARTBEAT)
+            .unwrap();
+    }
+    brave_player.quit();
+    for sub in [brave, alias] {
+        host.wait_state(sub, "unavailable", None, HEARTBEAT)
+            .unwrap();
+    }
+    assert_eq!(strawberry.reads_of("PlaybackStatus"), berry_reads);
     host.finish().unwrap();
 }
 
@@ -253,6 +284,12 @@ fn two_buttons_for_the_same_application_show_the_same_thing() {
     player.command("status Paused");
     host.wait_state(two, "current", Some("Paused"), HEARTBEAT)
         .unwrap();
+    host.unsubscribe(two);
+    host.discard_pending();
+    let reads = player.reads_of("PlaybackStatus");
+    player.command("status Stopped");
+    assert!(host.next_visual(two, HEARTBEAT).is_none());
+    assert_eq!(player.reads_of("PlaybackStatus"), reads);
     host.finish().unwrap();
 }
 
@@ -291,7 +328,11 @@ fn a_player_that_stops_answering_is_marked_stale_and_the_others_carry_on() {
     let mut stuck = FakePlayer::start(&bus, BRAVE);
     let mut fine = FakePlayer::start(&bus, STRAWBERRY);
     stuck.command("status Playing").sync();
-    let mut host = Host::start(Some(bus.address()), quick());
+    let timing = Timing {
+        recheck: Duration::from_millis(500),
+        ..quick()
+    };
+    let mut host = Host::start(Some(bus.address()), timing);
     let hung = host.subscribe("brave");
     let healthy = host.subscribe("strawberry");
     host.wait_state(hung, "current", Some("Playing"), secs(5))
@@ -310,6 +351,8 @@ fn a_player_that_stops_answering_is_marked_stale_and_the_others_carry_on() {
     host.discard_pending();
     stuck.thaw();
     fine.command("status Paused");
+    host.wait_state(healthy, "current", Some("Paused"), HEARTBEAT)
+        .unwrap();
     host.wait_state(hung, "current", Some("Playing"), secs(3))
         .unwrap();
     host.finish().unwrap();
@@ -403,34 +446,46 @@ fn a_player_that_dies_while_it_is_being_read_is_unavailable_and_never_stale() {
 #[test]
 fn a_player_that_never_answered_is_unavailable() {
     let bus = PrivateBus::start();
-    let frozen = FakePlayer::start(&bus, BRAVE);
+    let mut frozen = FakePlayer::start(&bus, BRAVE);
     frozen.freeze();
     let mut host = Host::start(Some(bus.address()), quick());
     let subscription = host.subscribe("brave");
     host.wait_state(subscription, "unavailable", None, secs(3))
         .unwrap();
     frozen.thaw();
+    frozen.command("status Playing");
+    host.wait_state(subscription, "current", Some("Playing"), HEARTBEAT)
+        .unwrap();
     host.finish().unwrap();
 }
 
 #[test]
 fn losing_the_bus_is_unavailable_and_a_bus_that_returns_is_followed_again() {
     let mut bus = PrivateBus::start_at_fixed_address();
-    let mut host = Host::start(Some(bus.address()), quick());
     let before = FakePlayer::start(&bus, STRAWBERRY);
+    let before_brave = FakePlayer::start(&bus, BRAVE);
+    let mut host = Host::start(Some(bus.address()), quick());
     let subscription = host.subscribe("strawberry");
-    host.wait_state(subscription, "current", Some("Stopped"), secs(5))
-        .unwrap();
+    let brave = host.subscribe("brave");
+    for sub in [subscription, brave] {
+        host.wait_state(sub, "current", Some("Stopped"), secs(5))
+            .unwrap();
+    }
     host.discard_pending();
     bus.kill();
-    host.wait_state(subscription, "unavailable", None, secs(3))
-        .unwrap();
-    drop(before);
+    for sub in [subscription, brave] {
+        host.wait_state(sub, "unavailable", None, secs(3)).unwrap();
+    }
+    drop((before, before_brave));
 
     bus.restart();
+    let mut new_brave = FakePlayer::start(&bus, BRAVE);
+    new_brave.command("status Paused").sync();
     let mut player = FakePlayer::start(&bus, STRAWBERRY);
     player.command("status Playing").sync();
     host.wait_state(subscription, "current", Some("Playing"), secs(3))
+        .unwrap();
+    host.wait_state(brave, "current", Some("Paused"), secs(3))
         .unwrap();
     host.discard_pending();
     player.command("status Paused");

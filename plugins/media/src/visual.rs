@@ -2,8 +2,8 @@ use crate::{
     Timing,
     bus::{Bus, Failure},
     cover,
-    names::first_instance,
     player::{self, Status},
+    source::Source,
 };
 use rad_plugin_sdk::{VisualContent, VisualState};
 use std::{
@@ -43,6 +43,7 @@ impl Reader {
         &mut self,
         bus: &Bus,
         timing: &Timing,
+        source: &Source,
         shown: Option<&VisualState>,
     ) -> VisualState {
         let deadline = Instant::now() + timing.refresh_deadline;
@@ -54,20 +55,7 @@ impl Reader {
             }
             _ => VisualState::Unavailable,
         };
-        let _connection = match bus.connection(deadline) {
-            Ok(connection) => connection,
-            Err(Failure::Unavailable) => return VisualState::Unavailable,
-            Err(_) => return stale(),
-        };
-        let names = match bus.player_names(deadline) {
-            Ok(names) => names,
-            Err(Failure::Unavailable) => return VisualState::Unavailable,
-            Err(_) => return stale(),
-        };
-        let Some(name) = first_instance(names.iter().map(String::as_str), &self.app) else {
-            return VisualState::Unavailable;
-        };
-        match player::state(bus, name, deadline) {
+        match source.read(bus, &self.app, deadline) {
             Ok(state) => VisualState::Current {
                 content: self.content(&state),
             },

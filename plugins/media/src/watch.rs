@@ -1,4 +1,11 @@
-use crate::{Timing, bus::Bus, cover::Converter, monitor::Monitor, visual::Reader, wake::Wake};
+use crate::{
+    Timing,
+    bus::Bus,
+    cover::Converter,
+    monitor::{Monitor, Refresh},
+    source::Source,
+    visual::Reader,
+};
 use rad_plugin_sdk::{MAX_SUBSCRIPTIONS, Subscription, SubscriptionId, VisualState, is_label};
 use std::{
     collections::HashMap,
@@ -21,7 +28,7 @@ struct Buttons {
 
 struct Group {
     buttons: Arc<Mutex<Buttons>>,
-    wake: Arc<Wake>,
+    source: Arc<Source>,
     served: bool,
 }
 
@@ -29,7 +36,7 @@ impl Group {
     fn new() -> Self {
         Self {
             buttons: Arc::default(),
-            wake: Arc::new(Wake::new()),
+            source: Arc::new(Source::new()),
             served: false,
         }
     }
@@ -42,17 +49,17 @@ impl Group {
 struct Job {
     app: String,
     buttons: Arc<Mutex<Buttons>>,
-    wake: Arc<Wake>,
+    source: Arc<Source>,
     reader: Reader,
 }
 
 impl Job {
     fn of(app: &str, group: &Group, converter: Arc<Converter>) -> Self {
-        group.wake.now();
+        group.source.wake.now();
         Self {
             app: app.to_owned(),
             buttons: Arc::clone(&group.buttons),
-            wake: Arc::clone(&group.wake),
+            source: Arc::clone(&group.source),
             reader: Reader::new(app.to_owned(), converter),
         }
     }
@@ -73,7 +80,7 @@ fn publish(buttons: &Mutex<Buttons>, interval: &Arc<()>, state: VisualState) {
 
 fn serve(watch: &Weak<Watch>, bus: &Bus, timing: &Timing, mut job: Job) {
     loop {
-        while job.wake.wait(
+        while job.source.wake.wait(
             timing.settle,
             timing.max_settle,
             timing.recheck,
@@ -81,9 +88,12 @@ fn serve(watch: &Weak<Watch>, bus: &Bus, timing: &Timing, mut job: Job) {
         ) {
             let (shown, interval) = {
                 let buttons = locked(&job.buttons);
+                if buttons.subscriptions.is_empty() {
+                    continue;
+                }
                 (buttons.shown.clone(), Arc::clone(&buttons.interval))
             };
-            let state = job.reader.read(bus, timing, shown.as_ref());
+            let state = job.reader.read(bus, timing, &job.source, shown.as_ref());
             publish(&job.buttons, &interval, state);
         }
         match watch.upgrade().and_then(|watch| watch.next_job(job)) {
@@ -167,9 +177,29 @@ impl Watch {
         })
     }
 
-    fn changed(&self) {
-        for group in locked(&self.state).groups.values() {
-            group.wake.changed();
+    fn changed(&self, refresh: Refresh<'_>) {
+        let state = locked(&self.state);
+        match refresh {
+            Refresh::Owner {
+                app,
+                bus,
+                name,
+                owner,
+            } => {
+                if let Some(group) = state.groups.get(app) {
+                    group.source.owner_changed(bus, name, owner);
+                }
+            }
+            Refresh::Properties { bus, owner } => {
+                for group in state.groups.values() {
+                    group.source.properties_changed(bus, owner);
+                }
+            }
+            Refresh::All => {
+                for group in state.groups.values() {
+                    group.source.wake.changed();
+                }
+            }
         }
     }
 
@@ -184,9 +214,9 @@ impl Watch {
 
     fn start_monitor(self: &Arc<Self>) -> Option<Monitor> {
         let (changing, retiring) = (Arc::downgrade(self), Arc::downgrade(self));
-        let changed = Arc::new(move || {
+        let changed = Arc::new(move |refresh: Refresh<'_>| {
             if let Some(watch) = Weak::upgrade(&changing) {
-                watch.changed();
+                watch.changed(refresh);
             }
         });
         let retire = Arc::new(move || Weak::upgrade(&retiring).is_none_or(|w| w.retire_monitor()));
@@ -198,9 +228,9 @@ impl Watch {
         let own = state
             .groups
             .get(&job.app)
-            .filter(|group| Arc::ptr_eq(&group.wake, &job.wake));
+            .filter(|group| Arc::ptr_eq(&group.source, &job.source));
         if own.is_some_and(Group::has_buttons) {
-            job.wake.resume();
+            job.source.wake.resume();
             return Some(job);
         }
         if own.is_some() {
@@ -252,15 +282,15 @@ impl Watch {
             return subscription.update(VisualState::Unavailable);
         }
         let group = state.groups.entry(app).or_insert_with(Group::new);
-        group.wake.resume();
+        group.source.wake.resume();
         {
             let mut buttons = locked(&group.buttons);
             if buttons.subscriptions.is_empty() {
                 buttons.shown = None;
                 buttons.interval = Arc::new(());
-                group.wake.now();
+                group.source.wake.now();
             }
-            group.wake.now();
+            group.source.wake.now();
             buttons.subscriptions.push(subscription);
         }
         self.start_readers(&mut state);
@@ -274,7 +304,7 @@ impl Watch {
             if !buttons.subscriptions.is_empty() {
                 return true;
             }
-            group.wake.stop();
+            group.source.wake.stop();
             group.served
         });
         state.stop_if_idle();

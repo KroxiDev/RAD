@@ -7,6 +7,7 @@ pub mod names;
 mod options;
 mod player;
 mod plugin;
+mod source;
 mod timing;
 mod visual;
 mod wake;

@@ -1,4 +1,4 @@
-use crate::{Timing, bus::Bus, names::MPRIS_PREFIX, wake::Wake};
+use crate::{Timing, bus::Bus, names::app_identity, wake::Wake};
 use gio::{DBusConnection, DBusSignalFlags, SignalSubscription};
 use glib::{MainContext, prelude::*};
 use std::{
@@ -10,7 +10,21 @@ use std::{
     time::Instant,
 };
 
-pub(crate) type Changed = Arc<dyn Fn() + Send + Sync + 'static>;
+pub(crate) enum Refresh<'a> {
+    All,
+    Owner {
+        app: &'a str,
+        name: &'a str,
+        owner: &'a str,
+        bus: &'a str,
+    },
+    Properties {
+        bus: &'a str,
+        owner: &'a str,
+    },
+}
+
+type Changed = Arc<dyn Fn(Refresh<'_>) + Send + Sync + 'static>;
 
 pub(crate) type Retire = Arc<dyn Fn() -> bool + Send + Sync + 'static>;
 
@@ -80,7 +94,7 @@ fn serve(bus: &Bus, timing: &Timing, control: &Control, changed: &Changed, retir
         if control.wake.is_stopped() {
             continue;
         }
-        changed();
+        changed(Refresh::All);
         control.wake.sleep(timing.retry_wait);
     }
 }
@@ -95,7 +109,7 @@ fn listen(connection: &DBusConnection, control: &Control, changed: &Changed, ret
         })
     };
     let _signals = subscribe(connection, changed);
-    changed();
+    changed(Refresh::All);
     while !control.must_end(retire) && !closed.load(Ordering::Acquire) && !connection.is_closed() {
         control.context.iteration(true);
     }
@@ -105,19 +119,29 @@ fn listen(connection: &DBusConnection, control: &Control, changed: &Changed, ret
 fn subscribe(connection: &DBusConnection, changed: &Changed) -> [SignalSubscription; 2] {
     let on_owner = {
         let changed = Arc::clone(changed);
+        let bus = connection.guid();
         move |signal: gio::DBusSignalRef| {
-            let mpris = signal
-                .parameters
-                .get::<(String, String, String)>()
-                .is_some_and(|(name, _, _)| name.starts_with(MPRIS_PREFIX));
-            if mpris {
-                changed();
+            if let Some((name, _, owner)) = signal.parameters.get::<(String, String, String)>()
+                && let Some(app) = app_identity(&name)
+            {
+                changed(Refresh::Owner {
+                    app,
+                    name: &name,
+                    owner: &owner,
+                    bus: &bus,
+                });
             }
         }
     };
     let on_properties = {
         let changed = Arc::clone(changed);
-        move |_: gio::DBusSignalRef| changed()
+        let bus = connection.guid();
+        move |signal: gio::DBusSignalRef| {
+            changed(Refresh::Properties {
+                bus: &bus,
+                owner: signal.sender_name,
+            });
+        }
     };
     [
         connection.subscribe_to_signal(
@@ -125,8 +149,8 @@ fn subscribe(connection: &DBusConnection, changed: &Changed) -> [SignalSubscript
             Some("org.freedesktop.DBus"),
             Some("NameOwnerChanged"),
             Some("/org/freedesktop/DBus"),
-            None,
-            DBusSignalFlags::NONE,
+            Some("org.mpris.MediaPlayer2"),
+            DBusSignalFlags::MATCH_ARG0_NAMESPACE,
             on_owner,
         ),
         connection.subscribe_to_signal(

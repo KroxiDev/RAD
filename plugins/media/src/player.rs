@@ -1,4 +1,4 @@
-use crate::bus::{Bus, Failure, Method};
+use crate::bus::{Bus, Connection, Failure, Method};
 use glib::{Variant, prelude::ToVariant};
 use std::{collections::HashMap, time::Instant};
 
@@ -83,13 +83,18 @@ pub(crate) struct State {
     pub(crate) art_url: Option<String>,
 }
 
-pub(crate) fn state(bus: &Bus, name: &str, deadline: Instant) -> Result<State, Failure> {
-    let reply = bus.call(
+pub(crate) fn state(
+    connection: &Connection,
+    name: &str,
+    deadline: Instant,
+    observe: impl FnOnce(&str),
+) -> Result<State, Failure> {
+    let (sender, reply) = connection.call_with_sender(
         &method(name, "org.freedesktop.DBus.Properties", "GetAll"),
-        Some(&(PLAYER,).to_variant()),
-        "(a{sv})",
+        &(PLAYER,).to_variant(),
         deadline,
     )?;
+    observe(&sender);
     let (properties,) = reply
         .get::<(HashMap<String, Variant>,)>()
         .ok_or(Failure::Failed)?;
