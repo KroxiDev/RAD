@@ -141,7 +141,10 @@ class World:
         try:
             self.remember(child.pid, child.pid)
         except BaseException:
-            child.kill()
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             child.wait(timeout=3)
             raise
         if drain:
