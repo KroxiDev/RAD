@@ -219,7 +219,7 @@ class DesktopWorld(COMMON.World):
         self.check()
         super().stop_runtime()
         self.guard_stop.set()
-        if self.guard_thread is not None and self.guard_thread.ident is not None:
+        if self.guard_thread is not None:
             self.guard_thread.join(timeout=5)
             if self.guard_thread.is_alive():
                 raise RuntimeError('scoped guard did not finish')
@@ -380,7 +380,7 @@ class DesktopWorld(COMMON.World):
                 self.signal(child.pid,signal.SIGKILL)
                 self.events.append(dict(event='emergency_writer_stopped',logo_restoration_verified=False))
         self.guard_stop.set()
-        if self.guard_thread is not None:
+        if self.guard_thread is not None and self.guard_thread.ident is not None:
             self.guard_thread.join(timeout=5)
         super().close()
 
