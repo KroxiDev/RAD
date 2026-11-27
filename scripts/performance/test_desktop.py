@@ -7,7 +7,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -77,10 +76,8 @@ class CriticalIsolation(unittest.TestCase):
 
     def test_exception_teardown_kills_only_owned_writer_without_logo_shutdown(self):
         with fixture() as root, (root/'log').open('w') as log:
-            world=D.DesktopWorld.__new__(D.DesktopWorld)
-            world.roots,world.owned,world.events=[],{},[]
+            world=D.DesktopWorld()
             world.log,world.env=log,{'PATH':'/usr/bin:/bin'}
-            world.guard_stop,world.guard_thread=threading.Event(),None
             world.runtime=world.spawn([sys.executable,'-I','-S','-c','import time; time.sleep(60)'],'runtime')
             world.runtime_pid=world.runtime.pid
             child=world.runtime
@@ -111,14 +108,13 @@ with d.protected_cleanup():
 
     def signal_case(self, during_registration):
         with fixture() as root:
-            code='''import importlib.util,json,os,signal,sys,threading,time
+            code='''import importlib.util,json,os,signal,sys,time
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('d',sys.argv[1]); d=importlib.util.module_from_spec(spec);spec.loader.exec_module(d)
 root=Path(sys.argv[2]); d.install_shutdown_signals()
 with (root/'child.log').open('w') as log:
- w=d.DesktopWorld.__new__(d.DesktopWorld);w.roots,w.owned,w.events=[],{},[]
- w.log,w.env=log,{'PATH':'/usr/bin:/bin'};w.guard_stop,w.guard_thread=threading.Event(),None
- w.runtime=w.runtime_pid=None
+ w=d.DesktopWorld()
+ w.log,w.env=log,{'PATH':'/usr/bin:/bin'}
  if sys.argv[3]=='registration':
   original=d.COMMON.subprocess.Popen
   def injected(*args,**kwargs):

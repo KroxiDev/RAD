@@ -153,9 +153,8 @@ def retain(out, metadata):
 class RelayOwner(COMMON.World):
     """Owns only the relay and optional private oracle, never personal OBS."""
     def __init__(self, root, real):
+        super().__init__()
         self.root, self.log = root, subprocess.DEVNULL
-        self.roots, self.owned, self.events, self.unobserved = [], {}, [], set()
-        self.runtime = self.runtime_pid = None
         root.mkdir(mode=0o700)
         self.env = SERVICES.METRICS.private_environment(root)
         if real:
@@ -299,13 +298,11 @@ def validate_window(before, after, visuals):
 
 
 class ObsWorld(SERVICES.ServicesWorld):
-    def __init__(self, root, elf, hashes, relay):
+    def prepare(self, root, elf, hashes, relay):
         self.root, self.name, self.elf, self.hashes, self.relay = root, 'obs', elf, hashes, relay
-        self.roots, self.owned, self.backends = [], {}, []
-        self.runtime = self.runtime_pid = None
-        self.rows, self.events, self.unobserved, self.observations = [], [], set(), []
+        self.observations = []
         self.log, self.roles, self.bus_proxy = subprocess.DEVNULL, {}, None
-        self.epoch, self.visual_count, self.configured = time.monotonic(), 0, False
+        self.visual_count, self.configured = 0, False
         root.mkdir(mode=0o700)
         with DESKTOP.registered_spawn():
             result = subprocess.run([str(elf/'official_profile_seed'), str(root), 'obs', '--real-obs'],
@@ -417,11 +414,11 @@ class ObsWorld(SERVICES.ServicesWorld):
 
 
 def run_case(out, elf, hashes, relay, repetition, seconds, interval):
-    world = ObsWorld.__new__(ObsWorld)
     primary = None
     with (out/f'obs{repetition}.samples.jsonl').open('w') as raw:
+        world = ObsWorld()
         try:
-            world.__init__(out/f'obs{repetition}', elf, hashes, relay)
+            world.prepare(out/f'obs{repetition}', elf, hashes, relay)
             world.start_runtime()
             world.events.append(dict(event='setup_step', step='configure_buttons'))
             world.configure_buttons()
@@ -452,26 +449,24 @@ def run_case(out, elf, hashes, relay, repetition, seconds, interval):
             return summarize(world, repetition), dict(repetition=repetition, **summary)
         except BaseException as error:
             primary = error
-            if hasattr(world, 'events'):
-                world.events.append(dict(event='case_error', error_type=type(error).__name__,
-                                         error_errno=error_errno(error),
-                                         error_frames=error_frames(error)))
+            world.events.append(dict(event='case_error', error_type=type(error).__name__,
+                                     error_errno=error_errno(error),
+                                     error_frames=error_frames(error)))
             raise
         finally:
-            if hasattr(world, 'roots'):
-                with DESKTOP.protected_cleanup():
-                    try:
-                        world.close()
-                    except BaseException as error:
-                        world.events = [e for e in world.events if e.get('event') != 'complete']
-                        world.events.append(dict(event='cleanup_failed', error_type=type(error).__name__,
-                                                 error_errno=error_errno(error),
-                                                 error_frames=error_frames(error)))
-                        if primary is None:
-                            raise
-                    finally:
-                        (out/f'obs{repetition}.events.jsonl').write_text(
-                            ''.join(json.dumps(e)+'\n' for e in world.events))
+            with DESKTOP.protected_cleanup():
+                try:
+                    world.close()
+                except BaseException as error:
+                    world.events = [e for e in world.events if e.get('event') != 'complete']
+                    world.events.append(dict(event='cleanup_failed', error_type=type(error).__name__,
+                                             error_errno=error_errno(error),
+                                             error_frames=error_frames(error)))
+                    if primary is None:
+                        raise
+                finally:
+                    (out/f'obs{repetition}.events.jsonl').write_text(
+                        ''.join(json.dumps(e)+'\n' for e in world.events))
 
 
 def summarize(world, repetition):

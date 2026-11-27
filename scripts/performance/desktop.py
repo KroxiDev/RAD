@@ -139,14 +139,15 @@ class DesktopWorld(COMMON.World):
         with registered_spawn():
             return super().spawn(*args,**kwargs)
 
-    def __init__(self, root, binaries, wayland, log, raw, device):
-        self.root, self.binaries, self.log, self.raw = root, binaries, log, raw
-        self.roots, self.owned = [], {}
-        self.runtime = self.runtime_pid = self.editor = self.sink = None
-        self.backends, self.rows, self.events, self.unobserved = [], [], [], set()
-        self.epoch = time.monotonic()
-        self.device, self.guard_errors, self.guards = device, [], []
+    def __init__(self):
+        super().__init__()
+        self.editor = self.sink = None
+        self.guard_errors, self.guards = [], []
         self.guard_stop, self.guard_thread = threading.Event(), None
+
+    def prepare(self, root, binaries, wayland, log, raw, device):
+        self.root, self.binaries, self.log, self.raw = root, binaries, log, raw
+        self.device = device
         root.mkdir(mode=0o700)
         self.env = desktop_environment(root,wayland,'unix:path='+str(root/'bus'))
         self.hypr_env = {key:os.environ[key] for key in ('XDG_RUNTIME_DIR','HYPRLAND_INSTANCE_SIGNATURE')}
@@ -379,7 +380,7 @@ class DesktopWorld(COMMON.World):
                 self.signal(child.pid,signal.SIGKILL)
                 self.events.append(dict(event='emergency_writer_stopped',logo_restoration_verified=False))
         self.guard_stop.set()
-        if self.guard_thread is not None:
+        if self.guard_thread is not None and self.guard_thread.ident is not None:
             self.guard_thread.join(timeout=5)
         super().close()
 
@@ -388,9 +389,9 @@ def run_case(out, binaries, wayland, physical, repeat, seconds):
     root = out/f'r{repeat}'
     with (out/f'r{repeat}.stderr.log').open('w') as log, \
          (out/f'r{repeat}.samples.jsonl').open('w') as raw:
-        world = DesktopWorld.__new__(DesktopWorld)
+        world = DesktopWorld()
         try:
-            world.__init__(root,binaries,wayland,log,raw,physical)
+            world.prepare(root,binaries,wayland,log,raw,physical)
             world.start_product(False)
             world.seed()
             world.stop_product()
@@ -430,11 +431,10 @@ def run_case(out, binaries, wayland, physical, repeat, seconds):
                     summaries.append(dict(summary,repetition=repeat,group=group))
             return summaries,world.events
         finally:
-            if hasattr(world,'roots'):
-                with protected_cleanup():
-                    world.close()
-                    (out/f'r{repeat}.events.jsonl').write_text(''.join(json.dumps(e)+'\n' for e in world.events))
-                    (out/f'r{repeat}.guards.json').write_text(json.dumps(world.guards,indent=2)+'\n')
+            with protected_cleanup():
+                world.close()
+                (out/f'r{repeat}.events.jsonl').write_text(''.join(json.dumps(e)+'\n' for e in world.events))
+                (out/f'r{repeat}.guards.json').write_text(json.dumps(world.guards,indent=2)+'\n')
 
 
 def main(argv=None):

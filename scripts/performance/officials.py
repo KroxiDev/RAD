@@ -105,14 +105,16 @@ class Bridge:
 
 
 class World:
-    def __init__(self, root, name, log):
-        self.root, self.name, self.log = root, name, log
+    def __init__(self):
         self.roots, self.owned = [], {}
         self.runtime = None
         self.runtime_pid = None
         self.backends = []
         self.rows, self.events, self.unobserved = [], [], set()
         self.epoch = time.monotonic()
+
+    def prepare(self, root, name, log):
+        self.root, self.name, self.log = root, name, log
         root.mkdir(mode=0o700)
         result = subprocess.run([str(REPO/'target/release/examples/official_profile_seed'), str(root), name],
                                 env={'PATH':'/usr/bin:/bin'}, stdin=subprocess.DEVNULL,
@@ -136,7 +138,15 @@ class World:
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
                                  text=True, bufsize=1, start_new_session=True)
         self.roots.append((child, role))
-        self.remember(child.pid, child.pid)
+        try:
+            self.remember(child.pid, child.pid)
+        except BaseException:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            child.wait(timeout=3)
+            raise
         if drain:
             child.lines = queue.Queue(maxsize=256)
             def consume():
@@ -380,7 +390,7 @@ class World:
                     self.signal(child.pid, signal.SIGKILL)
                     child.wait(timeout=3)
             if child.stdout and not child.stdout.closed:
-                if hasattr(child,'reader'):
+                if hasattr(child, 'reader') and child.reader.ident is not None:
                     child.reader.join(timeout=1)
                 child.stdout.close()
         deadline = time.monotonic()+3
@@ -414,10 +424,9 @@ def run_case(out, name, repetition, seconds, interval):
     root = out/f'{name}{repetition}'
     with (out/f'{name}{repetition}.stderr.log').open('w') as log, \
          (out/f'{name}{repetition}.samples.jsonl').open('w') as raw:
-        world = None
+        world = World()
         try:
-            world = World.__new__(World)
-            world.__init__(root,name,log)
+            world.prepare(root,name,log)
             world.start_runtime()
             world.configure_buttons()
             world.stop_runtime()
@@ -441,8 +450,7 @@ def run_case(out, name, repetition, seconds, interval):
                 ''.join(json.dumps(event)+'\n' for event in world.events))
             return summary
         finally:
-            if world is not None and hasattr(world,'roots'):
-                world.close()
+            world.close()
 
 
 def main():

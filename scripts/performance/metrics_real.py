@@ -98,12 +98,9 @@ class MetricsWorld(COMMON.World):
         with DESKTOP.registered_spawn():
             return super().spawn(*args, **kwargs)
 
-    def __init__(self, root, log, hashes):
+    def prepare(self, root, log, hashes):
         self.root, self.name, self.log = root, 'metrics', log
-        self.roots, self.owned, self.backends = [], {}, []
-        self.runtime = self.runtime_pid = None
-        self.rows, self.events, self.unobserved = [], [], set()
-        self.epoch, self.visual_count = time.monotonic(), 0
+        self.visual_count = 0
         self.executable_roles, self.hashes = {}, hashes
         self.observations = []
         root.mkdir(mode=0o700)
@@ -228,11 +225,11 @@ def summarize(world, repetition):
 
 
 def run_case(out, repetition, seconds, interval, hashes):
-    world = MetricsWorld.__new__(MetricsWorld)
     with (out/f'm{repetition}.stderr.log').open('w') as log, \
          (out/f'm{repetition}.samples.jsonl').open('w') as raw:
+        world = MetricsWorld()
         try:
-            world.__init__(out/f'm{repetition}', log, hashes)
+            world.prepare(out/f'm{repetition}', log, hashes)
             world.start_runtime()
             world.configure_buttons()
             world.stop_runtime()
@@ -259,13 +256,12 @@ def run_case(out, repetition, seconds, interval, hashes):
                             if len(o['sources']) <= 4]
             return summarize(world, repetition), observations
         finally:
-            if hasattr(world, 'roots'):
-                with DESKTOP.protected_cleanup():
-                    try:
-                        world.close()
-                    finally:
-                        (out/f'm{repetition}.events.jsonl').write_text(
-                            ''.join(json.dumps(event)+'\n' for event in world.events))
+            with DESKTOP.protected_cleanup():
+                try:
+                    world.close()
+                finally:
+                    (out/f'm{repetition}.events.jsonl').write_text(
+                        ''.join(json.dumps(event)+'\n' for event in world.events))
 
 
 def validate_output(output, seconds, repetitions, interval):

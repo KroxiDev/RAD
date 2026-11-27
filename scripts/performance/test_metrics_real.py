@@ -61,11 +61,11 @@ class CriticalMetricsEvidence(unittest.TestCase):
                 (root/'data/rad').mkdir(mode=0o700, parents=True)
                 return SimpleNamespace(stdout=json.dumps(dict(event='seeded', plugin='metrics',
                     real_metrics=True, executable=M.BINARIES['metrics_plugin'])))
-            world = M.MetricsWorld.__new__(M.MetricsWorld)
+            world = M.MetricsWorld()
             with patch.object(M.subprocess, 'run', side_effect=fake_seed), \
                  patch.object(M.COMMON.World, 'spawn', side_effect=AssertionError('product launch')), \
                  patch.object(M.COMMON.World, 'prepare_backend', side_effect=AssertionError('backend')):
-                world.__init__(root, None, {})
+                world.prepare(root, None, {})
             machine = root/'data/rad/machine.json'
             self.assertEqual(json.loads(machine.read_text()), dict(version=1, use_stream_deck=False,
                                                                   start_with_session=False))
@@ -73,7 +73,7 @@ class CriticalMetricsEvidence(unittest.TestCase):
             self.assertEqual(world.roots, [])
 
     def test_hardware_enabled_state_is_rejected_before_visual_probe(self):
-        world = M.MetricsWorld.__new__(M.MetricsWorld)
+        world = M.MetricsWorld()
         peer = SimpleNamespace(call=lambda operation, **args:
                                dict(deck_state='connected') if operation == 'status' else
                                self.fail('unexpected visual or machine call'))
@@ -131,8 +131,7 @@ class CriticalMetricsEvidence(unittest.TestCase):
         self.assertFalse(result['observed_gpu_scenario_target_met'])
 
     def test_cancellation_after_registration_retains_child_for_cleanup(self):
-        world = M.MetricsWorld.__new__(M.MetricsWorld)
-        world.roots = []
+        world = M.MetricsWorld()
         previous = {sig:signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
         def registered(*args, **kwargs):
             signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)

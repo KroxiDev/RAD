@@ -153,8 +153,7 @@ class CriticalReadOnlyServices(unittest.TestCase):
         self.assertNotIn('synthetic gate only', saved)
 
     def test_cancellation_is_deferred_until_child_registration(self):
-        world = S.ServicesWorld.__new__(S.ServicesWorld)
-        world.roots = []
+        world = S.ServicesWorld()
         previous = {sig:signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
         def registered(*args, **kwargs):
             signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
