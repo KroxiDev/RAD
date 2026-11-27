@@ -16,6 +16,7 @@ _spec = importlib.util.spec_from_file_location('rad_observer', REPO/'scripts/per
 observer = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(observer)
 NAMES = ('rad-runtime', 'rad-launcher-helper')
+RESOURCE_WINDOW = {'phase': 'post_client_exit', 'delay_after_client_exit_ms': 200}
 
 
 def timing_summary(values):
@@ -125,7 +126,7 @@ def boot(binary, directory, env, initialized):
                 raise RuntimeError('private machine profile must have deck disabled')
             ready_ns = time.monotonic_ns()-start
             peer.close();peer=None
-            time.sleep(.2)
+            time.sleep(RESOURCE_WINDOW['delay_after_client_exit_ms'] / 1000)
             epoch = time.monotonic()
             for _ in range(6):
                 snapshot = []
@@ -137,7 +138,7 @@ def boot(binary, directory, env, initialized):
                         snapshot.append(state)
                     except (FileNotFoundError,ProcessLookupError):
                         continue
-                rows.append(dict(elapsed_s=time.monotonic()-epoch,phase='idle',processes=snapshot))
+                rows.append(dict(elapsed_s=time.monotonic()-epoch, processes=snapshot, **RESOURCE_WINDOW))
                 time.sleep(.2)
             process.terminate()
             if process.wait(timeout=8) != 0:
@@ -164,10 +165,10 @@ def boot(binary, directory, env, initialized):
             if survivors:raise RuntimeError('owned helper survived clean shutdown')
             if peer_error is not None:raise RuntimeError('typed client cleanup failed') from peer_error
     (directory/(initialized+'-samples.jsonl')).write_text(''.join(json.dumps(r)+'\n' for r in rows))
-    result=observer.summarize_phase(rows,'idle')
+    result=observer.summarize_phase(rows, RESOURCE_WINDOW['phase'])
     if not result['stable_process_set'] or result['processes_sampled_peak'] != 2:
         raise ValueError('expected stable runtime plus helper, no plugins')
-    return dict(startup_observed_ns=ready_ns,document=initialized,resources=result)
+    return dict(startup_observed_ns=ready_ns,document=initialized,resources=result | RESOURCE_WINDOW)
 
 
 def measure(output,repetitions):
@@ -207,7 +208,8 @@ def measure(output,repetitions):
     for variant in names:
         for document in ('fresh','existing'):
             selected=[r for r in results if r['variant']==variant and r['document']==document]
-            row=dict(variant=variant,document=document,**timing_summary([r['startup_observed_ns'] for r in selected]))
+            row=dict(variant=variant,document=document,resource_window=RESOURCE_WINDOW,
+                     **timing_summary([r['startup_observed_ns'] for r in selected]))
             row['pss_bytes_median_of_windows']=observer.percentile([r['resources']['pss_bytes_median'] for r in selected],50)
             row['rss_bytes_median_of_windows']=observer.percentile([r['resources']['rss_bytes_median'] for r in selected],50)
             summary.append(row)
