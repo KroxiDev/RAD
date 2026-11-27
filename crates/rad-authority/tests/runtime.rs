@@ -95,6 +95,95 @@ fn timeout_ttl_and_history_eviction_do_not_release_residual_revision_until_real_
 }
 
 #[test]
+fn rejected_report_preserves_due_dispatch_and_ends_the_original_hold_once() {
+    let c = fixture();
+    let root = c.configuration().data().principal;
+    let run = &c.configuration().data().buttons[0];
+    let button = run.binding.identity();
+    let launcher = DesktopEntry::new("due.desktop".into()).unwrap();
+    let c = c
+        .configuration()
+        .prepare_edits(
+            c.registry(),
+            Origin::Editor,
+            &[
+                Edit::ReplaceActionType {
+                    action: run.actions[0].binding.identity(),
+                    kind: ActionKind::Wait(Wait::new(1).unwrap()),
+                },
+                Edit::AddAction {
+                    button,
+                    kind: ActionKind::Launcher(launcher.clone()),
+                },
+                Edit::CreateButton {
+                    folder: root,
+                    position: 1,
+                    name: "Hold".into(),
+                },
+                Edit::SetSettings(SettingsData {
+                    press_threshold_ms: RESPONSE_TIMEOUT_MS + 1,
+                    sleep_ms: 0,
+                    ..SettingsData::default()
+                }),
+            ],
+        )
+        .unwrap();
+    let hold = c.configuration().data().buttons[1].binding.identity();
+    let c = c
+        .configuration()
+        .prepare_edit(
+            c.registry(),
+            Origin::Editor,
+            Edit::SetGesture {
+                button: hold,
+                gesture: Gesture::Hold,
+            },
+        )
+        .unwrap();
+    let mut a = actor(c);
+    let mut down = [false; 32];
+    down[1] = true;
+    let started = a.input_report(0, down).unwrap();
+    let [Effect::HardwareAccepted { execution: held }] = started.as_slice() else {
+        panic!("expected one hold start: {started:?}");
+    };
+
+    let now = u64::MAX - RESPONSE_TIMEOUT_MS;
+    a.advance(now - 1).unwrap();
+    let waiting = submit(
+        &mut a,
+        Command::Run {
+            target: Target::Button(button),
+        },
+    );
+    let [Effect::Accepted { execution: run, .. }] = waiting.as_slice() else {
+        panic!("expected one waiting plan: {waiting:?}");
+    };
+
+    down[0] = true;
+    let effects = a.input_report(now, down).unwrap();
+    let [
+        Effect::Dispatch(job),
+        Effect::ReleaseHold { execution },
+        rejection,
+    ] = effects.as_slice()
+    else {
+        panic!("expected dispatch, release and rejection: {effects:?}");
+    };
+    assert_eq!(job.id.execution(), *run);
+    assert_eq!(job.operation, Operation::Launcher(launcher));
+    assert_eq!(execution, held);
+    assert!(matches!(
+        rejection,
+        Effect::InputRejected {
+            reason: ExecutionError::TimeOverflow
+        }
+    ));
+    assert!(a.input_report(now, down).unwrap().is_empty());
+    assert!(a.input_report(now, [false; 32]).unwrap().is_empty());
+}
+
+#[test]
 fn physical_input_captures_threshold_but_parameters_only_at_admission() {
     let c = fixture();
     let action = c.configuration().data().buttons[0].actions[0]

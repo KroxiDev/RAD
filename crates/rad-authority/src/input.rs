@@ -6,47 +6,31 @@ impl Authority {
         now: u64,
         pressed: [bool; 32],
     ) -> Result<Vec<Effect>, AdmissionError> {
+        use rad_core::input::{Change, InputError};
         let mut e = self.advance_clock(now)?;
         if pressed != self.held {
             self.last_activity = now;
             self.held = pressed;
             e.extend(self.reset_sleep_deadline());
         }
-        let output = match self
-            .input
-            .handle(now, rad_core::input::Change::Report(pressed))
-        {
+        let output = match self.input.handle(now, Change::Report(pressed)) {
             Ok(output) => output,
-            Err(_) => {
-                let folder = self
-                    .published
-                    .configuration()
-                    .data()
-                    .folders
-                    .iter()
-                    .find(|f| f.binding.identity() == self.active)
-                    .unwrap()
-                    .binding;
+            Err(InputError::DeadlineOverflow) => {
                 let canceled = self
                     .input
-                    .handle(
-                        now,
-                        rad_core::input::Change::Layout {
-                            folder,
-                            buttons: [None; 32],
-                        },
-                    )
-                    .expect("valid empty layout");
+                    .handle(now, Change::RejectReport(pressed))
+                    .expect("rejected report has a monotonic time and schedules no deadlines");
                 e.extend(self.input_effects(canceled));
-                self.input
-                    .handle(now, rad_core::input::Change::Report(pressed))
-                    .expect("unassigned keys cannot overflow");
-                e.extend(self.sync_input());
+                self.refresh_views();
                 e.push(Effect::InputRejected {
                     reason: ExecutionError::TimeOverflow,
                 });
                 return Ok(e);
             }
+            Err(InputError::TimeWentBackwards) => {
+                unreachable!("advance_clock accepted now and input never runs ahead of it")
+            }
+            Err(InputError::InvalidLayout) => unreachable!("a key report carries no layout"),
         };
         e.extend(self.input_effects(output));
         if self.state != StorageState::Ready {

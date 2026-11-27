@@ -23,6 +23,7 @@ pub enum Change {
     },
     /// Current pressed state; false is a release, not a missing sample.
     Report([bool; KEY_COUNT]),
+    RejectReport([bool; KEY_COUNT]),
     /// Process deadlines using the last observed pressed state.
     Tick,
     /// Discard pending input; the next Report begins a new D9 connection.
@@ -177,6 +178,11 @@ impl Input {
                 }
                 self.held = pressed;
             }
+            Change::RejectReport(pressed) => {
+                self.cancel_gestures(&mut output);
+                self.held = pressed;
+                self.seen_report = true;
+            }
             Change::Threshold(value) => self.threshold_ms = value,
             Change::Gestures {
                 selected,
@@ -187,18 +193,12 @@ impl Input {
             }
             Change::Tick => {}
             Change::Sleep => {
-                for key in 0..KEY_COUNT {
-                    self.end_hold(key, &mut output);
-                }
+                self.cancel_gestures(&mut output);
                 self.asleep = true;
-                self.pending = [None; KEY_COUNT];
             }
             Change::Disconnect => {
-                for key in 0..KEY_COUNT {
-                    self.end_hold(key, &mut output);
-                }
+                self.cancel_gestures(&mut output);
                 self.held = [false; KEY_COUNT];
-                self.pending = [None; KEY_COUNT];
                 self.seen_report = false;
             }
         }
@@ -222,6 +222,12 @@ impl Input {
     }
 }
 impl Input {
+    fn cancel_gestures(&mut self, output: &mut Vec<Output>) {
+        self.pending = [None; KEY_COUNT];
+        for key in 0..KEY_COUNT {
+            self.end_hold(key, output);
+        }
+    }
     fn end_hold(&mut self, key: usize, output: &mut Vec<Output>) {
         if let Some(button) = self.active_holds[key].take() {
             output.push(Output::Gesture {
