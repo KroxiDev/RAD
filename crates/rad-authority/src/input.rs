@@ -27,7 +27,9 @@ impl Authority {
                 });
                 return Ok(e);
             }
-            Err(InputError::TimeWentBackwards) => return Err(AdmissionError::InvalidTime),
+            Err(InputError::TimeWentBackwards) => {
+                unreachable!("advance_clock accepted now and input never runs ahead of it")
+            }
             Err(InputError::InvalidLayout) => unreachable!("a key report carries no layout"),
         };
         e.extend(self.input_effects(output));
