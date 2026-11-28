@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CString, OsStr, OsString},
     fs::File,
-    io::{Read, Write},
+    io::{self, Read, Write},
     os::{
         fd::{AsRawFd, FromRawFd},
         unix::{ffi::OsStrExt, fs::MetadataExt, process::CommandExt},
@@ -269,13 +269,6 @@ fn owner(directory: &File, kind: Kind, nonce: &str, uid: u32) -> Result<Owner, E
     }
     Ok(value)
 }
-fn lock(file: &File, mode: i32) -> Result<(), Error> {
-    // SAFETY: the descriptor is live and flock flags are valid.
-    if unsafe { libc::flock(file.as_raw_fd(), mode | libc::LOCK_NB) } != 0 {
-        return Err(std::io::Error::last_os_error().into());
-    }
-    Ok(())
-}
 fn entries(directory: &File, limit: usize) -> Result<(Vec<OsString>, bool), Error> {
     // SAFETY: duplicate is owned here; fdopendir takes ownership on success only.
     let component = CString::new(".").expect("literal");
@@ -487,7 +480,7 @@ pub fn collect_in(
             if lease.metadata()?.len() != 0 {
                 return Err(Error("unexpected lease contents".into()));
             }
-            lock(&lease, libc::LOCK_EX)?;
+            lease.try_lock().map_err(io::Error::from)?;
             let files = validate_contents(&directory, kind, uid, None)?;
             if liveness.state(owner.pid) != ProcessState::Dead {
                 return Err(Error("temporary owner changed state".into()));
@@ -530,7 +523,7 @@ impl Lease {
         if file.metadata()?.len() != 0 {
             return Err(Error("unexpected lease contents".into()));
         }
-        lock(&file, libc::LOCK_SH)?;
+        file.try_lock_shared().map_err(io::Error::from)?;
         Ok(Self {
             file,
             directory,
@@ -581,7 +574,7 @@ impl Lease {
         } = self;
         drop(file);
         let lease = private_file(&directory, OsStr::new(LEASE), uid)?;
-        lock(&lease, libc::LOCK_EX)?;
+        lease.try_lock().map_err(io::Error::from)?;
         let files = validate_contents(&directory, kind, uid, Some(expected))?;
         remove(&parent, &name, &directory, files)
     }
@@ -606,7 +599,7 @@ pub(crate) fn initialize(path: &Path, uid: u32, kind: &str, nonce: &str) -> Resu
         libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
         0o600,
     )?;
-    lock(&file, libc::LOCK_SH)?;
+    file.try_lock_shared().map_err(io::Error::from)?;
     let marker = Owner {
         schema: 1,
         uid,

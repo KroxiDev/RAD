@@ -1,10 +1,7 @@
 use crate::Error;
 use std::{
-    fs::{File, OpenOptions},
-    os::{
-        fd::AsRawFd,
-        unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
-    },
+    fs::{File, OpenOptions, TryLockError},
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Component, Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -30,14 +27,14 @@ impl SessionGate {
     }
     pub fn startup_guard(&self) -> Result<Option<StartupGuard>, Error> {
         let running = private_file(&self.directory.join("running.lock"))?;
-        if !try_lock(&running, libc::LOCK_SH)? || !self.startup_allowed()? {
+        if !acquired(running.try_lock_shared())? || !self.startup_allowed()? {
             return Ok(None);
         }
         Ok(Some(StartupGuard { _running: running }))
     }
     pub fn acquire_update(&self) -> Result<UpdateGuard, Error> {
         let operation = private_file(&self.directory.join("operation.lock"))?;
-        if !try_lock(&operation, libc::LOCK_EX)? {
+        if !acquired(operation.try_lock())? {
             return Err(Error("another RAD update is in progress".into()));
         }
         Ok(UpdateGuard {
@@ -47,7 +44,7 @@ impl SessionGate {
     }
     pub fn startup_allowed(&self) -> Result<bool, Error> {
         let file = private_file(&self.directory.join("operation.lock"))?;
-        try_lock(&file, libc::LOCK_EX)
+        acquired(file.try_lock())
     }
     pub(crate) fn directory(&self) -> &Path {
         &self.directory
@@ -59,7 +56,7 @@ impl UpdateGuard {
         let running = private_file(&self.directory.join("running.lock"))?;
         let deadline = Instant::now() + timeout;
         loop {
-            if try_lock(&running, libc::LOCK_EX)? {
+            if acquired(running.try_lock())? {
                 return Ok(running);
             }
             if Instant::now() >= deadline {
@@ -91,16 +88,11 @@ pub(crate) fn session_gate() -> Result<SessionGate, Error> {
     environment_gate()
 }
 
-fn try_lock(file: &File, kind: i32) -> Result<bool, Error> {
-    // SAFETY: flock only borrows this live file descriptor.
-    if unsafe { libc::flock(file.as_raw_fd(), kind | libc::LOCK_NB) } == 0 {
-        return Ok(true);
-    }
-    let error = std::io::Error::last_os_error();
-    if error.kind() == std::io::ErrorKind::WouldBlock {
-        Ok(false)
-    } else {
-        Err(error.into())
+fn acquired(attempt: Result<(), TryLockError>) -> Result<bool, Error> {
+    match attempt {
+        Ok(()) => Ok(true),
+        Err(TryLockError::WouldBlock) => Ok(false),
+        Err(TryLockError::Error(error)) => Err(error.into()),
     }
 }
 pub(crate) fn private_file(path: &Path) -> Result<File, Error> {
