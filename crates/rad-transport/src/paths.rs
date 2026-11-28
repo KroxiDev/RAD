@@ -1,7 +1,7 @@
 use crate::TransportError as Error;
 use std::os::unix::ffi::OsStrExt;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File, OpenOptions, TryLockError},
     io,
     os::{
         fd::{AsRawFd, FromRawFd},
@@ -89,16 +89,10 @@ impl Instance {
             0o600,
         )?;
         private(&lock, 0o600, false)?;
-        // SAFETY:lock file fd remains owned for Instance lifetime.
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } < 0 {
-            return Err(
-                if io::Error::last_os_error().raw_os_error() == Some(libc::EWOULDBLOCK) {
-                    Error::InstanceBusy
-                } else {
-                    Error::Io
-                },
-            );
-        }
+        lock.try_lock().map_err(|error| match error {
+            TryLockError::WouldBlock => Error::InstanceBusy,
+            TryLockError::Error(_) => Error::Io,
+        })?;
         Ok(Self {
             directory,
             _lock: lock,

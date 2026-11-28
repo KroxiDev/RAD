@@ -347,10 +347,7 @@ fn read_frame(limit: usize, timeout: std::time::Duration) -> Result<Vec<u8>, Err
     }
 }
 fn root_lock() -> Result<File, Error> {
-    use std::os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt},
-    };
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     let path = Path::new("/run/lock/rad-update-install.lock");
     let file = std::fs::OpenOptions::new()
         .write(true)
@@ -363,12 +360,8 @@ fn root_lock() -> Result<File, Error> {
     if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o077 != 0 || meta.nlink() != 1 {
         return Err(Error("unsafe installation lock".into()));
     }
-    // SAFETY: the descriptor is live and lock flags are valid.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        return Err(Error(
-            "another RAD installation update is in progress".into(),
-        ));
-    }
+    file.try_lock()
+        .map_err(|_| Error("another RAD installation update is in progress".into()))?;
     Ok(file)
 }
 /// Serialized outcome frame, including its newline, remains below the coordinator's 16 KiB input cap.

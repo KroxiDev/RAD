@@ -97,6 +97,18 @@ fn global_32_includes_started_disconnected_and_only_finish_releases_them() {
 }
 
 #[test]
+fn binding_an_occupied_runtime_directory_reports_instance_busy() {
+    let fixture = Fixture::new();
+    let first = Transport::bind(&fixture.0, 1).unwrap();
+    assert_eq!(
+        Transport::bind(&fixture.0, 2).err(),
+        Some(TransportError::InstanceBusy)
+    );
+    drop(first);
+    Transport::bind(&fixture.0, 2).unwrap();
+}
+
+#[test]
 fn unsafe_paths_symlinks_and_hardlinked_lock_are_preserved() {
     use std::os::unix::fs::symlink;
     for kind in 0..5 {

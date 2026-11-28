@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     io::Write,
-    os::fd::AsRawFd,
     path::{Path, PathBuf},
 };
 
@@ -32,8 +31,7 @@ pub fn update<R>(dir: &Path, change: impl FnOnce(&mut State) -> R) -> R {
         .truncate(false)
         .open(file(dir, "state.lock"))
         .expect("lock file");
-    // SAFETY: flock on a descriptor this function owns.
-    unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) };
+    lock.lock().expect("lock audio state");
     let mut state = read(dir);
     let result = change(&mut state);
     let temp = file(dir, "state.tmp");

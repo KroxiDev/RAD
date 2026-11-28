@@ -68,7 +68,6 @@ impl fmt::Debug for Secrets {
 }
 mod files;
 use std::fs::File;
-use std::os::fd::AsRawFd;
 pub struct Vault {
     dir: File,
     _lock: File,
@@ -81,10 +80,7 @@ impl Vault {
         let lock =
             files::child(&dir, "vault.lock", libc::O_RDWR | libc::O_CREAT)?.ok_or(Error::Io)?;
         files::private(&lock, false)?;
-        // SAFETY: lock descriptor remains held for entire Vault lifetime.
-        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } < 0 {
-            return Err(Error::Busy);
-        }
+        lock.try_lock().map_err(|_| Error::Busy)?;
         let mut v = Self {
             dir,
             _lock: lock,
