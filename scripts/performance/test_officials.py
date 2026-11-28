@@ -13,6 +13,19 @@ SPEC.loader.exec_module(O)
 
 
 class FixtureLifecycle(unittest.TestCase):
+    def test_lost_control_ack_reports_overflow(self):
+        world = O.World()
+        world.env, world.log = {'PATH':'/usr/bin:/bin'}, subprocess.DEVNULL
+        self.addCleanup(world.close)
+        command = "print('progress\\n' * 16384 + 'pong configured')"
+        child = world.spawn([sys.executable, '-I', '-S', '-c', command], 'backend')
+        self.assertEqual(child.wait(timeout=5), 0)
+        child.reader.join(timeout=5)
+        self.assertFalse(child.reader.is_alive())
+        with self.assertRaisesRegex(RuntimeError, 'overflow'):
+            while world.line(child) != 'pong configured':
+                pass
+
     def test_failed_backend_setup_reaps_all_children_and_preserves_the_error(self):
         for failure in ('reader', 'registration'):
             with self.subTest(failure=failure):
