@@ -1,11 +1,12 @@
 use crate::{Diagnostic, Error, OptionsOutcome, State, TARGET};
+use mio::unix::pipe::{Receiver, Sender};
 use rad_plugin_contract::*;
 use std::{
     collections::{BTreeMap, VecDeque},
     io::{Read, Write},
-    os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd},
+    os::fd::{AsFd, BorrowedFd, FromRawFd, OwnedFd},
     os::unix::process::CommandExt,
-    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
+    process::{Child, Command, Stdio},
 };
 use zeroize::Zeroize;
 fn carries_jpeg(state: &VisualState) -> bool {
@@ -113,9 +114,9 @@ pub(super) struct Worker {
     pub state: State,
     pub stopped_normally: bool,
     pub child: Option<Child>,
-    input: Option<ChildStdin>,
-    output: Option<ChildStdout>,
-    error_output: Option<ChildStderr>,
+    input: Option<Sender>,
+    output: Option<Receiver>,
+    error_output: Option<Receiver>,
     pub stderr: crate::stderr::Stderr,
     pub protocol_credential_leak: bool,
     exit: Option<OwnedFd>,
@@ -132,14 +133,6 @@ pub(super) struct Worker {
     pub visuals: BTreeMap<u64, Visual>,
     pub unsubscribes: VecDeque<Correlation>,
     pub diagnostics: VecDeque<Diagnostic>,
-}
-fn nonblocking(fd: i32) -> std::io::Result<()> {
-    // SAFETY: borrowed live pipe fd; no ownership transfer or pointer arguments.
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
 }
 fn configure_command(command: &mut Command, id: &str) {
     let allowed: Vec<_> = ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]
@@ -281,9 +274,9 @@ impl Worker {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|_| Error::Io)?;
-        let input = child.stdin.take().expect("configured stdin pipe");
-        let output = child.stdout.take().expect("configured stdout pipe");
-        let error_output = child.stderr.take().expect("configured stderr pipe");
+        let input = Sender::from(child.stdin.take().expect("configured stdin pipe"));
+        let output = Receiver::from(child.stdout.take().expect("configured stdout pipe"));
+        let error_output = Receiver::from(child.stderr.take().expect("configured stderr pipe"));
         let oom = std::fs::read_to_string("/proc/self/oom_score_adj")
             .ok()
             .and_then(|s| s.trim().parse::<i32>().ok())
@@ -293,9 +286,10 @@ impl Worker {
             (oom + 100).clamp(500, 1000).to_string(),
         )
         .is_ok();
-        let configured = nonblocking(input.as_raw_fd())
-            .and_then(|_| nonblocking(output.as_raw_fd()))
-            .and_then(|_| nonblocking(error_output.as_raw_fd()))
+        let configured = input
+            .set_nonblocking(true)
+            .and_then(|_| output.set_nonblocking(true))
+            .and_then(|_| error_output.set_nonblocking(true))
             .is_ok();
         let exit = open_exit(child.id());
         let configured = configured && exit.is_some() && oom_configured;

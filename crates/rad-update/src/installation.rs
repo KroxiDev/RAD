@@ -1,8 +1,9 @@
 //! Local package ownership and bounded, shell-free administrative queries.
 use crate::{Cancellation, Error};
+use mio::unix::pipe::Receiver;
 use std::{
     io::Read,
-    os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
+    os::unix::fs::OpenOptionsExt,
     path::Path,
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -21,17 +22,6 @@ pub(crate) fn command(program: &str) -> Command {
         .env("LC_ALL", "C")
         .stdin(Stdio::null());
     command
-}
-fn nonblocking(stream: &impl AsRawFd) -> Result<(), Error> {
-    // SAFETY: fcntl only changes flags on the owned, live descriptor.
-    unsafe {
-        let flags = libc::fcntl(stream.as_raw_fd(), libc::F_GETFL);
-        if flags < 0 || libc::fcntl(stream.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) < 0
-        {
-            return Err(std::io::Error::last_os_error().into());
-        }
-    }
-    Ok(())
 }
 fn drain(stream: &mut impl Read, kept: &mut Vec<u8>, limit: usize) -> Result<(), Error> {
     let mut block = [0; 8192];
@@ -72,13 +62,18 @@ pub(crate) fn capture(
     let mut stdout = child
         .stdout
         .take()
+        .map(Receiver::from)
         .ok_or_else(|| Error("missing stdout".into()))?;
     let mut stderr = child
         .stderr
         .take()
+        .map(Receiver::from)
         .ok_or_else(|| Error("missing stderr".into()))?;
-    if let Err(error) = nonblocking(&stdout).and_then(|_| nonblocking(&stderr)) {
-        return Err(reap_error(&mut child, timeout.is_some(), error));
+    if let Err(error) = stdout
+        .set_nonblocking(true)
+        .and_then(|_| stderr.set_nonblocking(true))
+    {
+        return Err(reap_error(&mut child, timeout.is_some(), error.into()));
     }
     let started = Instant::now();
     let (mut out, mut err) = (Vec::new(), Vec::new());

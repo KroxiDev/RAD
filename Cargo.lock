@@ -2290,6 +2290,7 @@ name = "rad-plugin-host"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "mio",
  "rad-plugin-contract",
  "serde_json",
  "zeroize",
@@ -2397,6 +2398,7 @@ version = "0.1.0"
 dependencies = [
  "http",
  "libc",
+ "mio",
  "semver",
  "serde",
  "serde_json",
