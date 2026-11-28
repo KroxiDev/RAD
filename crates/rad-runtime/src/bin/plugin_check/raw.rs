@@ -3,33 +3,27 @@ use super::{
     Result, SECRET,
     scenario::{Pressure, Scenario},
 };
+use mio::unix::pipe::{Receiver, Sender};
 use rad_plugin_contract::*;
 use std::{
     io::{Read, Write},
     os::{fd::AsRawFd, unix::process::CommandExt},
     path::Path,
-    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     time::{Duration, Instant},
 };
 struct Peer {
     definitions: Vec<Definition>,
     subscriptions: std::collections::BTreeMap<u64, String>,
     child: Child,
-    input: Option<ChildStdin>,
-    output: ChildStdout,
-    stderr: ChildStderr,
+    input: Option<Sender>,
+    output: Receiver,
+    stderr: Receiver,
     rx: Vec<u8>,
     err: Vec<u8>,
     next: u64,
     capabilities: Vec<String>,
     start: Instant,
-}
-fn nonblocking(fd: i32) -> Result {
-    if unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) } < 0 {
-        Err("nonblocking_pipe")
-    } else {
-        Ok(())
-    }
 }
 impl Peer {
     fn new(path: &Path, m: &Manifest, s: &Scenario) -> Result<Self> {
@@ -41,9 +35,9 @@ impl Peer {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|_| "raw_spawn")?;
-        let input = child.stdin.take().ok_or("raw_stdin")?;
-        let output = child.stdout.take().ok_or("raw_stdout")?;
-        let stderr = child.stderr.take().ok_or("raw_stderr")?;
+        let input = Sender::from(child.stdin.take().ok_or("raw_stdin")?);
+        let output = Receiver::from(child.stdout.take().ok_or("raw_stdout")?);
+        let stderr = Receiver::from(child.stderr.take().ok_or("raw_stderr")?);
         let mut p = Self {
             definitions: m.visuals.clone(),
             subscriptions: Default::default(),
@@ -57,9 +51,13 @@ impl Peer {
             capabilities: m.capabilities.clone(),
             start: Instant::now(),
         };
-        nonblocking(p.input.as_ref().unwrap().as_raw_fd())?;
-        nonblocking(p.output.as_raw_fd())?;
-        nonblocking(p.stderr.as_raw_fd())?;
+        p.input
+            .as_ref()
+            .unwrap()
+            .set_nonblocking(true)
+            .and_then(|_| p.output.set_nonblocking(true))
+            .and_then(|_| p.stderr.set_nonblocking(true))
+            .map_err(|_| "nonblocking_pipe")?;
         if unsafe { libc::fcntl(p.output.as_raw_fd(), libc::F_SETPIPE_SZ, 4096) } != 4096 {
             return Err("pipe_capacity");
         }

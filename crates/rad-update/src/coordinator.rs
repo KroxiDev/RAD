@@ -1,4 +1,5 @@
 use crate::{Error, InstallOutcome, Prepared, cleanup::current_uid, gate};
+use mio::unix::pipe::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsString,
@@ -9,7 +10,7 @@ use std::{
         unix::fs::{MetadataExt, OpenOptionsExt},
     },
     path::{Path, PathBuf},
-    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     time::{Duration, Instant},
 };
 const LIMIT: usize = 16_384;
@@ -836,9 +837,9 @@ fn stop_session() -> Result<(), Error> {
 }
 struct InstallerProcess {
     child: Child,
-    input: Option<ChildStdin>,
-    stdout: ChildStdout,
-    stderr: ChildStderr,
+    input: Option<Sender>,
+    stdout: Receiver,
+    stderr: Receiver,
     out: Vec<u8>,
     err: Vec<u8>,
     committed: bool,
@@ -857,14 +858,17 @@ impl InstallerProcess {
         let input = child
             .stdin
             .take()
+            .map(Sender::from)
             .ok_or_else(|| Error("missing installer stdin".into()))?;
         let stdout = child
             .stdout
             .take()
+            .map(Receiver::from)
             .ok_or_else(|| Error("missing installer stdout".into()))?;
         let stderr = child
             .stderr
             .take()
+            .map(Receiver::from)
             .ok_or_else(|| Error("missing installer stderr".into()))?;
         let mut process = Self {
             child,
@@ -877,9 +881,13 @@ impl InstallerProcess {
             finished: false,
             authorization_deadline: Instant::now() + Duration::from_secs(180),
         };
-        nonblocking(process.input.as_ref().expect("installer stdin"))?;
-        nonblocking(&process.stdout)?;
-        nonblocking(&process.stderr)?;
+        process
+            .input
+            .as_ref()
+            .expect("installer stdin")
+            .set_nonblocking(true)?;
+        process.stdout.set_nonblocking(true)?;
+        process.stderr.set_nonblocking(true)?;
         let bytes = serde_json::to_vec(prepared).map_err(|e| Error(e.to_string()))?;
         if bytes.len() > LIMIT {
             return Err(Error("installer request exceeded its bound".into()));
@@ -983,17 +991,6 @@ impl Drop for InstallerProcess {
             let _ = self.child.wait();
         }
     }
-}
-fn nonblocking(stream: &impl AsRawFd) -> Result<(), Error> {
-    // SAFETY: only changes flags on a live owned pipe descriptor.
-    unsafe {
-        let flags = libc::fcntl(stream.as_raw_fd(), libc::F_GETFL);
-        if flags < 0 || libc::fcntl(stream.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) < 0
-        {
-            return Err(std::io::Error::last_os_error().into());
-        }
-    }
-    Ok(())
 }
 fn drain(stream: &mut impl Read, bytes: &mut Vec<u8>) -> Result<(), Error> {
     let mut block = [0; 4096];

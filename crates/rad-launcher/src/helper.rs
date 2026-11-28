@@ -128,9 +128,7 @@ pub fn run() -> Result<(), LauncherError> {
     // Before anything is launched: applications must inherit /dev/null as stderr.
     crate::scope::isolate_stderr().map_err(|_| LauncherError::Io)?;
     // SAFETY: validate fd and prevent inheritance by launched applications.
-    if unsafe { libc::fcntl(3, libc::F_GETFD) } < 0
-        || unsafe { libc::fcntl(3, libc::F_SETFD, libc::FD_CLOEXEC) } < 0
-    {
+    if unsafe { libc::fcntl(3, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
         return Err(LauncherError::Io);
     }
     // SAFETY: invocation transfers the unique validated inherited descriptor3.
