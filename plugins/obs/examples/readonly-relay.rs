@@ -43,7 +43,7 @@ use std::{
         fd::{AsRawFd, RawFd},
         unix::{
             fs::{MetadataExt, PermissionsExt},
-            process::CommandExt,
+            process::{CommandExt, parent_id},
         },
     },
     path::{Path, PathBuf},
@@ -689,7 +689,7 @@ fn private_root(path: &Path) -> Result<()> {
     Ok(())
 }
 fn harden(parent: u32) -> Result<()> {
-    if parent == 0 || std::os::unix::process::parent_id() != parent {
+    if parent == 0 || parent_id() != parent {
         return Err("controller_identity");
     }
     let limit = libc::rlimit {
@@ -700,7 +700,7 @@ fn harden(parent: u32) -> Result<()> {
     if unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limit) } < 0
         || unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0) } < 0
         || unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) } < 0
-        || std::os::unix::process::parent_id() != parent
+        || parent_id() != parent
     {
         return Err("hardening_failed");
     }
@@ -758,7 +758,7 @@ fn run() -> Result<()> {
     match (mode, args.len()) {
         ("--validate", 2) => {
             private_root(&PathBuf::from(&args[1]))?;
-            harden(std::os::unix::process::parent_id())?;
+            harden(parent_id())?;
             output(validate()?)
         }
         ("--real", 3) | ("--synthetic", 4) => {
