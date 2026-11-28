@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::{Error, cleanup::current_uid};
 use std::{
     fs::{File, OpenOptions, TryLockError},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
@@ -104,8 +104,7 @@ pub(crate) fn private_file(path: &Path) -> Result<File, Error> {
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(path)?;
     let metadata = file.metadata()?;
-    // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
+    let uid = current_uid();
     if !metadata.is_file()
         || metadata.uid() != uid
         || metadata.mode() & 0o077 != 0
@@ -160,8 +159,7 @@ fn check_directory(path: &Path, private: bool) -> Result<(), Error> {
         }
     }
     let metadata = std::fs::symlink_metadata(path)?;
-    // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
+    let uid = current_uid();
     if private && (metadata.uid() != uid || metadata.mode() & 0o077 != 0) {
         return Err(Error(
             "RAD update directory must be private and owned by this user".into(),

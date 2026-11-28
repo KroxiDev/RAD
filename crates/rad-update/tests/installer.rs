@@ -56,13 +56,16 @@ impl Drop for Staging {
         let _ = fs::remove_dir(&self.0);
     }
 }
+fn uid() -> u32 {
+    // SAFETY: geteuid has no preconditions.
+    unsafe { libc::geteuid() }
+}
 fn scenario() -> (Staging, Prepared, Fake) {
     let random = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
+    let uid = uid();
     let dir = std::env::temp_dir().join(format!("rad-update-stage-{uid}-{random:032x}"));
     fs::create_dir(&dir).unwrap();
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
@@ -109,9 +112,7 @@ fn scenario() -> (Staging, Prepared, Fake) {
 fn official_requery_and_protected_bytes_precede_transaction_and_source_substitution_has_no_effect()
 {
     let (_stage, prepared, mut system) = scenario();
-    // SAFETY: geteuid has no preconditions.
-    let approved =
-        installer::preflight_with(&prepared, unsafe { libc::geteuid() }, &mut system).unwrap();
+    let approved = installer::preflight_with(&prepared, uid(), &mut system).unwrap();
     assert_eq!(system.official_queries, 1);
     assert_eq!(system.transactions, 0);
     assert_eq!(system.inspected, b"abc");
@@ -143,8 +144,7 @@ fn locked_pretransaction_guard_prevents_racing_external_upgrade_or_downgrade() {
 }
 #[test]
 fn digest_origin_symlink_and_external_changes_never_start_a_transaction() {
-    // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
+    let uid = uid();
     let (_stage, prepared, mut system) = scenario();
     fs::write(
         prepared.directory.join(&prepared.candidate.metadata.file),
@@ -212,9 +212,7 @@ fn noisy_successful_transaction_keeps_a_parseable_verified_outcome_instead_of_pr
         "pacman exit 0\n{}\nfinal stderr diagnostic",
         "\0\n\t\"\\✓".repeat(10000)
     );
-    // SAFETY: geteuid has no preconditions.
-    let authorized =
-        installer::preflight_with(&prepared, unsafe { libc::geteuid() }, &mut system).unwrap();
+    let authorized = installer::preflight_with(&prepared, uid(), &mut system).unwrap();
     let outcome = installer::commit_with(authorized, &mut system).unwrap();
     let frame = installer::outcome_frame(&outcome).unwrap();
     assert!(frame.len() <= installer::MAX_OUTCOME_FRAME_BYTES);
@@ -251,8 +249,7 @@ fn partial_install_exclusions_require_manual_update_without_weakening_pacman_con
 fn file_exclusions_abort_preflight_before_release_query_or_ready_for_shutdown() {
     let (_stage, prepared, mut system) = scenario();
     system.configuration.push_str("NoExtract = usr/lib/rad/*\n");
-    // SAFETY: geteuid has no preconditions.
-    let result = installer::preflight_with(&prepared, unsafe { libc::geteuid() }, &mut system);
+    let result = installer::preflight_with(&prepared, uid(), &mut system);
     assert!(
         result.is_err(),
         "an excluded binary must abort before READY"

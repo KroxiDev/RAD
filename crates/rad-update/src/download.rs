@@ -1,4 +1,4 @@
-use crate::{Cancellation, Error, Progress, ReleaseMetadata};
+use crate::{Cancellation, Error, Progress, ReleaseMetadata, cleanup::current_uid};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
@@ -53,8 +53,7 @@ pub fn verify_file(
     metadata: &ReleaseMetadata,
     cancel: &Cancellation,
 ) -> Result<(), Error> {
-    // SAFETY: geteuid has no preconditions and reads the current process identity.
-    let uid = unsafe { libc::geteuid() };
+    let uid = current_uid();
     let file = crate::installation::private_file(path, uid)?;
     verify_reader(file, metadata, cancel)
 }
@@ -106,8 +105,7 @@ impl Temporary {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
-        // SAFETY: geteuid has no preconditions.
-        let uid = unsafe { libc::geteuid() };
+        let uid = current_uid();
         if !fs::symlink_metadata(parent)?.is_dir() {
             return Err(Error("unsafe temporary parent".into()));
         }
@@ -348,8 +346,7 @@ pub(crate) fn save_candidate(
 }
 /// Deletes only a validated updater-created directory and its two known files; never recursive deletion.
 pub fn discard_prepared(prepared: &crate::Prepared) -> Result<(), Error> {
-    // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
+    let uid = current_uid();
     let path = &prepared.directory;
     let name = path
         .file_name()

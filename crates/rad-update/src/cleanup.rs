@@ -90,7 +90,7 @@ pub(crate) fn pid_namespace() -> Result<String, Error> {
     }
     Ok(format!("{:016x}{:016x}", namespace.dev(), namespace.ino()))
 }
-fn current_uid() -> u32 {
+pub(crate) fn current_uid() -> u32 {
     // SAFETY: geteuid has no preconditions.
     unsafe { libc::geteuid() }
 }
