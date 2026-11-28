@@ -155,7 +155,7 @@ class CriticalCounters(unittest.TestCase):
         self.assertEqual(child.returncode,0)
 
     def test_bound_children_do_not_survive_supervisor_sigkill(self):
-        root=Path(tempfile.mkdtemp(dir=W.REPO/'target/performance',prefix='wake-safety-'))
+        root=Path(self.enterContext(tempfile.TemporaryDirectory()))
         code='''import importlib.util,json,sys,time
 from pathlib import Path
 s=importlib.util.spec_from_file_location('w',sys.argv[1]);w=importlib.util.module_from_spec(s);s.loader.exec_module(w)
@@ -212,7 +212,7 @@ with (root/'world.log').open('w') as log:
             if child.poll() is None:child.kill();child.wait(timeout=5)
 
     def test_failed_privileged_cleanup_still_persists_incomplete_metadata(self):
-        root=Path(tempfile.mkdtemp(dir=W.REPO/'target/performance',prefix='wake-safety-'))
+        root=Path(self.enterContext(tempfile.TemporaryDirectory()))
         batch=SimpleNamespace(close=unittest.mock.Mock(side_effect=RuntimeError('synthetic')),
                               events=[dict(event='failed')],cleanup=dict(returncode=None))
         with self.assertRaises(RuntimeError):W.finalize_batch(batch,root,dict(complete=True))

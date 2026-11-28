@@ -2,7 +2,7 @@
 """Critical observer safety checks. Never opens/inspects real hardware or services.
 
 Build physical_profile and rad-launcher-helper first. Run outside a sandbox that
-blocks fuser sockets. Own fixtures/evidence stay private in target/performance.
+blocks fuser sockets. Each test cleans up its own private fixtures.
 """
 import importlib.util
 import json
@@ -11,6 +11,7 @@ from pathlib import Path
 import select
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from unittest.mock import patch
@@ -19,12 +20,6 @@ _SPEC=importlib.util.spec_from_file_location('rad_physical',Path(__file__).with_
 physical=importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(physical)
 observer=physical.observer
-
-
-def own_root(label):
-    root=physical.REPO/'target/performance'/f'safety-{label}-{time.monotonic_ns()}'
-    root.mkdir(mode=0o700)
-    return root
 
 
 class GuardTests(unittest.TestCase):
@@ -37,7 +32,7 @@ class GuardTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):physical.holders('/dev/fixture')
 
     def test_installed_fuser_observes_only_our_fixture(self):
-        path=own_root('fuser')/'owned-file'
+        path=Path(self.enterContext(tempfile.TemporaryDirectory()))/'owned-file'
         path.write_bytes(b'own file, never a device')
         with path.open('rb'):
             self.assertIn(os.getpid(),physical.holders(path))
@@ -69,7 +64,7 @@ class GuardTests(unittest.TestCase):
         self.assertFalse(physical.completion_status(dict(event,logo_restored=False),True)['complete'])
 
     def test_callbacks_propagate_failure_and_reap_only_owned_child(self):
-        root=own_root('callback');seen=[];samples=[]
+        root=Path(self.enterContext(tempfile.TemporaryDirectory()));seen=[];samples=[]
         def reject(event):
             seen.append(event['pid']);raise RuntimeError('synthetic callback failure')
         script='import os,json,time; print(json.dumps({"event":"ready","pid":os.getpid()}),flush=True);time.sleep(60)'
@@ -82,7 +77,9 @@ class GuardTests(unittest.TestCase):
             self.assertFalse(observer.same_owned_process(pid,identities[pid],pid))
 
     def test_sigterm_dry_idle_releases_without_waiting_for_human(self):
-        root=own_root('cancel')
+        output=physical.REPO/'target/performance'
+        output.mkdir(mode=0o700,parents=True,exist_ok=True)
+        root=Path(self.enterContext(tempfile.TemporaryDirectory(dir=output,prefix='long-profile-'+'x'*90)))
         binary=physical.REPO/'target/release/examples/physical_profile'
         self.assertTrue(binary.is_file(),'build the offline release example before this check')
         env=observer.clean_environment(root/'env')

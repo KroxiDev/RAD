@@ -41,6 +41,15 @@ El target queda en el disco del repo: los builds en tmpfs agotaron su cuota.
   obtienen de la salida de Cargo de esa preparación, con el directorio del
   paquete como directorio de trabajo; no se eligen por fecha ni por un glob de
   artefactos anteriores. Los doctests se ejecutan también.
+- Tras la compilación, `test-performance` descubre los tests de los controladores
+  en [`scripts/performance/`](../scripts/performance/). El informe final muestra
+  cuántos ejecutó. La prueba de builds arranca un runtime y un cliente propios con
+  el deck desactivado; la del perfil físico usa `physical_profile --dry-run`,
+  un deck simulado, sockets en un directorio privado corto de `/tmp` y `fuser`
+  sobre un archivo de prueba. Las pruebas de escritorio, plugins oficiales, OBS,
+  servicios, métricas y wakeups usan procesos propios, datos o sustitutos de los
+  servicios y contadores. Los modos de medición con hardware o servicios reales
+  requieren el encargo específico indicado arriba.
 - Los cuatro verificadores de plugins corren en paralelo y conservan sus
   ventanas reales de vigencia y cancelación. Las conformidades integradas de
   Audio/Media, OBS y Metrics se ejecutan una vez cada una, conservando sus casos.

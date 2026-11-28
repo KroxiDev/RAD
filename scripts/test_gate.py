@@ -17,7 +17,7 @@ class GateTests(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory(prefix="rad-gate-test-")
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name)
-        shutil.copytree(REPO / "scripts", self.root / "scripts")
+        shutil.copytree(REPO / "scripts", self.root / "scripts", ignore=shutil.ignore_patterns("test_*.py"))
         (self.root / ".gitignore").write_text("target/\ntrace.jsonl\nmarkers/\n")
         (self.root / "tracked").write_text("original\n")
         self.bin = self.root / "bin"
@@ -70,8 +70,13 @@ for name in sys.argv[2:]:
         (self.root / "packaging/tests").mkdir(parents=True)
         trivial_test = "import unittest\nclass Check(unittest.TestCase):\n    def test_fixture(self): pass\n"
         (self.root / "packaging/tests/test_fixture.py").write_text(trivial_test)
-        for test_module in (self.root / "scripts").glob("test_*.py"):
-            test_module.write_text(trivial_test)
+        (self.root / "scripts/test_fixture.py").write_text(trivial_test)
+        (self.root / "scripts/performance/test_fixture.py").write_text('''import os, pathlib, unittest
+class Performance(unittest.TestCase):
+    def test_fixture(self):
+        with (pathlib.Path(os.environ['TEST_ROOT'])/'trace.jsonl').open('a') as trace:
+            trace.write('{"performance":true}\\n')
+''')
         self.env = os.environ | {
             "RAD_COMMENT_BASE": "HEAD",
             "TEST_ROOT": str(self.root),
@@ -97,7 +102,9 @@ for name in sys.argv[2:]:
         checks = [entry for entry in trace if "checker" in entry]
         self.assertEqual({entry["checker"] for entry in checks}, {"audio", "media", "obs", "metrics"})
         self.assertEqual(len({entry["runtime"] for entry in checks}), 4)
-        first_check = next(i for i, entry in enumerate(trace) if "checker" in entry)
+        self.assertEqual(trace.count({"performance": True}), 1)
+        self.assertRegex(result.stdout, r"(?m)^test-performance\s+0\s+[\d.]+\s+Ran 1 test in ")
+        first_check = next(i for i, entry in enumerate(trace) if "checker" in entry or "performance" in entry)
         self.assertFalse(any("cargo" in entry for entry in trace[first_check:]), "no compilar durante ejecución")
         tests = [entry for entry in trace if "test" in entry]
         for name in ("root", "plugins"):

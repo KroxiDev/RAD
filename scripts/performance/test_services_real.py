@@ -135,7 +135,7 @@ class CriticalReadOnlyServices(unittest.TestCase):
         self.assertEqual(S.availability_summary(rows)['status'], 'observed_current')
 
     def test_synthetic_filter_failure_prevents_real_launch_and_does_not_log_endpoint(self):
-        root = Path(tempfile.mkdtemp(dir=S.REPO/'target/performance', prefix='services-safety-'))
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         out = root/'output'
         metadata = dict(source_sha256={}, executable_sha256={})
         with patch.object(S.COMMON, 'validate_output', return_value=out), \
