@@ -15,6 +15,16 @@ fn namespace() -> String {
         .unwrap();
     format!("{:016x}{:016x}", metadata.dev(), metadata.ino())
 }
+fn uid() -> u32 {
+    // SAFETY: geteuid has no preconditions.
+    unsafe { libc::geteuid() }
+}
+struct NeverProbe;
+impl Liveness for NeverProbe {
+    fn state(&self, pid: u32) -> ProcessState {
+        panic!("unexpected liveness probe for PID {pid}");
+    }
+}
 struct Processes;
 impl Liveness for Processes {
     fn state(&self, pid: u32) -> ProcessState {
@@ -105,9 +115,7 @@ fn only_private_exact_shape_files_of_dead_owners_are_collected_and_diagnostics_s
         .join(format!(".write-{ns}-101-{}", "e".repeat(32)));
     fs::create_dir(&nested).unwrap();
     fs::write(nested.join("keep"), b"no recursion").unwrap();
-    // SAFETY: geteuid has no preconditions.
-    let removed_count =
-        coordinator::collect_ipc_in(&fixture.0, unsafe { libc::geteuid() }, &Processes).unwrap();
+    let removed_count = coordinator::collect_ipc_in(&fixture.0, uid(), &Processes).unwrap();
     assert_eq!(removed_count, removed.len());
     for name in removed {
         assert!(!fixture.0.join(name).exists());
@@ -124,8 +132,7 @@ fn only_private_exact_shape_files_of_dead_owners_are_collected_and_diagnostics_s
 fn collector_does_not_follow_directory_links_or_scan_beyond_its_fixed_bound() {
     let fixture = Fixture::new();
     let ns = namespace();
-    // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
+    let uid = uid();
     let aliased = fixture.0.with_extension("link");
     symlink(&fixture.0, &aliased).unwrap();
     assert!(coordinator::collect_ipc_in(&aliased, uid, &Processes).is_err());
@@ -152,8 +159,7 @@ fn private_final_directory_does_not_authorize_a_writable_ancestor() {
     let file = directory.join(format!(".write-{ns}-101-{}", "a".repeat(32)));
     fs::write(&file, b"preserve").unwrap();
     fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
-    // SAFETY: geteuid has no preconditions.
-    let result = coordinator::collect_ipc_in(&directory, unsafe { libc::geteuid() }, &Processes);
+    let result = coordinator::collect_ipc_in(&directory, uid(), &Processes);
     assert!(
         result.is_err(),
         "the directory descriptor walk must reject writable ancestors"
@@ -162,13 +168,15 @@ fn private_final_directory_does_not_authorize_a_writable_ancestor() {
 }
 
 #[test]
+fn foreign_uid_is_rejected_without_probing_pids_or_removing_files() {
+    let fixture = Fixture::new();
+    let file = fixture.file(&format!(".write-{}-101-{}", namespace(), "a".repeat(32)));
+    assert!(coordinator::collect_ipc_in(&fixture.0, uid() + 1, &NeverProbe).is_err());
+    assert!(file.exists());
+}
+
+#[test]
 fn legacy_and_foreign_namespace_files_never_trigger_a_pid_probe() {
-    struct NeverProbe;
-    impl Liveness for NeverProbe {
-        fn state(&self, _pid: u32) -> ProcessState {
-            panic!("a foreign or unknown PID namespace must not be probed");
-        }
-    }
     let fixture = Fixture::new();
     let nonce = "a".repeat(32);
     for name in [
@@ -180,9 +188,8 @@ fn legacy_and_foreign_namespace_files_never_trigger_a_pid_probe() {
     ] {
         fixture.file(&name);
     }
-    // SAFETY: geteuid has no preconditions.
     assert_eq!(
-        coordinator::collect_ipc_in(&fixture.0, unsafe { libc::geteuid() }, &NeverProbe).unwrap(),
+        coordinator::collect_ipc_in(&fixture.0, uid(), &NeverProbe).unwrap(),
         0
     );
     assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 5);

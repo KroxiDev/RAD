@@ -1,4 +1,4 @@
-use crate::{Cancellation, Candidate, Error, InstallOutcome, Prepared};
+use crate::{Cancellation, Candidate, Error, InstallOutcome, Prepared, cleanup::current_uid};
 use std::{fs::File, path::Path};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackageIdentity {
@@ -410,8 +410,7 @@ pub fn outcome_frame(outcome: &InstallOutcome) -> Result<Vec<u8>, Error> {
 /// The only entry point used by the privileged executable; no command-line parameters.
 pub fn run() -> Result<(), Error> {
     use std::io::Write;
-    // SAFETY: geteuid has no preconditions.
-    if unsafe { libc::geteuid() } != 0 {
+    if current_uid() != 0 {
         return Err(Error(
             "installer requires administrative authorization".into(),
         ));
@@ -481,8 +480,7 @@ fn inherit_transaction_leases(
     // Both descriptions remain shared in the exec'd transaction, even if this
     // installer dies. The clone captured by pre_exec keeps its fd alive until
     // exec; the parent's shared flock is never explicitly unlocked.
-    // SAFETY: geteuid only reads the current identity (root in run).
-    let package = crate::cleanup::Lease::pin(package_directory, unsafe { libc::geteuid() })?;
+    let package = crate::cleanup::Lease::pin(package_directory, current_uid())?;
     package.inherit_to(command)?;
     configuration.inherit_to(command)
 }
@@ -599,8 +597,7 @@ mod lease_tests {
         let paths: Vec<PathBuf> =
             serde_json::from_slice(&fs::read(root.join("paths.json")).unwrap()).unwrap();
         // Only this private fixture root is collected, never the machine's /tmp.
-        // SAFETY: geteuid has no preconditions.
-        let uid = unsafe { libc::geteuid() };
+        let uid = current_uid();
         let report =
             crate::cleanup::collect_in(&root, uid, &crate::cleanup::ProcessLiveness).unwrap();
         assert_eq!(

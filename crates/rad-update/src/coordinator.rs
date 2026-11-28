@@ -1,4 +1,4 @@
-use crate::{Error, InstallOutcome, Prepared, gate};
+use crate::{Error, InstallOutcome, Prepared, cleanup::current_uid, gate};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsString,
@@ -87,9 +87,7 @@ pub fn handoff(prepared: &Prepared) -> Result<(), Error> {
     }
     // The editor's live owner marker protects Prepared before handoff; this
     // shared lease overlaps the coordinator's independent pin through READY.
-    // SAFETY: geteuid only reads this process's identity.
-    let _prepared_lease =
-        crate::cleanup::Lease::pin(&prepared.directory, unsafe { libc::geteuid() })?;
+    let _prepared_lease = crate::cleanup::Lease::pin(&prepared.directory, current_uid())?;
     let state = state_directory()?;
     collect_ipc_opportunistically(&state, Some(gate.directory()));
     let nonce = nonce()?;
@@ -182,8 +180,7 @@ pub fn acknowledge_reopen() -> Result<(), Error> {
 /// Entrypoint only for the independent user service. Arguments never select a
 /// privileged program, a package name or a shell command.
 pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<(), Error> {
-    // SAFETY: geteuid has no preconditions. Session control never runs as root.
-    if unsafe { libc::geteuid() } == 0 {
+    if current_uid() == 0 {
         return Err(Error(
             "RAD update coordination must run as the original user, not root".into(),
         ));
@@ -221,9 +218,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<(), Error> {
         .validate(&prepared.candidate.tag)?;
     // Retain the user's package even after its creator exits and until root
     // has copied it; a collector must not treat the editor's death as abandonment.
-    // SAFETY: geteuid only reads the coordinator's original user identity.
-    let _prepared_lease =
-        crate::cleanup::Lease::pin(&prepared.directory, unsafe { libc::geteuid() })?;
+    let _prepared_lease = crate::cleanup::Lease::pin(&prepared.directory, current_uid())?;
     let session = gate::session_gate()?;
     collect_ipc_opportunistically(&state, Some(session.directory()));
     let ack = session.directory().join("handoff.json");
@@ -514,9 +509,8 @@ fn read_private(path: &Path) -> Result<Option<Vec<u8>>, Error> {
         Err(error) => return Err(error.into()),
     };
     let metadata = file.metadata()?;
-    // SAFETY: geteuid has no preconditions.
     if !metadata.is_file()
-        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.uid() != current_uid()
         || metadata.mode() & 0o077 != 0
         || metadata.nlink() != 1
         || metadata.len() > (LIMIT * 2) as u64
@@ -1061,7 +1055,7 @@ pub fn collect_ipc_in(
     liveness: &(impl crate::cleanup::Liveness + ?Sized),
 ) -> Result<usize, Error> {
     use crate::cleanup::ProcessState;
-    let anchor = open_ipc_directory(directory, uid)?;
+    let anchor = crate::cleanup::private_directory_anchor(directory, uid)?;
     let namespace = crate::cleanup::pid_namespace()?;
     let entries = std::fs::read_dir(format!("/proc/self/fd/{}", anchor.as_raw_fd()))?;
     let mut removed = 0;
@@ -1139,17 +1133,6 @@ pub fn collect_ipc_in(
     }
     Ok(removed)
 }
-fn open_ipc_directory(directory: &Path, uid: u32) -> Result<File, Error> {
-    // SAFETY: geteuid has no preconditions; even privileged callers only collect
-    // IPC belonging to their own identity. The shared walker pins each ancestor
-    // using openat/NOFOLLOW and rejects writable or unexpected owners.
-    if uid != unsafe { libc::geteuid() } {
-        return Err(Error(
-            "IPC collection requires this user's private directory".into(),
-        ));
-    }
-    crate::cleanup::private_directory_anchor(directory, uid)
-}
 
 fn ipc_creator(name: &str, namespace: &str) -> Option<u32> {
     let identity = if let Some(value) = name
@@ -1177,8 +1160,7 @@ fn ipc_creator(name: &str, namespace: &str) -> Option<u32> {
 }
 fn collect_ipc_opportunistically(state: &Path, runtime: Option<&Path>) {
     // Maintenance failure is not an update failure and never emits a global notice.
-    // SAFETY: geteuid only reads this process's identity.
-    let uid = unsafe { libc::geteuid() };
+    let uid = current_uid();
     let _ = collect_ipc_in(state, uid, &crate::cleanup::ProcessLiveness);
     if let Some(runtime) = runtime {
         let _ = collect_ipc_in(runtime, uid, &crate::cleanup::ProcessLiveness);
