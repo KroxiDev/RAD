@@ -266,7 +266,11 @@ fn with_several_instances_the_first_one_found_is_shown() {
 fn two_buttons_for_the_same_application_show_the_same_thing() {
     let bus = PrivateBus::start();
     let mut player = FakePlayer::start(&bus, STRAWBERRY);
-    let mut host = Host::start(Some(bus.address()), quick());
+    let timing = Timing {
+        linger: HEARTBEAT * 2,
+        ..quick()
+    };
+    let mut host = Host::start(Some(bus.address()), timing);
     let one = host.subscribe("strawberry");
     host.wait_state(one, "current", Some("Stopped"), secs(5))
         .unwrap();
