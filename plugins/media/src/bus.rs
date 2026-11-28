@@ -1,8 +1,8 @@
 use gio::{
-    Cancellable, DBusCallFlags, DBusConnection, DBusConnectionFlags, DBusError, IOErrorEnum,
-    prelude::CancellableExt,
+    Cancellable, DBusCallFlags, DBusConnection, DBusConnectionFlags, DBusError, DBusMessage,
+    DBusMessageFlags, DBusSendMessageFlags, IOErrorEnum, prelude::CancellableExt,
 };
-use glib::{ControlFlow, MainContext, Priority, Variant, VariantTy};
+use glib::{ControlFlow, MainContext, Priority, Variant, VariantTy, prelude::ToVariant};
 use rad_plugin_sdk::FailureCode;
 use std::{
     cell::RefCell,
@@ -154,39 +154,104 @@ impl Bus {
         reply_type: &str,
         deadline: Instant,
     ) -> Result<Variant, Failure> {
-        let connection = self.connection(deadline)?;
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(Failure::TimedOut);
-        }
-        let timeout = i32::try_from(left.as_millis().max(1)).unwrap_or(i32::MAX);
-        connection
-            .call_sync(
-                Some(method.destination),
-                method.path,
-                method.interface,
-                method.name,
-                parameters,
-                Some(VariantTy::new(reply_type).map_err(|_| Failure::Failed)?),
-                DBusCallFlags::NO_AUTO_START,
-                timeout,
-                None::<&Cancellable>,
-            )
-            .map_err(|error| Failure::of(&error))
+        self.connection(deadline)?
+            .call(method, parameters, reply_type, deadline)
     }
 
     pub(crate) fn player_names(&self, deadline: Instant) -> Result<Vec<String>, Failure> {
-        let list_names = Method {
-            destination: "org.freedesktop.DBus",
-            path: "/org/freedesktop/DBus",
-            interface: "org.freedesktop.DBus",
-            name: "ListNames",
-        };
-        let reply = self.call(&list_names, None, "(as)", deadline)?;
+        self.connection(deadline)?.player_names(deadline)
+    }
+}
+
+impl Connection {
+    fn call(
+        &self,
+        method: &Method,
+        parameters: Option<&Variant>,
+        reply_type: &str,
+        deadline: Instant,
+    ) -> Result<Variant, Failure> {
+        self.call_sync(
+            Some(method.destination),
+            method.path,
+            method.interface,
+            method.name,
+            parameters,
+            Some(VariantTy::new(reply_type).map_err(|_| Failure::Failed)?),
+            DBusCallFlags::NO_AUTO_START,
+            timeout(deadline)?,
+            None::<&Cancellable>,
+        )
+        .map_err(|error| Failure::of(&error))
+    }
+
+    pub(crate) fn call_with_sender(
+        &self,
+        method: &Method,
+        parameters: &Variant,
+        deadline: Instant,
+    ) -> Result<(glib::GString, Variant), Failure> {
+        let request = DBusMessage::new_method_call(
+            Some(method.destination),
+            method.path,
+            Some(method.interface),
+            method.name,
+        );
+        request.set_flags(DBusMessageFlags::NO_AUTO_START);
+        request.set_body(parameters);
+        let (reply, _) = self
+            .send_message_with_reply_sync(
+                &request,
+                DBusSendMessageFlags::NONE,
+                timeout(deadline)?,
+                None::<&Cancellable>,
+            )
+            .map_err(|error| Failure::of(&error))?;
+        if let Some(error) = reply.error_name() {
+            return Err(Failure::of(&DBusError::new_for_dbus_error(&error, "")));
+        }
+        Ok((
+            reply.sender().ok_or(Failure::Failed)?,
+            reply.body().ok_or(Failure::Failed)?,
+        ))
+    }
+
+    pub(crate) fn player_names(&self, deadline: Instant) -> Result<Vec<String>, Failure> {
+        let reply = self.call(&daemon_method("ListNames"), None, "(as)", deadline)?;
         let (mut names,) = reply.get::<(Vec<String>,)>().ok_or(Failure::Failed)?;
         names.retain(|name| crate::names::app_identity(name).is_some());
         Ok(names)
     }
+
+    pub(crate) fn name_owner(&self, name: &str, deadline: Instant) -> Result<String, Failure> {
+        let reply = self.call(
+            &daemon_method("GetNameOwner"),
+            Some(&(name,).to_variant()),
+            "(s)",
+            deadline,
+        )?;
+        reply
+            .get::<(String,)>()
+            .map(|(owner,)| owner)
+            .ok_or(Failure::Failed)
+    }
+}
+
+fn daemon_method(name: &str) -> Method<'_> {
+    Method {
+        destination: "org.freedesktop.DBus",
+        path: "/org/freedesktop/DBus",
+        interface: "org.freedesktop.DBus",
+        name,
+    }
+}
+
+fn timeout(deadline: Instant) -> Result<i32, Failure> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(Failure::TimedOut);
+    }
+    Ok(i32::try_from(left.as_millis().max(1)).unwrap_or(i32::MAX))
 }
 
 fn connect_within(

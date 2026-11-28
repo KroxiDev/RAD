@@ -22,7 +22,7 @@ pub struct PrivateBus {
     fixed: Option<PathBuf>,
 }
 
-fn configuration(listen: &str, services: Option<&Path>) -> String {
+fn configuration(listen: &str, services: Option<&Path>, policy: &str) -> String {
     let services = services
         .map(|dir| format!("<servicedir>{}</servicedir>", dir.display()))
         .unwrap_or_default();
@@ -38,18 +38,23 @@ fn configuration(listen: &str, services: Option<&Path>) -> String {
     <allow send_destination="*" eavesdrop="true"/>
     <allow eavesdrop="true"/>
     <allow own="*"/>
+    {policy}
   </policy>
 </busconfig>
 "#
     )
 }
 
-fn spawn_daemon(dir: &Path, listen: &str) -> (Child, String) {
+fn spawn_daemon(dir: &Path, listen: &str, policy: &str) -> (Child, String) {
     let config = dir.join("bus.conf");
     let services = dir.join("services");
     fs::write(
         &config,
-        configuration(listen, services.is_dir().then_some(services.as_path())),
+        configuration(
+            listen,
+            services.is_dir().then_some(services.as_path()),
+            policy,
+        ),
     )
     .unwrap();
     let mut command = Command::new("dbus-daemon");
@@ -82,8 +87,13 @@ fn spawn_daemon(dir: &Path, listen: &str) -> (Child, String) {
 
 impl PrivateBus {
     pub fn start() -> Self {
+        Self::start_with_policy("")
+    }
+
+    pub fn start_with_policy(policy: &str) -> Self {
         let dir = scratch_dir("rm", true);
-        let (child, address) = spawn_daemon(&dir, &format!("unix:tmpdir={}", dir.display()));
+        let (child, address) =
+            spawn_daemon(&dir, &format!("unix:tmpdir={}", dir.display()), policy);
         Self {
             child,
             address,
@@ -95,7 +105,7 @@ impl PrivateBus {
     pub fn start_at_fixed_address() -> Self {
         let dir = scratch_dir("rm", true);
         let socket = dir.join("bus");
-        let (child, _) = spawn_daemon(&dir, &format!("unix:path={}", socket.display()));
+        let (child, _) = spawn_daemon(&dir, &format!("unix:path={}", socket.display()), "");
         Self {
             child,
             address: format!("unix:path={}", socket.display()),
@@ -107,7 +117,7 @@ impl PrivateBus {
     pub fn restart(&mut self) {
         let socket = self.fixed.clone().expect("a bus with a fixed address");
         let _ = fs::remove_file(&socket);
-        let (child, _) = spawn_daemon(&self.dir, &format!("unix:path={}", socket.display()));
+        let (child, _) = spawn_daemon(&self.dir, &format!("unix:path={}", socket.display()), "");
         self.child = child;
     }
 
@@ -133,7 +143,7 @@ impl PrivateBus {
             )
             .unwrap();
         }
-        let (child, address) = spawn_daemon(&dir, &format!("unix:tmpdir={}", dir.display()));
+        let (child, address) = spawn_daemon(&dir, &format!("unix:tmpdir={}", dir.display()), "");
         Self {
             child,
             address,

@@ -51,10 +51,12 @@ las aplicaciones que están ejecutándose, más Brave y Strawberry marcadas como
 - Si el reproductor sale durante la acción, esta falla con `unavailable`.
 - Consultar un reproductor nunca lo inicia: si no estaba ejecutándose, sigue así.
 
-El estado sigue al reproductor: el plugin escucha el bus (inicio o salida de un
-reproductor, o anuncio de un cambio) y vuelve a leerlo. Además, lee cada reproductor
-mostrado una vez cada 10 segundos, para que uno bloqueado que ya no pueda anunciar
-cambios aparezca como stale en vez de conservar como actual lo último que informó.
+Cuando un reproductor anuncia un cambio de estado, el plugin vuelve a leer las
+aplicaciones mostradas que usan ese reproductor. Si cambia el propietario de un
+nombre MPRIS, se comprueba la selección de la aplicación correspondiente. Al
+reconectar el bus se vuelven a leer todas las aplicaciones mostradas.
+Cada reproductor también se comprueba tras 10 segundos sin cambios. Así se puede
+marcar como `stale` un reproductor bloqueado que dejó de responder en silencio.
 Cada observación completada renueva la vigencia por 25 segundos; si el contenido no
 cambió, envía una renovación liviana, nunca repite la carátula. Un lector bloqueado
 no puede renovar el estado almacenado. No se sondea nada más. Sin estados mostrados,
@@ -81,9 +83,6 @@ anteriores no son presupuestos vigentes ni prueban la cuota máxima actual.
 - La carátula se lee cuando el reproductor la anuncia. Si la anuncia antes de
   terminar de escribirla y no anuncia nada después, se sigue mostrando el estado
   hasta el anuncio siguiente.
-- Cualquier anuncio de cualquier reproductor provoca una nueva lectura de todas
-  las aplicaciones mostradas; un reproductor muy activo hace que se lean los
-  demás algo más a menudo.
 
 ## Carátulas
 
