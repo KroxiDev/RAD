@@ -21,7 +21,7 @@ impl std::fmt::Debug for PluginAdmin {
 #[derive(PartialEq)]
 pub struct PluginOptions {
     pub plugin: String,
-    pub generation: u64,
+    pub selection: u64,
     pub scope: OptionsScope,
     pub definition: String,
     pub field: String,
@@ -185,8 +185,8 @@ struct Published<'a> {
     plugin: &'a str,
     definition: &'a Definition,
     visual: bool,
-    generation: u64,
-    ready: bool,
+    selection: u64,
+    available: bool,
 }
 fn published<'a>(
     a: &'a Authority,
@@ -194,7 +194,7 @@ fn published<'a>(
     name: &str,
     visual: bool,
 ) -> Checked<Published<'a>> {
-    let (manifest, generation, _) = a
+    let (manifest, selection, _) = a
         .plugin_manifests()
         .find(|(m, _, _)| m.id == plugin)
         .ok_or("executor_unavailable")?;
@@ -210,8 +210,8 @@ fn published<'a>(
         plugin,
         definition,
         visual,
-        generation,
-        ready: a.plugin_available(plugin, generation),
+        selection,
+        available: a.plugin_available(plugin, selection),
     })
 }
 fn split(name: &str) -> Checked<(&str, &str, bool)> {
@@ -437,12 +437,12 @@ fn dynamic(
     definition
         .validate_options_context(&field.id, &context)
         .map_err(|_| "invalid_request")?;
-    if !published.ready {
+    if !published.available {
         return Err("executor_unavailable");
     }
     Ok(PluginOptions {
         plugin: published.plugin.to_owned(),
-        generation: published.generation,
+        selection: published.selection,
         scope: if published.visual {
             OptionsScope::Visual
         } else {
