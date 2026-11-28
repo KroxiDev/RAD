@@ -18,7 +18,7 @@ pub(super) struct PendingOptions {
 pub(super) struct WaitingOptions {
     pub snapshot: Option<rad_authority::plugins::CredentialSnapshot>,
     settings: Option<rad_plugin_contract::Parameters>,
-    generation: Option<u64>,
+    process_generation: Option<u64>,
     pub pending: PendingOptions,
     pub deadline: u64,
 }
@@ -26,7 +26,7 @@ impl WaitingOptions {
     pub fn binding(&self) -> Option<(String, u64, rad_authority::plugins::CredentialSnapshot)> {
         Some((
             self.pending.query.plugin.clone(),
-            self.pending.query.generation,
+            self.pending.query.selection,
             self.snapshot.clone()?,
         ))
     }
@@ -42,12 +42,17 @@ impl Server {
         query: PluginOptions,
     ) -> Result<(), RuntimeError> {
         let now = monotonic_ms().map_err(|_| RuntimeError::Clock)?;
-        let needs_credentials = self.actor.plugin_manifests().any(|(m, g, _)| {
-            m.id == query.plugin && g == query.generation && !m.credential_slots().is_empty()
-        });
+        let needs_credentials = self
+            .actor
+            .plugin_manifests()
+            .any(|(manifest, selection, _)| {
+                manifest.id == query.plugin
+                    && selection == query.selection
+                    && !manifest.credential_slots().is_empty()
+            });
         let snapshot = self
             .actor
-            .current_plugin_credentials(&query.plugin, query.generation);
+            .current_plugin_credentials(&query.plugin, query.selection);
         if needs_credentials && snapshot.is_none() {
             return self.respond(key, self.error(context, "executor_unavailable", false));
         }
@@ -56,15 +61,13 @@ impl Server {
             .iter()
             .filter(|w| w.pending.query.plugin == query.plugin)
             .count();
-        let occupied = self
-            .native
-            .as_ref()
-            .map(|n| {
-                self.actor
-                    .plugin_generation(&query.plugin)
-                    .map_or(0, |g| n.plugin_host().options_in_use(&query.plugin, g))
-            })
-            .unwrap_or(0);
+        let process_generation = self.actor.plugin_generation(&query.plugin);
+        let occupied = match (&self.native, process_generation) {
+            (Some(native), Some(process_generation)) => native
+                .plugin_host()
+                .options_in_use(&query.plugin, process_generation),
+            _ => 0,
+        };
         if waiting + occupied >= 2 {
             return self.respond(key, self.error(context, "resource_exhausted", false));
         }
@@ -80,7 +83,7 @@ impl Server {
         self.waiting_options.push(WaitingOptions {
             snapshot,
             settings,
-            generation: self.actor.plugin_generation(&query.plugin),
+            process_generation,
             pending: PendingOptions {
                 key,
                 context,
@@ -98,10 +101,10 @@ impl Server {
         revision: Option<u64>,
         settings: Option<rad_plugin_contract::Parameters>,
     ) -> Result<rad_plugin_contract::Correlation, Host> {
-        if !self.actor.plugin_available(&query.plugin, query.generation) {
+        if !self.actor.plugin_available(&query.plugin, query.selection) {
             return Err(Host::Unavailable);
         }
-        let generation = self
+        let process_generation = self
             .actor
             .plugin_generation(&query.plugin)
             .ok_or(Host::Unavailable)?;
@@ -111,7 +114,7 @@ impl Server {
             .plugin_host_mut()
             .options_with_settings(
                 &query.plugin,
-                generation,
+                process_generation,
                 OptionsQuery {
                     scope: query.scope,
                     definition: query.definition.clone(),
@@ -138,26 +141,27 @@ impl Server {
                 self.respond(pending.key, response)?;
                 continue;
             }
-            let generation = self.actor.plugin_generation(&pending.query.plugin);
-            let available = self
+            let process_generation = self.actor.plugin_generation(&pending.query.plugin);
+            let selection_available = self
                 .actor
-                .plugin_available(&pending.query.plugin, pending.query.generation);
-            let stale = waiting.generation.is_some() && waiting.generation != generation;
-            if !available || stale {
+                .plugin_available(&pending.query.plugin, pending.query.selection);
+            let process_changed = waiting.process_generation.is_some()
+                && waiting.process_generation != process_generation;
+            if !selection_available || process_changed {
                 self.respond(
                     pending.key,
                     self.error(pending.context, "executor_unavailable", false),
                 )?;
                 continue;
             }
-            let ready = generation.is_some_and(|g| {
+            let ready = process_generation.is_some_and(|process_generation| {
                 self.native.as_ref().is_some_and(|n| {
                     n.plugin_host().state(&pending.query.plugin)
                         == Some(rad_plugin_host::State::Ready)
                         && waiting.snapshot.as_ref().is_none_or(|snapshot| {
                             n.plugin_host().credentials_state(
                                 &pending.query.plugin,
-                                g,
+                                process_generation,
                                 snapshot.revision(),
                             ) == Some(rad_plugin_host::CredentialState::Applied)
                         })
@@ -166,7 +170,7 @@ impl Server {
             if !ready {
                 self.waiting_options.push(WaitingOptions {
                     pending,
-                    generation: waiting.generation.or(generation),
+                    process_generation: waiting.process_generation.or(process_generation),
                     ..waiting
                 });
                 continue;
