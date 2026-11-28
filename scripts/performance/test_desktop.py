@@ -18,7 +18,8 @@ SPEC.loader.exec_module(D)
 
 @contextmanager
 def fixture():
-    yield Path(tempfile.mkdtemp(dir=D.REPO/'target/performance',prefix='desktop-safety-'))
+    with tempfile.TemporaryDirectory() as directory:
+        yield Path(directory)
 
 
 class CriticalIsolation(unittest.TestCase):

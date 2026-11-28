@@ -172,6 +172,7 @@ class Gate:
             for name in ("raiz", "plugins"):
                 tasks.append((f"test-{name}", dict(tests=suites[name])))
             tasks.append(("packaging", dict(command=["python3", "-B", "-m", "unittest", "discover", "-s", "packaging/tests", "-v"])))
+            tasks.append(("test-performance", dict(command=["python3", "-B", "-m", "unittest", "discover", "-s", "scripts/performance", "-v"])))
         out = ROOT / "target/conformance" / self.run.name
         out.mkdir(parents=True)
         for kind in kinds:
@@ -208,7 +209,11 @@ class Gate:
         if self.cancelled.is_set():
             valid = False
         for name, code, seconds in self.results:
-            print(f"{name:<28} {code:>3} {seconds:>8.3f}")
+            report = ""
+            if name == "test-performance":
+                with (self.run / f"{name}.log").open() as log:
+                    report = next((f"  {line.rstrip()}" for line in log if line.startswith("Ran ")), "")
+            print(f"{name:<28} {code:>3} {seconds:>8.3f}{report}")
         print(f"Tiempo total: {elapsed:.3f} s", flush=True)
         print(f"GATE {'OK' if valid else 'FALLÓ'} ({self.mode})  árbol {self.initial_tree}  ({self.run.relative_to(ROOT)})", flush=True)
         self.scratch.cleanup()

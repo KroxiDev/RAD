@@ -5,6 +5,7 @@ No personal services, hardware, GUI or external network. Audio fails closed insi
 bwrap with fake_pactl mounted over the only selected production pactl path.
 """
 import argparse
+from collections import deque
 import hashlib
 import importlib.util
 import json
@@ -104,6 +105,32 @@ class Bridge:
             raise RuntimeError(f'typed client failed: {code}')
 
 
+class ControlLines:
+    def __init__(self):
+        self.pending = deque(maxlen=256)
+        self.changed = threading.Condition()
+        self.overflowed = False
+
+    def consume(self, output):
+        for line in output:
+            if self.overflowed:
+                continue
+            with self.changed:
+                if len(self.pending) == self.pending.maxlen:
+                    self.overflowed = True
+                else:
+                    self.pending.append(line.strip())
+                self.changed.notify_all()
+
+    def get(self, timeout):
+        with self.changed:
+            if not self.changed.wait_for(lambda: self.overflowed or self.pending, timeout):
+                raise queue.Empty
+            if self.overflowed:
+                raise RuntimeError('fixture control response queue overflow')
+            return self.pending.popleft()
+
+
 class World:
     def __init__(self):
         self.roots, self.owned = [], {}
@@ -148,14 +175,8 @@ class World:
             child.wait(timeout=3)
             raise
         if drain:
-            child.lines = queue.Queue(maxsize=256)
-            def consume():
-                for line in child.stdout:
-                    try:
-                        child.lines.put_nowait(line.strip())
-                    except queue.Full:
-                        pass
-            child.reader = threading.Thread(target=consume, daemon=True)
+            child.lines = ControlLines()
+            child.reader = threading.Thread(target=child.lines.consume, args=(child.stdout,), daemon=True)
             child.reader.start()
         return child
 

@@ -675,14 +675,14 @@ fn pause(shared: &Shared, duration: Duration) -> Result<()> {
     Ok(())
 }
 fn scenario(
-    root: &Path,
+    runtime: &Path,
     shared: &Shared,
     fake: &Fake,
     wake: &mio::Waker,
     signals: &mut Signals,
 ) -> Result<bool> {
-    let mut client = Client::connect(&root.join("runtime"), Endpoint::Editor)
-        .map_err(|e| format!("connect: {e:?}"))?;
+    let mut client =
+        Client::connect(runtime, Endpoint::Editor).map_err(|e| format!("connect: {e:?}"))?;
     let seed = seed(&mut client)?;
     signals.send(Action::Attach)?;
     if !shared.wait(Duration::from_secs(10), |s| {
@@ -749,6 +749,20 @@ fn private_dir(path: &Path) -> Result<()> {
         .create(path)
         .map_err(|e| e.to_string())
 }
+struct DryRuntime(PathBuf);
+impl DryRuntime {
+    fn create() -> Result<Self> {
+        let nonce = getrandom::u64().map_err(|e| e.to_string())?;
+        let path = Path::new("/tmp").join(format!("rad-physical-{nonce:016x}"));
+        private_dir(&path)?;
+        Ok(Self(path))
+    }
+}
+impl Drop for DryRuntime {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 fn root_path(value: &str) -> Result<PathBuf> {
     let path = PathBuf::from(value);
     let path = if path.is_absolute() {
@@ -786,9 +800,13 @@ fn run() -> Result<()> {
     ] {
         private_dir(&root.join(name))?;
     }
+    let dry_runtime = (!physical).then(DryRuntime::create).transpose()?;
+    let runtime = dry_runtime
+        .as_ref()
+        .map_or_else(|| root.join("runtime"), |dir| dir.0.clone());
     let shutdown = ShutdownSignals::install().map_err(|e| format!("shutdown signals: {e:?}"))?;
     let mut server = Server::new(
-        &root.join("runtime"),
+        &runtime,
         &root.join("store"),
         NonZeroU128::new(0x_5048_5953).unwrap(),
     )
@@ -807,7 +825,7 @@ fn run() -> Result<()> {
         .env("XDG_CONFIG_DIRS", root.join("system"))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
-        .env("XDG_RUNTIME_DIR", root.join("runtime"))
+        .env("XDG_RUNTIME_DIR", &runtime)
         .env("TMPDIR", root.join("tmp"))
         .env("PATH", "/nonexistent-rad-private-bin")
         .env(
@@ -853,7 +871,7 @@ fn run() -> Result<()> {
     let client = thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             scenario(
-                &root,
+                &runtime,
                 &scenario_shared,
                 &scenario_fake,
                 &scenario_wake,
